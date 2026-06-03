@@ -8,6 +8,7 @@ import { SOUND_PRESETS, applyPreset } from '../lib/soundPresets'
 import { JOINT_LABELS } from '../senses/SenseBus'
 import { importSVG } from '../lib/svgImport'
 import { defaultShape } from '../types/scene'
+import { SHAPE_TEMPLATES } from '../lib/shapeTemplates'
 
 function hsvToCss(h: number, s: number, v: number): string {
   // HSV → HSL: l = v - vs/2, s_hsl = (v - l) / min(l, 1 - l)
@@ -1031,10 +1032,53 @@ function MappingTab() {
         <Download size={12} style={{ transform: 'rotate(180deg)' }} /> Importer SVG (paths / polygones)
       </button>
       <input ref={svgInputRef} type="file" accept=".svg,image/svg+xml" style={{ display: 'none' }} onChange={onImportSVG} />
+      <details style={{ marginTop: 6, fontSize: 12 }}>
+        <summary style={{ cursor: 'pointer', padding: '4px 0', color: 'var(--text-dim)' }}>📐 Templates de forme</summary>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3, marginTop: 4 }}>
+          {SHAPE_TEMPLATES.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => {
+                const base = defaultShape(shapes.length, 'polygon')
+                addShapes([{ ...base, name: t.name, points: t.points }])
+              }}
+              style={{ fontSize: 11, justifyContent: 'flex-start', padding: '4px 6px' }}
+              title={t.name}
+            >
+              <span style={{ marginRight: 4 }}>{t.emoji}</span>{t.name.split(' ')[0]}
+            </button>
+          ))}
+        </div>
+      </details>
 
       {selectedShape && (
         <div style={{ marginTop: 12, padding: 10, background: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
           <ShapeContentEditor shape={selectedShape} update={(p) => updateShape(selectedShape.id, p)} />
+          {selectedShape.kind === 'polygon' && (
+            <>
+              <h3 style={{ marginTop: 14 }}>✨ Lissage (Catmull-Rom)</h3>
+              <Slider
+                label="Courbure"
+                value={selectedShape.smooth ?? 0}
+                min={0} max={1} step={0.05}
+                onChange={(v) => updateShape(selectedShape.id, { smooth: v })}
+                format={(v) => v === 0 ? 'angulaire' : `${Math.round(v * 100)}%`}
+              />
+              <Slider
+                label="Rotation"
+                value={selectedShape.rotation ?? 0}
+                min={-Math.PI} max={Math.PI} step={0.05}
+                onChange={(v) => updateShape(selectedShape.id, { rotation: v })}
+                format={(v) => `${Math.round(v * 180 / Math.PI)}°`}
+              />
+              <button
+                onClick={() => updateShape(selectedShape.id, { rotation: 0 })}
+                style={{ width: '100%', justifyContent: 'center', fontSize: 11, marginTop: 4 }}
+              >
+                Réinitialiser rotation
+              </button>
+            </>
+          )}
           <h3 style={{ marginTop: 14 }}><Crop size={11} style={{ verticalAlign: 'middle' }} /> Source (% du rendu)</h3>
           <Slider label="X" value={selectedShape.source.x} min={0} max={1} step={0.01} onChange={(x) => updateShape(selectedShape.id, { source: { ...selectedShape.source, x } })} format={(x) => `${Math.round(x * 100)}%`} />
           <Slider label="Y" value={selectedShape.source.y} min={0} max={1} step={0.01} onChange={(y) => updateShape(selectedShape.id, { source: { ...selectedShape.source, y } })} format={(y) => `${Math.round(y * 100)}%`} />

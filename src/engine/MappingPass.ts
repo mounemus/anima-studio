@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { MappingConfig, MappingShape, TestPattern } from '../types/scene'
+import { smoothPolygon, centroid, rotateAround } from '../lib/curve'
 
 const VERT = `
   varying vec2 vUv;
@@ -290,7 +291,23 @@ export class MappingPass {
       ;(sm.uniforms.uC2.value as THREE.Vector2).set(c[2].x, 1 - c[2].y)
       ;(sm.uniforms.uC3.value as THREE.Vector2).set(c[3].x, 1 - c[3].y)
     } else {
-      const pts = sm.shape.points ?? []
+      let pts = sm.shape.points ?? []
+      // Apply rotation around centroid if set
+      if (sm.shape.rotation) {
+        pts = rotateAround(pts, centroid(pts), sm.shape.rotation)
+      }
+      // Apply Catmull-Rom smoothing if requested
+      if (sm.shape.smooth && sm.shape.smooth > 0) {
+        pts = smoothPolygon(pts, sm.shape.smooth)
+      }
+      // Hard cap to shader array size
+      if (pts.length > MAX_POLY_POINTS) {
+        // Decimate evenly down to fit
+        const step = pts.length / MAX_POLY_POINTS
+        const dec: typeof pts = []
+        for (let i = 0; i < MAX_POLY_POINTS; i++) dec.push(pts[Math.floor(i * step)])
+        pts = dec
+      }
       const arr = sm.uniforms.uPoints.value as THREE.Vector2[]
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
       for (let i = 0; i < MAX_POLY_POINTS; i++) {

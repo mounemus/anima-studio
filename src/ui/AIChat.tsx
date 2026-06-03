@@ -14,11 +14,11 @@ interface Message {
 const SUGGESTIONS = [
   '🌱 Invente une espèce de vers lumineux dans le vent',
   '🌊 Crée une tempête de plancton phosphorescent',
+  '🗺️ Crée 4 zones mapping en cercle, formes étoile',
+  '🗺️ Crée 3 cercles courbes en triangle',
   '🍄 Imagine un mycélium pulsant en montée',
-  '🐋 Chant baleine — sub-bass + tendrils lents',
   '⚡ Cluster glitch nerveux audio-réactif',
   '🌬️ Vent doux vers la gauche, force 1.5',
-  'Rends la scène plus apaisante',
   'Palette aurore boréale',
 ]
 
@@ -29,6 +29,7 @@ export function AIChat({ open }: { open: boolean }) {
   const updateVisual = useSceneStore((s) => s.updateVisual)
   const updatePalette = useSceneStore((s) => s.updatePalette)
   const updateFlow = useSceneStore((s) => s.updateFlow)
+  const addShapes = useSceneStore((s) => s.addMappingShapes)
   const add = useSceneStore((s) => s.add)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -78,6 +79,23 @@ export function AIChat({ open }: { open: boolean }) {
       if (data.actions?.flow) {
         updateFlow(data.actions.flow as Partial<FlowField>)
         action = `🌬️ Flux directionnel modifié`
+      }
+      if (Array.isArray(data.actions?.mappingShapes) && data.actions.mappingShapes.length > 0) {
+        // Normalise each shape to a valid MappingShape
+        const builtShapes = data.actions.mappingShapes.map((sh: any, i: number) => ({
+          id: `ai-${Date.now().toString(36)}-${i}`,
+          name: sh.name ?? `Zone IA ${i + 1}`,
+          kind: sh.kind === 'quad' ? 'quad' : 'polygon',
+          corners: sh.corners ?? [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }],
+          points: sh.points,
+          smooth: sh.smooth,
+          rotation: sh.rotation,
+          source: sh.source ?? { x: 0, y: 0, w: 1, h: 1 },
+          enabled: true,
+          content: { type: 'organism' as const, opacity: sh.opacity ?? 1 },
+        }))
+        addShapes(builtShapes)
+        action = `🗺️ ${builtShapes.length} zone(s) de mapping créée(s)`
       }
       if (data.actions?.newScene) {
         // Normalise the AI's returned scene — Claude may return a partial shape (no senses/mapping/evolution).

@@ -142,6 +142,10 @@ export interface MappingShape {
   corners: [Vec2, Vec2, Vec2, Vec2]
   /** Used when kind === 'polygon' — list of vertices in canvas 0..1 space, CCW order. */
   points?: Vec2[]
+  /** 0..1 — how much to smooth the polygon with Catmull-Rom subdivision (polygon kind only). */
+  smooth?: number
+  /** Rotation in radians around the shape's centroid (applied at render time only, points stay clean) */
+  rotation?: number
   source: SourceRect
   enabled: boolean
   content?: ShapeContent

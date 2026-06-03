@@ -14,14 +14,24 @@ Tu DOIS retourner un objet JSON valide avec cette forme :
 {
   "reply": "phrase courte poétique en français",
   "actions": {
-    "organismValues": { "speed": 1.2, ... },        // OPTIONNEL: patch des valeurs de l'organisme courant
-    "organism": { "kind": "boids", "values": {...} }, // OPTIONNEL: changer d'organisme complet
+    "organismValues": { "speed": 1.2, ... },
+    "organism": { "kind": "boids", "values": {...} },
     "palette": { "bg":"#...", "primary":"#...", "secondary":"#...", "glow":"#..." },
     "visual": { "feedback": 0.93, "blendMode": "add" },
     "flow": { "enabled": true, "angle": 1.57, "strength": 1.2, "turbulence": 0.4 },
-    "newScene": { ...scene complète conforme au schéma... }
+    "mappingShapes": [                                      // OPTIONNEL : crée N zones de mapping
+      { "name": "Étoile", "kind": "polygon",
+        "points": [{"x":0.5,"y":0.1},{"x":0.6,"y":0.4}, ...],
+        "smooth": 0.5, "rotation": 0, "opacity": 1 }
+    ],
+    "newScene": { ...scène complète... }
   }
 }
+
+Zones de mapping (mappingShapes) :
+- kind: "polygon" (recommandé) ou "quad". Polygon = liste de points 0..1, smooth 0..1 pour courber.
+- Pour créer des zones visuelles autour de l'écran : place les points dans [0..1] x [0..1].
+- Exemples : "3 cercles en triangle" → 3 polygones de 24 sommets répartis.
 
 Organismes disponibles (6 espèces) :
 - boids.values: count(100-5000), cohesion(0-2), separation(0-2), alignment(0-2), speed(0.1-3), vision(0.1-1), size(0.005-0.05)
