@@ -16,6 +16,7 @@ const FRAG = `
   uniform float uGamma;
   uniform int uPattern;                // 0=none 1=grid 2=white 3=black 4=colorbars 5=crosshair 6=gradient
   uniform vec3 uTint;                  // overall tint multiplier
+  uniform float uTransparent;          // 0 = opaque (normal), 1 = content-based alpha (AR mirror)
 
   vec2 invQuadMap(vec2 p) {
     vec2 uv = vec2(0.5);
@@ -99,7 +100,11 @@ const FRAG = `
     if (uBlend.y > 0.0) bl *= pow(smoothstep(0.0, uBlend.y, 1.0 - uv.x), uGamma);
     if (uBlend.z > 0.0) bl *= pow(smoothstep(0.0, uBlend.z, uv.y), uGamma);
     if (uBlend.w > 0.0) bl *= pow(smoothstep(0.0, uBlend.w, 1.0 - uv.y), uGamma);
-    gl_FragColor = vec4(col * bl, 1.0);
+    vec3 outCol = col * bl;
+    // In AR/mirror mode (uTransparent=1) → alpha is the luminance, so dark areas show the webcam behind.
+    // Otherwise alpha=1 for opaque studio rendering.
+    float a = mix(1.0, max(max(outCol.r, outCol.g), outCol.b), uTransparent);
+    gl_FragColor = vec4(outCol, a);
   }
 `
 
@@ -118,6 +123,7 @@ export class MappingPass {
   camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
   private shapes: ShapeMesh[] = []
   private sourceTex: THREE.Texture | null = null
+  private transparent = 0
 
   constructor() {}
 
@@ -133,12 +139,13 @@ export class MappingPass {
       uGamma: { value: 2.2 },
       uPattern: { value: 0 },
       uTint: { value: new THREE.Vector3(1, 1, 1) },
+      uTransparent: { value: this.transparent },
     }
     const mat = new THREE.ShaderMaterial({
       uniforms,
       vertexShader: VERT,
       fragmentShader: FRAG,
-      transparent: false,
+      transparent: true,
       depthTest: false,
       depthWrite: false,
     })
@@ -161,8 +168,14 @@ export class MappingPass {
     ;(sm.uniforms.uBlend.value as THREE.Vector4).set(b.left, b.right, b.top, b.bottom)
     sm.uniforms.uGamma.value = b.gamma
     sm.uniforms.uPattern.value = PATTERN_INDEX[cfg.testPattern ?? 'none']
+    sm.uniforms.uTransparent.value = this.transparent
     sm.uniforms.uTex.value = this.sourceTex
     sm.mesh.visible = sm.shape.enabled
+  }
+
+  setTransparent(t: boolean) {
+    this.transparent = t ? 1 : 0
+    for (const sm of this.shapes) sm.uniforms.uTransparent.value = this.transparent
   }
 
   apply(cfg: MappingConfig) {

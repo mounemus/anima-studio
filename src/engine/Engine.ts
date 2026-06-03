@@ -250,6 +250,7 @@ export class Engine {
   /** Switch between opaque rendering (with bg color) and transparent (for AR mirror overlay). */
   setTransparent(transparent: boolean) {
     this.bgAlpha = transparent ? 0 : 1
+    this.mapping.setTransparent(transparent)
   }
 
   /** Expose renderer for advanced integrations (WebXR session). */
