@@ -1154,10 +1154,18 @@ function ShapeContentEditor({ shape, update }: { shape: import('../types/scene')
   const fileRef = useRef<HTMLInputElement>(null)
 
   const setType = (type: 'organism' | 'video' | 'image' | 'webcam') => {
-    if (type === 'organism' || type === 'webcam') {
+    if (type === 'organism') {
+      // Keep organismKind/Values so user can toggle back without losing dedicated organism config
       update({ content: { ...content, type, opacity: content.opacity ?? 1 } })
+    } else if (type === 'webcam') {
+      // Strip organism-only fields, also strip src/label (irrelevant for webcam)
+      update({ content: { type, opacity: content.opacity ?? 1 } })
     } else {
-      update({ content: { type, src: content.type === type ? content.src : undefined, label: content.label, opacity: content.opacity ?? 1 } })
+      // video or image — strip organism fields. Preserve src/label only if same type (no-op click).
+      const sameType = content.type === type
+      update({ content: { type, src: sameType ? content.src : undefined, label: sameType ? content.label : undefined, opacity: content.opacity ?? 1 } })
+      // Auto-open the file picker on a fresh switch so the user immediately sees the dialog.
+      if (!sameType) setTimeout(() => fileRef.current?.click(), 0)
     }
   }
   const setZoneOrganism = (kind: 'scene' | OrganismKind) => {
@@ -1198,7 +1206,11 @@ function ShapeContentEditor({ shape, update }: { shape: import('../types/scene')
       </div>
       {(content.type === 'video' || content.type === 'image') && (
         <div style={{ marginBottom: 8 }}>
-          <button onClick={() => fileRef.current?.click()} style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}>
+          <button
+            onClick={() => fileRef.current?.click()}
+            className={content.src ? 'primary' : ''}
+            style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}
+          >
             <FolderOpen size={12} /> {content.label ?? `Choisir un ${content.type === 'video' ? 'fichier vidéo' : 'image'}…`}
           </button>
           <input
@@ -1208,8 +1220,20 @@ function ShapeContentEditor({ shape, update }: { shape: import('../types/scene')
             style={{ display: 'none' }}
             onChange={onFile}
           />
+          {content.src && (
+            <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+              <button
+                onClick={() => update({ content: { ...content, src: undefined, label: undefined } })}
+                className="ghost"
+                style={{ flex: 1, fontSize: 11, justifyContent: 'center' }}
+              >
+                🗑 Retirer
+              </button>
+            </div>
+          )}
           <p style={{ fontSize: 10, color: 'var(--text-mute)', marginTop: 4 }}>
-            ⚠ Le fichier est conservé tant que tu ne recharges pas la page (blob: URL local).
+            {content.src ? '✓ Chargé : ' + (content.label ?? 'fichier') : '⚠ Choisis un fichier pour activer la zone.'} <br />
+            <span style={{ opacity: 0.7 }}>(Fichier local — perdu au rechargement)</span>
           </p>
         </div>
       )}
