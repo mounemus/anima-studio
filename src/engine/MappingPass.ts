@@ -77,11 +77,18 @@ const FRAG = `
   }
 
   void main() {
-    vec2 uv = invQuadMap(vUv);
-    if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
+    // Cheap reject first: skip pixels outside the quad polygon
+    if (!insideQuad(vUv)) {
       gl_FragColor = vec4(0.0);
       return;
     }
+    vec2 uv = invQuadMap(vUv);
+    // Hard bounds (catches Newton divergence + NaN)
+    if (!(uv.x >= -0.02) || !(uv.y >= -0.02) || !(uv.x <= 1.02) || !(uv.y <= 1.02)) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
+    uv = clamp(uv, 0.0, 1.0);
     vec3 col;
     if (uPattern > 0) {
       col = patternColor(uv);
