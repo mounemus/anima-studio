@@ -121,7 +121,7 @@ export function App() {
           // Reset spatial lock then pre-seed at the click point so the search window
           // starts centered on what the user actually selected.
           resetTracker(pickingForObstacle)
-          trackerStates.set(pickingForObstacle, { x, y, confidence: 0.5, lastSeen: performance.now() })
+          trackerStates.set(pickingForObstacle, { x, y, vx: 0, vy: 0, confidence: 0.5, lastSeen: performance.now() })
           setPickFlash({ x, y, color: `hsl(${Math.round(hsv.h * 360)} ${Math.round(hsv.s * 100)}% ${Math.round(hsv.v * 100)}%)` })
           setTimeout(() => setPickFlash(null), 700)
         }

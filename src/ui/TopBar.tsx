@@ -69,11 +69,26 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
 
   const toggleHands = async () => {
     if (!videoRef.current) return
-    if (handsOn) { stopHands(); stopPose(); setHandsOn(false); return }
+    if (handsOn) {
+      // Turning camera off — also exit AR (would be black otherwise)
+      stopHands()
+      stopPose()
+      setHandsOn(false)
+      if (mirrorMode) {
+        onToggleMirror()
+        showToast('Caméra coupée — AR désactivé')
+      }
+      // Stop the underlying MediaStream so the browser shows the camera as released
+      const stream = videoRef.current.srcObject as MediaStream | null
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop())
+        videoRef.current.srcObject = null
+      }
+      return
+    }
     try {
       await createCameraStream(videoRef.current)
       await startHands(videoRef.current)
-      // Also start pose tracking — same camera stream, lightweight model
       startPose(videoRef.current).catch((e) => console.warn('Pose start failed', e))
       setHandsOn(true)
       showToast('Webcam + tracking main/corps actifs')

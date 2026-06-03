@@ -8,6 +8,8 @@
 interface TrackerState {
   x: number          // 0..1 normalized canvas coord
   y: number
+  vx: number         // normalized units per ms
+  vy: number
   confidence: number // 0..1, fades when no match
   lastSeen: number   // ms timestamp
 }
@@ -102,15 +104,24 @@ function loop() {
       const prev = trackerStates.get(c.id)
       // Search window: small if locked, full frame otherwise
       let minX = 0, maxX = SAMPLE_W, minY = 0, maxY = SAMPLE_H
+      // Predict next position from velocity (extrapolate ~120ms ahead)
+      let predX = prev?.x ?? 0.5
+      let predY = prev?.y ?? 0.5
       if (prev && prev.confidence > 0.25) {
-        // Locked → ~25% of frame around previous position, expanding as confidence drops
-        const winSize = SAMPLE_W * (0.18 + (1 - prev.confidence) * 0.18)
-        const cxp = prev.x * SAMPLE_W
-        const cyp = prev.y * SAMPLE_H
-        minX = Math.max(0, Math.floor(cxp - winSize))
-        maxX = Math.min(SAMPLE_W, Math.ceil(cxp + winSize))
-        minY = Math.max(0, Math.floor(cyp - winSize))
-        maxY = Math.min(SAMPLE_H, Math.ceil(cyp + winSize * 1.2))   // a bit taller for vertical hand movement
+        const dtPred = 120  // ms ahead prediction
+        predX = Math.max(0.02, Math.min(0.98, prev.x + (prev.vx || 0) * dtPred))
+        predY = Math.max(0.02, Math.min(0.98, prev.y + (prev.vy || 0) * dtPred))
+        // Bigger window so fast movements stay inside it
+        const winSize = SAMPLE_W * (0.28 + (1 - prev.confidence) * 0.18)
+        const cxp = predX * SAMPLE_W
+        const cyp = predY * SAMPLE_H
+        // Expand more in the direction of movement
+        const expandX = Math.abs(prev.vx) * 1000 * SAMPLE_W * 0.05
+        const expandY = Math.abs(prev.vy) * 1000 * SAMPLE_H * 0.05
+        minX = Math.max(0, Math.floor(cxp - winSize - expandX))
+        maxX = Math.min(SAMPLE_W, Math.ceil(cxp + winSize + expandX))
+        minY = Math.max(0, Math.floor(cyp - winSize - expandY))
+        maxY = Math.min(SAMPLE_H, Math.ceil(cyp + winSize + expandY))
       }
       let sx = 0, sy = 0, n = 0
       for (let py = minY; py < maxY; py += 2) {
@@ -121,25 +132,34 @@ function loop() {
           if (d < c.tolerance) { sx += px; sy += py; n++ }
         }
       }
-      const nextPrev: TrackerState = prev ?? { x: 0.5, y: 0.5, confidence: 0, lastSeen: 0 }
+      const nextPrev: TrackerState = prev ?? { x: 0.5, y: 0.5, vx: 0, vy: 0, confidence: 0, lastSeen: 0 }
       if (n >= MIN_MATCH) {
         const cx = 1 - (sx / n) / SAMPLE_W   // mirror X
         const cy = (sy / n) / SAMPLE_H
-        const windowArea = ((maxX - minX) / 2) * ((maxY - minY) / 2)
-        const density = Math.min(1, n / Math.max(1, windowArea * 0.25))
-        const newConf = Math.min(1, density * 1.3)
-        // Smooth position to avoid jitter
-        nextPrev.x = nextPrev.confidence > 0.3 ? nextPrev.x * 0.6 + cx * 0.4 : cx
-        nextPrev.y = nextPrev.confidence > 0.3 ? nextPrev.y * 0.6 + cy * 0.4 : cy
+        const windowArea = Math.max(1, ((maxX - minX) / 2) * ((maxY - minY) / 2))
+        const density = Math.min(1, n / (windowArea * 0.18))
+        const newConf = Math.min(1, density * 1.5)
+        // Compute velocity (delta-based) BEFORE smoothing pos
+        const dt = nextPrev.lastSeen > 0 ? Math.max(20, now - nextPrev.lastSeen) : 100
+        const newVx = (cx - nextPrev.x) / dt
+        const newVy = (cy - nextPrev.y) / dt
+        // Faster position update: 0.5 weight on new pos (was 0.4)
+        nextPrev.x = nextPrev.confidence > 0.3 ? nextPrev.x * 0.5 + cx * 0.5 : cx
+        nextPrev.y = nextPrev.confidence > 0.3 ? nextPrev.y * 0.5 + cy * 0.5 : cy
+        // Smooth velocity (it tends to be noisy)
+        nextPrev.vx = nextPrev.vx * 0.6 + newVx * 0.4
+        nextPrev.vy = nextPrev.vy * 0.6 + newVy * 0.4
         nextPrev.confidence = Math.max(nextPrev.confidence * 0.5, newConf)
         nextPrev.lastSeen = now
         lostCount.set(c.id, 0)
       } else {
+        // Lost frame — decay confidence, decay velocity, keep predicting
         nextPrev.confidence *= 0.92
+        nextPrev.vx *= 0.85
+        nextPrev.vy *= 0.85
         const lost = (lostCount.get(c.id) ?? 0) + 1
         lostCount.set(c.id, lost)
-        // After too many bad frames, drop the lock so we search globally next time
-        if (lost > RESYNC_FRAMES) nextPrev.confidence = 0
+        if (lost > RESYNC_FRAMES) { nextPrev.confidence = 0; nextPrev.vx = 0; nextPrev.vy = 0 }
       }
       trackerStates.set(c.id, nextPrev)
     }
