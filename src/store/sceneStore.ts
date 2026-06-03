@@ -7,6 +7,8 @@ import { saveScene, loadAllScenes, deleteScene as dbDelete } from '../lib/persis
 interface SceneStoreState {
   scenes: Scene[]
   currentId: string | null
+  dbStatus: 'init' | 'ok' | 'fallback'  // fallback = in-memory only, no persistence
+  dbError: string | null
   current: () => Scene | null
 
   load: () => Promise<void>
@@ -46,6 +48,8 @@ const debouncePersist = (fn: () => void) => {
 export const useSceneStore = create<SceneStoreState>((set, get) => ({
   scenes: [],
   currentId: null,
+  dbStatus: 'init',
+  dbError: null,
 
   current: () => {
     const { scenes, currentId } = get()
@@ -62,11 +66,16 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
         }
         existing = [...defaultScenes]
       }
-      set({ scenes: existing, currentId: existing[0]?.id ?? null })
-    } catch (e) {
+      set({ scenes: existing, currentId: existing[0]?.id ?? null, dbStatus: 'ok', dbError: null })
+    } catch (e: any) {
       // DB unavailable (locked, blocked, version mismatch) — fall back to in-memory defaults
       console.error('IndexedDB load failed, using in-memory defaults', e)
-      set({ scenes: [...defaultScenes], currentId: defaultScenes[0]?.id ?? null })
+      set({
+        scenes: [...defaultScenes],
+        currentId: defaultScenes[0]?.id ?? null,
+        dbStatus: 'fallback',
+        dbError: e?.message ?? 'IndexedDB unavailable',
+      })
     }
   },
 

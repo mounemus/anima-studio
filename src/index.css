@@ -566,3 +566,19 @@ button.ghost.active {
   border-top: 1px solid var(--line);
   line-height: 1.4;
 }
+
+.db-warning {
+  position: fixed;
+  bottom: 12px; right: 12px;
+  z-index: 500;
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(255, 181, 71, 0.12);
+  border: 1px solid rgba(255, 181, 71, 0.5);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  max-width: 420px;
+  color: var(--warn);
+  font-size: 13px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.db-warning strong { color: #fff; }

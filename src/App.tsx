@@ -9,13 +9,16 @@ import { ObstaclesOverlay } from './ui/ObstaclesOverlay'
 import { AIChat } from './ui/AIChat'
 import { useSceneStore } from './store/sceneStore'
 import type { Engine } from './engine/Engine'
-import { Eye } from 'lucide-react'
+import { Eye, AlertTriangle, RefreshCw } from 'lucide-react'
 import { enterFullscreen } from './lib/recorder'
 import { isOutputWindow } from './lib/multiDisplay'
+import { resetDb } from './lib/db'
 
 export function App() {
   const load = useSceneStore((s) => s.load)
   const ready = useSceneStore((s) => s.scenes.length > 0)
+  const dbStatus = useSceneStore((s) => s.dbStatus)
+  const dbError = useSceneStore((s) => s.dbError)
   const [aiOpen, setAiOpen] = useState(false)
   const isOutput = useMemo(() => isOutputWindow(), [])
   const [outputMode, setOutputMode] = useState(isOutput)
@@ -101,6 +104,24 @@ export function App() {
       </div>
       <ParamPanel />
       <video ref={videoRef} style={{ display: 'none' }} autoPlay playsInline muted />
+      {dbStatus === 'fallback' && (
+        <div className="db-warning">
+          <AlertTriangle size={14} />
+          <div style={{ flex: 1 }}>
+            <strong>Mode hors-ligne</strong> — IndexedDB inaccessible. Tes modifications ne seront pas sauvegardées.
+            <div style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 2 }}>
+              {dbError}
+            </div>
+          </div>
+          <button
+            onClick={() => { resetDb(); load() }}
+            className="primary"
+            style={{ fontSize: 11, padding: '4px 8px' }}
+          >
+            <RefreshCw size={11} /> Réessayer
+          </button>
+        </div>
+      )}
     </div>
   )
 }
