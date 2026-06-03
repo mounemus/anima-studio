@@ -128,6 +128,12 @@ export interface ShapeContent {
   label?: string
   /** Opacity 0..1 within this zone */
   opacity?: number
+  /** For type='organism': if set, this zone runs its OWN organism instance instead of mirroring the scene's main organism. */
+  organismKind?: OrganismKind
+  /** Custom params for this zone's organism (defaults applied if absent). */
+  organismValues?: Record<string, number>
+  /** Optional palette override per zone. */
+  organismPalette?: Palette
 }
 
 export type ShapeKind = 'quad' | 'polygon'

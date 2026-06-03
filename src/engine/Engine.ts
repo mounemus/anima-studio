@@ -1,6 +1,5 @@
 import * as THREE from 'three'
-import type { Scene as ArtScene, VisualParams } from '../types/scene'
-import { BoidsOrganism, ParticlesOrganism, TendrilsOrganism, CellsOrganism, WormsOrganism, SporesOrganism } from './organisms'
+import type { Scene as ArtScene, VisualParams, MappingShape, OrganismKind } from '../types/scene'
 import type { OrganismLike } from './organisms'
 import { MappingPass } from './MappingPass'
 import { senseBus } from '../senses/SenseBus'
@@ -12,6 +11,7 @@ import { setFlow } from './Flow'
 import { setTrackers } from './ColorTracker'
 import { resolveShapeTexture, pruneShapeTextures, setUseMaskedBody } from './ContentSources'
 import { startMaskedWebcam, stopMaskedWebcam } from './MaskedWebcam'
+import { createOrganism, ORGANISM_DEFAULTS } from './OrganismFactory'
 
 export class Engine {
   private renderer: THREE.WebGLRenderer
@@ -35,6 +35,13 @@ export class Engine {
   private currentTextureUrl: string | null = null
   private evolutionT = 0
   private baseValues: Record<string, number> = {}
+  /** Per-zone independent organism instances. */
+  private zoneOrganisms = new Map<string, {
+    kind: OrganismKind
+    organism: OrganismLike
+    rt: THREE.WebGLRenderTarget
+    scene: THREE.Scene
+  }>()
 
   constructor(container: HTMLElement) {
     this.container = container
@@ -115,14 +122,7 @@ export class Engine {
       this.organism = null
     }
     const aspect = this.width / this.height
-    switch (s.organism.kind) {
-      case 'boids': this.organism = new BoidsOrganism(s.organism.values, s.visual); break
-      case 'particles': this.organism = new ParticlesOrganism(s.organism.values, s.visual); break
-      case 'tendrils': this.organism = new TendrilsOrganism(s.organism.values, s.visual); break
-      case 'cells': this.organism = new CellsOrganism(s.organism.values, s.visual); break
-      case 'worms': this.organism = new WormsOrganism(s.organism.values, s.visual); break
-      case 'spores': this.organism = new SporesOrganism(s.organism.values, s.visual); break
-    }
+    this.organism = createOrganism(s.organism.kind, s.organism.values, s.visual)
     if (this.organism) {
       this.organism.setAspect(aspect)
       ;(this.organism as any).obstacles = s.obstacles ?? []
@@ -197,13 +197,66 @@ export class Engine {
     // Update the masked-body flag BEFORE resolving textures so webcam zones get the right one
     setUseMaskedBody(!!c?.arMaskBody)
     if (c?.arMaskBody) startMaskedWebcam(); else stopMaskedWebcam()
+    // Sync per-zone organisms BEFORE resolving textures so the zone RT exists
+    this.syncZoneOrganisms(shapes)
     const ids = new Set<string>()
     for (const s of shapes) {
       ids.add(s.id)
-      const tex = resolveShapeTexture(s.id, s.content)
-      this.mapping.setShapeTexture(s.id, tex)
+      // If this zone has its own organism, use its RT as the source texture.
+      // Otherwise fall back to the standard content (video/image/webcam/main organism).
+      const zoneOrg = this.zoneOrganisms.get(s.id)
+      if (zoneOrg) {
+        this.mapping.setShapeTexture(s.id, zoneOrg.rt.texture)
+      } else {
+        const tex = resolveShapeTexture(s.id, s.content)
+        this.mapping.setShapeTexture(s.id, tex)
+      }
     }
     pruneShapeTextures(ids)
+  }
+
+  private syncZoneOrganisms(shapes: MappingShape[]) {
+    const aspect = this.width / this.height
+    const wanted = new Map<string, { kind: OrganismKind; values: any }>()
+    for (const s of shapes) {
+      if (s.content?.type === 'organism' && s.content.organismKind) {
+        wanted.set(s.id, {
+          kind: s.content.organismKind,
+          values: s.content.organismValues ?? ORGANISM_DEFAULTS[s.content.organismKind],
+        })
+      }
+    }
+    // Dispose removed
+    for (const [id, entry] of this.zoneOrganisms) {
+      if (!wanted.has(id) || wanted.get(id)!.kind !== entry.kind) {
+        entry.scene.remove(entry.organism.mesh)
+        entry.organism.dispose()
+        entry.rt.dispose()
+        this.zoneOrganisms.delete(id)
+      }
+    }
+    // Create / update
+    for (const [id, params] of wanted) {
+      let entry = this.zoneOrganisms.get(id)
+      if (!entry) {
+        const rt = new THREE.WebGLRenderTarget(512, 512, { type: THREE.HalfFloatType })
+        const sc = new THREE.Scene()
+        const visual = this.currentScene?.visual ?? {
+          palette: { bg: '#000000', primary: '#00ffa3', secondary: '#00d4ff', glow: '#7c3aed' },
+          bloom: 0.5, feedback: 0.92, blendMode: 'add' as const, texture: null,
+        }
+        const org = createOrganism(params.kind, params.values, visual)
+        org.setAspect(1)
+        sc.add(org.mesh)
+        entry = { kind: params.kind, organism: org, rt, scene: sc }
+        this.zoneOrganisms.set(id, entry)
+      }
+      entry.organism.updateParams(params.values)
+      // Inherit scene-level obstacles for interaction within the zone organism too
+      ;(entry.organism as any).obstacles = this.currentScene?.obstacles ?? []
+    }
+    // Touch aspect to avoid stale warning
+    void aspect
   }
 
   loop = () => {
@@ -245,10 +298,18 @@ export class Engine {
     }
 
     if (this.organism) this.organism.update(dt)
+    // Update + render per-zone organisms FIRST so their RTs are fresh for the mapping pass
+    for (const entry of this.zoneOrganisms.values()) {
+      entry.organism.update(dt)
+      this.renderer.setRenderTarget(entry.rt)
+      this.renderer.setClearColor(this.bg, 1)
+      this.renderer.clear()
+      this.renderer.render(entry.scene, this.camera)
+    }
     // After organisms moved, push counters → audio
     soundEngine.tick()
 
-    // render organisms to mainRT
+    // render main organism to mainRT
     this.renderer.setRenderTarget(this.mainRT)
     this.renderer.setClearColor(this.bg, this.bgAlpha)
     this.renderer.clear()
@@ -289,6 +350,8 @@ export class Engine {
     cancelAnimationFrame(this.rafId)
     window.removeEventListener('resize', this.resize)
     this.organism?.dispose()
+    for (const e of this.zoneOrganisms.values()) { e.organism.dispose(); e.rt.dispose() }
+    this.zoneOrganisms.clear()
     this.mapping.dispose()
     this.mainRT.dispose(); this.feedbackRT.dispose(); this.feedbackRT2.dispose()
     this.renderer.dispose()

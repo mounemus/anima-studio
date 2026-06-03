@@ -1155,9 +1155,19 @@ function ShapeContentEditor({ shape, update }: { shape: import('../types/scene')
 
   const setType = (type: 'organism' | 'video' | 'image' | 'webcam') => {
     if (type === 'organism' || type === 'webcam') {
-      update({ content: { type, opacity: content.opacity ?? 1 } })
+      update({ content: { ...content, type, opacity: content.opacity ?? 1 } })
     } else {
       update({ content: { type, src: content.type === type ? content.src : undefined, label: content.label, opacity: content.opacity ?? 1 } })
+    }
+  }
+  const setZoneOrganism = (kind: 'scene' | OrganismKind) => {
+    if (kind === 'scene') {
+      const next = { ...content }
+      delete next.organismKind
+      delete next.organismValues
+      update({ content: next })
+    } else {
+      update({ content: { ...content, type: 'organism', organismKind: kind } })
     }
   }
 
@@ -1207,6 +1217,28 @@ function ShapeContentEditor({ shape, update }: { shape: import('../types/scene')
         <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
           Utilise le flux de la caméra (active <strong>Caméra</strong> ou <strong>AR</strong>).
         </p>
+      )}
+      {content.type === 'organism' && (
+        <div style={{ marginBottom: 10, padding: 8, background: 'var(--bg-elev-2)', borderRadius: 'var(--radius-sm)' }}>
+          <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 5 }}>Organisme de cette zone</div>
+          <select
+            value={content.organismKind ?? 'scene'}
+            onChange={(e) => setZoneOrganism(e.target.value as 'scene' | OrganismKind)}
+            style={{ width: '100%', fontSize: 12 }}
+          >
+            <option value="scene">▦ Organisme de la scène (partagé)</option>
+            <option value="boids">🐦 Boids (instance dédiée)</option>
+            <option value="particles">✨ Particules (instance dédiée)</option>
+            <option value="tendrils">🌿 Tendrils (instance dédiée)</option>
+            <option value="cells">🧫 Cellules (instance dédiée)</option>
+            <option value="worms">🐍 Worms (instance dédiée)</option>
+            <option value="spores">🌸 Spores (instance dédiée)</option>
+          </select>
+          <p style={{ fontSize: 10, color: 'var(--text-mute)', marginTop: 5, lineHeight: 1.4 }}>
+            <strong>Partagé</strong> : la zone affiche l'organisme principal de la scène.<br />
+            <strong>Dédié</strong> : cette zone simule SON propre organisme (paramètres par défaut), indépendant des autres zones.
+          </p>
+        </div>
       )}
       <Slider
         label="Opacité"

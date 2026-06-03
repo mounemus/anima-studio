@@ -360,6 +360,19 @@ input[type="range"]::-webkit-slider-thumb {
   user-select: none;
 }
 .mapping-rotate-handle:hover { background: rgba(124, 58, 237, 0.35); }
+
+.master-sound-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 250px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  padding: 10px 12px;
+  z-index: 250;
+}
 .mapping-edge {
   stroke: var(--accent); stroke-width: 1; fill: none;
   stroke-dasharray: 4 4; opacity: 0.7;

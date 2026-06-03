@@ -10,6 +10,7 @@ import { startAudio, stopAudio } from '../senses/Audio'
 import { startLight, stopLight } from '../senses/Light'
 import { enterFullscreen, startRecording, stopRecording, screenshot } from '../lib/recorder'
 import { isXRARSupported, startXR, endXR } from '../lib/webxr'
+import { MasterSound } from './MasterSound'
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement>
@@ -228,6 +229,7 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
           {current?.organism.values && 'count' in current.organism.values ? `${(current.organism.values as any).count} agents` : ''}
         </span>
 
+        <MasterSound />
         <button onClick={shot} className="ghost icon" title="Capture PNG"><ImageDown size={16} /></button>
         <button onClick={toggleRec} className={`ghost icon ${recOn ? 'rec active' : 'rec'}`} title={recOn ? 'Arrêter l\'enregistrement' : 'Enregistrer WebM'}>
           <Video size={16} />
