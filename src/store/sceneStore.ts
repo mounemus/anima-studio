@@ -23,7 +23,8 @@ interface SceneStoreState {
   updateVisual: (v: Partial<VisualParams>) => void
   updatePalette: (p: Partial<VisualParams['palette']>) => void
   updateMapping: (m: Partial<MappingConfig>) => void
-  addMappingShape: () => void
+  addMappingShape: (kind?: 'quad' | 'polygon') => void
+  addMappingShapes: (shapes: MappingShape[]) => void
   removeMappingShape: (id: string) => void
   updateMappingShape: (id: string, patch: Partial<MappingShape>) => void
   selectMappingShape: (idx: number) => void
@@ -163,11 +164,23 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
     debouncePersist(() => get().persistCurrent())
   },
 
-  addMappingShape: () => {
+  addMappingShape: (kind = 'quad' as 'quad' | 'polygon') => {
     set((st) => {
       const next = st.scenes.map((s) => {
         if (s.id !== st.currentId) return s
-        const shapes = [...(s.mapping.shapes ?? []), defaultShape(s.mapping.shapes?.length ?? 0)]
+        const shapes = [...(s.mapping.shapes ?? []), defaultShape(s.mapping.shapes?.length ?? 0, kind)]
+        return { ...s, mapping: { ...s.mapping, shapes, selectedShape: shapes.length - 1, enabled: true }, updatedAt: Date.now() }
+      })
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  addMappingShapes: (newShapes: MappingShape[]) => {
+    set((st) => {
+      const next = st.scenes.map((s) => {
+        if (s.id !== st.currentId) return s
+        const shapes = [...(s.mapping.shapes ?? []), ...newShapes]
         return { ...s, mapping: { ...s.mapping, shapes, selectedShape: shapes.length - 1, enabled: true }, updatedAt: Date.now() }
       })
       return { scenes: next }

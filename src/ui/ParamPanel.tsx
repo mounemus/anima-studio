@@ -6,6 +6,8 @@ import { LiveImg2Img } from '../lib/liveImg2Img'
 import { soundEngine } from '../engine/SoundEngine'
 import { SOUND_PRESETS, applyPreset } from '../lib/soundPresets'
 import { JOINT_LABELS } from '../senses/SenseBus'
+import { importSVG } from '../lib/svgImport'
+import { defaultShape } from '../types/scene'
 
 function hsvToCss(h: number, s: number, v: number): string {
   // HSV → HSL: l = v - vs/2, s_hsl = (v - l) / min(l, 1 - l)
@@ -928,6 +930,7 @@ function MappingTab() {
   const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
   const update = useSceneStore((s) => s.updateMapping)
   const addShape = useSceneStore((s) => s.addMappingShape)
+  const addShapes = useSceneStore((s) => s.addMappingShapes)
   const removeShape = useSceneStore((s) => s.removeMappingShape)
   const updateShape = useSceneStore((s) => s.updateMappingShape)
   const selectShape = useSceneStore((s) => s.selectMappingShape)
@@ -936,6 +939,25 @@ function MappingTab() {
   const shapes = m.shapes ?? []
   const selectedIdx = m.selectedShape ?? 0
   const selectedShape = shapes[selectedIdx]
+  const svgInputRef = useRef<HTMLInputElement>(null)
+
+  const onImportSVG = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    try {
+      const imported = await importSVG(f)
+      if (imported.length === 0) { alert('Aucune forme exploitable dans ce SVG'); return }
+      const offset = (shapes.length)
+      const newShapes = imported.map((s, i) => {
+        const base = defaultShape(offset + i, 'polygon')
+        return { ...base, name: s.name, points: s.points }
+      })
+      addShapes(newShapes)
+    } catch (err: any) {
+      alert('Import SVG échec : ' + (err?.message ?? err))
+    }
+    e.target.value = ''
+  }
 
   return (
     <div className="section">
@@ -997,9 +1019,18 @@ function MappingTab() {
           </div>
         ))}
       </div>
-      <button onClick={addShape} style={{ width: '100%', justifyContent: 'center' }}>
-        <Plus size={12} /> Ajouter une zone
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+        <button onClick={() => addShape('quad')} style={{ justifyContent: 'center', fontSize: 12 }}>
+          <Plus size={12} /> Quad
+        </button>
+        <button onClick={() => addShape('polygon')} style={{ justifyContent: 'center', fontSize: 12 }}>
+          <Pentagon size={12} /> Polygone
+        </button>
+      </div>
+      <button onClick={() => svgInputRef.current?.click()} style={{ width: '100%', justifyContent: 'center', fontSize: 12, marginTop: 4 }}>
+        <Download size={12} style={{ transform: 'rotate(180deg)' }} /> Importer SVG (paths / polygones)
       </button>
+      <input ref={svgInputRef} type="file" accept=".svg,image/svg+xml" style={{ display: 'none' }} onChange={onImportSVG} />
 
       {selectedShape && (
         <div style={{ marginTop: 12, padding: 10, background: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>

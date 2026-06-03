@@ -130,13 +130,20 @@ export interface ShapeContent {
   opacity?: number
 }
 
+export type ShapeKind = 'quad' | 'polygon'
+
 export interface MappingShape {
   id: string
   name: string
+  /** 'quad' = 4 corners with perspective inverse-bilinear warp.
+   *  'polygon' = N points polygon mask (no warp, just shape clip + bbox UV). */
+  kind?: ShapeKind
+  /** Used when kind === 'quad' (default) */
   corners: [Vec2, Vec2, Vec2, Vec2]
+  /** Used when kind === 'polygon' — list of vertices in canvas 0..1 space, CCW order. */
+  points?: Vec2[]
   source: SourceRect
   enabled: boolean
-  /** What this zone displays. Defaults to the scene's organism. */
   content?: ShapeContent
 }
 
@@ -261,16 +268,28 @@ export const defaultObstacle = (kind: ObstacleKind, i = 0): Obstacle => {
   return base
 }
 
-export const defaultShape = (i = 0): MappingShape => ({
-  id: `shape-${Date.now().toString(36)}-${i}`,
-  name: `Zone ${i + 1}`,
-  corners: [
-    { x: 0.1 + i * 0.05, y: 0.1 + i * 0.05 },
-    { x: 0.9 + i * 0.05, y: 0.1 + i * 0.05 },
-    { x: 0.9 + i * 0.05, y: 0.9 + i * 0.05 },
-    { x: 0.1 + i * 0.05, y: 0.9 + i * 0.05 },
-  ],
-  source: { x: 0, y: 0, w: 1, h: 1 },
-  enabled: true,
-  content: { type: 'organism', opacity: 1 },
-})
+export const defaultShape = (i = 0, kind: ShapeKind = 'quad'): MappingShape => {
+  const base: MappingShape = {
+    id: `shape-${Date.now().toString(36)}-${i}`,
+    name: `Zone ${i + 1}`,
+    kind,
+    corners: [
+      { x: 0.1 + i * 0.05, y: 0.1 + i * 0.05 },
+      { x: 0.9 + i * 0.05, y: 0.1 + i * 0.05 },
+      { x: 0.9 + i * 0.05, y: 0.9 + i * 0.05 },
+      { x: 0.1 + i * 0.05, y: 0.9 + i * 0.05 },
+    ],
+    source: { x: 0, y: 0, w: 1, h: 1 },
+    enabled: true,
+    content: { type: 'organism', opacity: 1 },
+  }
+  if (kind === 'polygon') {
+    // Default = 6-sided polygon (hexagon)
+    const cx = 0.5 + i * 0.05, cy = 0.5 + i * 0.05, r = 0.3
+    base.points = Array.from({ length: 6 }, (_, k) => {
+      const a = (k / 6) * Math.PI * 2 - Math.PI / 2
+      return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r }
+    })
+  }
+  return base
+}

@@ -131,7 +131,84 @@ interface ShapeMesh {
   shape: MappingShape
   mesh: THREE.Mesh
   uniforms: Record<string, THREE.IUniform>
+  kind: 'quad' | 'polygon'
 }
+
+const MAX_POLY_POINTS = 64
+
+const FRAG_POLYGON = `
+  precision highp float;
+  varying vec2 vUv;
+  uniform sampler2D uTex;
+  uniform vec2 uPoints[${MAX_POLY_POINTS}];
+  uniform int uPointCount;
+  uniform vec4 uBbox;                  // minX, minY, w, h  (already with Y flipped same as points)
+  uniform vec4 uSourceRect;
+  uniform vec4 uBlend;
+  uniform float uGamma;
+  uniform int uPattern;
+  uniform vec3 uTint;
+  uniform float uTransparent;
+  uniform float uOpacity;
+
+  // Ray-casting point-in-polygon
+  bool insidePolygon(vec2 p) {
+    bool inside = false;
+    for (int i = 0; i < ${MAX_POLY_POINTS}; i++) {
+      if (i >= uPointCount) break;
+      vec2 a = uPoints[i];
+      int jj = i == 0 ? uPointCount - 1 : i - 1;
+      vec2 b = vec2(0.0);
+      for (int k = 0; k < ${MAX_POLY_POINTS}; k++) {
+        if (k == jj) { b = uPoints[k]; break; }
+      }
+      if (((a.y > p.y) != (b.y > p.y)) && (p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  vec3 patternColor(vec2 uv) {
+    if (uPattern == 1) {
+      vec2 g = abs(fract(uv * 10.0) - 0.5);
+      float line = step(0.48, max(g.x, g.y));
+      return mix(vec3(0.05), vec3(0.0, 1.0, 0.6), line);
+    }
+    if (uPattern == 2) return vec3(1.0);
+    if (uPattern == 3) return vec3(0.0);
+    if (uPattern == 4) {
+      float i = floor(uv.x * 7.0);
+      return mix(vec3(0.75), vec3(0.5, 0.0, 0.8), step(0.5, fract(i / 2.0)));
+    }
+    if (uPattern == 5) return vec3(uv.x, uv.y, 0.5);
+    if (uPattern == 6) return vec3(uv.x, uv.y, 0.5);
+    return vec3(0.0);
+  }
+
+  void main() {
+    if (!insidePolygon(vUv)) { gl_FragColor = vec4(0.0); return; }
+    // UV: map vUv from polygon's bbox to [0,1] then to source rect
+    vec2 local = (vUv - uBbox.xy) / uBbox.zw;
+    local = clamp(local, 0.0, 1.0);
+    vec2 srcUv = vec2(
+      uSourceRect.x + local.x * uSourceRect.z,
+      1.0 - (uSourceRect.y + local.y * uSourceRect.w)
+    );
+    vec3 col;
+    if (uPattern > 0) col = patternColor(local);
+    else col = texture2D(uTex, srcUv).rgb;
+    col *= uTint;
+    float bl = 1.0;
+    if (uBlend.x > 0.0) bl *= pow(smoothstep(0.0, uBlend.x, local.x), uGamma);
+    if (uBlend.y > 0.0) bl *= pow(smoothstep(0.0, uBlend.y, 1.0 - local.x), uGamma);
+    if (uBlend.z > 0.0) bl *= pow(smoothstep(0.0, uBlend.z, local.y), uGamma);
+    if (uBlend.w > 0.0) bl *= pow(smoothstep(0.0, uBlend.w, 1.0 - local.y), uGamma);
+    vec3 outCol = col * bl;
+    float a = mix(1.0, max(max(outCol.r, outCol.g), outCol.b), uTransparent);
+    gl_FragColor = vec4(outCol * uOpacity, a * uOpacity);
+  }
+`
 
 const PATTERN_INDEX: Record<TestPattern, number> = {
   none: 0, grid: 1, white: 2, black: 3, colorbars: 4, crosshair: 5, gradient: 6,
@@ -149,41 +226,89 @@ export class MappingPass {
   constructor() {}
 
   private makeShape(shape: MappingShape, cfg: MappingConfig): ShapeMesh {
-    const uniforms: Record<string, THREE.IUniform> = {
-      uTex: { value: this.sourceTex },
-      uC0: { value: new THREE.Vector2() },
-      uC1: { value: new THREE.Vector2() },
-      uC2: { value: new THREE.Vector2() },
-      uC3: { value: new THREE.Vector2() },
-      uSourceRect: { value: new THREE.Vector4(0, 0, 1, 1) },
-      uBlend: { value: new THREE.Vector4(0, 0, 0, 0) },
-      uGamma: { value: 2.2 },
-      uPattern: { value: 0 },
-      uTint: { value: new THREE.Vector3(1, 1, 1) },
-      uTransparent: { value: this.transparent },
+    const kind = shape.kind === 'polygon' ? 'polygon' : 'quad'
+    let uniforms: Record<string, THREE.IUniform>
+    let mat: THREE.ShaderMaterial
+    if (kind === 'polygon') {
+      uniforms = {
+        uTex: { value: this.sourceTex },
+        uPoints: { value: Array.from({ length: MAX_POLY_POINTS }, () => new THREE.Vector2(0, 0)) },
+        uPointCount: { value: 0 },
+        uBbox: { value: new THREE.Vector4(0, 0, 1, 1) },
+        uSourceRect: { value: new THREE.Vector4(0, 0, 1, 1) },
+        uBlend: { value: new THREE.Vector4(0, 0, 0, 0) },
+        uGamma: { value: 2.2 },
+        uPattern: { value: 0 },
+        uTint: { value: new THREE.Vector3(1, 1, 1) },
+        uTransparent: { value: this.transparent },
+        uOpacity: { value: 1.0 },
+      }
+      mat = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: VERT,
+        fragmentShader: FRAG_POLYGON,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+      })
+    } else {
+      uniforms = {
+        uTex: { value: this.sourceTex },
+        uC0: { value: new THREE.Vector2() },
+        uC1: { value: new THREE.Vector2() },
+        uC2: { value: new THREE.Vector2() },
+        uC3: { value: new THREE.Vector2() },
+        uSourceRect: { value: new THREE.Vector4(0, 0, 1, 1) },
+        uBlend: { value: new THREE.Vector4(0, 0, 0, 0) },
+        uGamma: { value: 2.2 },
+        uPattern: { value: 0 },
+        uTint: { value: new THREE.Vector3(1, 1, 1) },
+        uTransparent: { value: this.transparent },
+        uOpacity: { value: 1.0 },
+      }
+      mat = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: VERT,
+        fragmentShader: FRAG,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+      })
     }
-    uniforms.uOpacity = { value: 1.0 }
-    const mat = new THREE.ShaderMaterial({
-      uniforms,
-      vertexShader: VERT,
-      fragmentShader: FRAG,
-      transparent: true,
-      depthTest: false,
-      depthWrite: false,
-    })
     const geo = new THREE.PlaneGeometry(2, 2)
     const mesh = new THREE.Mesh(geo, mat)
-    const sm: ShapeMesh = { shape, mesh, uniforms }
+    const sm: ShapeMesh = { shape, mesh, uniforms, kind }
     this.applyToShape(sm, cfg)
     return sm
   }
 
   private applyToShape(sm: ShapeMesh, cfg: MappingConfig) {
-    const c = sm.shape.corners
-    ;(sm.uniforms.uC0.value as THREE.Vector2).set(c[0].x, 1 - c[0].y)
-    ;(sm.uniforms.uC1.value as THREE.Vector2).set(c[1].x, 1 - c[1].y)
-    ;(sm.uniforms.uC2.value as THREE.Vector2).set(c[2].x, 1 - c[2].y)
-    ;(sm.uniforms.uC3.value as THREE.Vector2).set(c[3].x, 1 - c[3].y)
+    if (sm.kind === 'quad') {
+      const c = sm.shape.corners
+      ;(sm.uniforms.uC0.value as THREE.Vector2).set(c[0].x, 1 - c[0].y)
+      ;(sm.uniforms.uC1.value as THREE.Vector2).set(c[1].x, 1 - c[1].y)
+      ;(sm.uniforms.uC2.value as THREE.Vector2).set(c[2].x, 1 - c[2].y)
+      ;(sm.uniforms.uC3.value as THREE.Vector2).set(c[3].x, 1 - c[3].y)
+    } else {
+      const pts = sm.shape.points ?? []
+      const arr = sm.uniforms.uPoints.value as THREE.Vector2[]
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+      for (let i = 0; i < MAX_POLY_POINTS; i++) {
+        if (i < pts.length) {
+          const px = pts[i].x, py = 1 - pts[i].y    // Y flip to match clip space
+          arr[i].set(px, py)
+          if (px < minX) minX = px
+          if (py < minY) minY = py
+          if (px > maxX) maxX = px
+          if (py > maxY) maxY = py
+        } else {
+          arr[i].set(0, 0)
+        }
+      }
+      sm.uniforms.uPointCount.value = Math.min(pts.length, MAX_POLY_POINTS)
+      if (!isFinite(minX)) { minX = 0; minY = 0; maxX = 1; maxY = 1 }
+      ;(sm.uniforms.uBbox.value as THREE.Vector4).set(minX, minY, Math.max(1e-4, maxX - minX), Math.max(1e-4, maxY - minY))
+    }
     const sr = sm.shape.source
     ;(sm.uniforms.uSourceRect.value as THREE.Vector4).set(sr.x, sr.y, sr.w, sr.h)
     const b = cfg.edgeBlend
@@ -232,8 +357,10 @@ export class MappingPass {
       }]
     })()
 
-    // Diff: rebuild if shape count changed; otherwise update in place
-    if (this.shapes.length !== targetShapes.length) {
+    // Diff: rebuild if shape count or kind changed; otherwise update in place
+    const needRebuild = this.shapes.length !== targetShapes.length ||
+      this.shapes.some((sm, i) => sm.kind !== (targetShapes[i].kind === 'polygon' ? 'polygon' : 'quad'))
+    if (needRebuild) {
       for (const sm of this.shapes) {
         this.scene.remove(sm.mesh)
         sm.mesh.geometry.dispose()

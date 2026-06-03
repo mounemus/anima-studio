@@ -306,6 +306,28 @@ input[type="range"]::-webkit-slider-thumb {
   z-index: 10;
 }
 .mapping-corner:active { cursor: grabbing; }
+.mapping-corner.poly-point {
+  width: 14px; height: 14px; margin: -7px;
+  background: var(--accent-2);
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.7);
+}
+.poly-mid {
+  position: absolute;
+  width: 16px; height: 16px;
+  margin: -8px;
+  background: rgba(7, 8, 13, 0.85);
+  border: 1px solid var(--accent-2);
+  border-radius: 50%;
+  color: var(--accent-2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 9;
+  opacity: 0.55;
+  transition: opacity 0.12s, transform 0.12s;
+}
+.poly-mid:hover { opacity: 1; transform: scale(1.25); }
 .mapping-edge {
   stroke: var(--accent); stroke-width: 1; fill: none;
   stroke-dasharray: 4 4; opacity: 0.7;
