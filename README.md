@@ -24,13 +24,45 @@ npm run dev
 
 Ouvre `http://localhost:5173`. Active la caméra et le micro dans la barre du haut, puis joue.
 
-## Variables d'environnement (Vercel)
+## Configuration (Supabase + clés API)
 
-| Variable | Description |
-|---|---|
-| `ANTHROPIC_API_KEY` | Clé API Anthropic pour le compagnon IA (`/api/claude`) |
+Anima Studio embarque une page **`/admin`** qui te permet de gérer toutes tes clés API (Anthropic, fal.ai, OpenAI, Replicate, ElevenLabs, Stability) **sans redéployer**. Les clés sont chiffrées AES-256-GCM avant d'être stockées dans Supabase.
 
-Le compagnon IA est optionnel — l'outil fonctionne sans, tu n'auras juste pas le chat.
+### Étapes (une seule fois)
+
+1. **Crée un projet Supabase gratuit** → https://supabase.com/dashboard
+2. **Lance la migration** : Project → SQL Editor → colle le contenu de `supabase/migrations/0001_init.sql` → Run
+3. **Récupère 2 clés** (Project Settings → API) :
+   - `Project URL` → `SUPABASE_URL`
+   - `service_role` key (secrète, ne JAMAIS exposer côté client) → `SUPABASE_SERVICE_ROLE_KEY`
+4. **Génère 2 secrets** localement :
+   ```bash
+   # ENCRYPT_KEY : 32+ caractères pour chiffrer les clés API
+   openssl rand -hex 32
+   # JWT_SECRET : 16+ caractères pour signer les sessions admin
+   openssl rand -hex 32
+   ```
+5. **Ajoute les 4 variables sur Vercel** :
+   ```bash
+   vercel env add SUPABASE_URL production
+   vercel env add SUPABASE_SERVICE_ROLE_KEY production
+   vercel env add ENCRYPT_KEY production
+   vercel env add JWT_SECRET production
+   vercel deploy --prod
+   ```
+6. **Ouvre `/admin`** : tu seras invité à créer ton compte admin (premier lancement), puis tu pourras coller toutes tes clés API dans la dashboard.
+
+### Variables d'environnement résumées
+
+| Variable | Obligatoire | Description |
+|---|---|---|
+| `SUPABASE_URL` | oui | URL du projet Supabase |
+| `SUPABASE_SERVICE_ROLE_KEY` | oui | Clé service_role (serveur uniquement) |
+| `ENCRYPT_KEY` | oui | 32+ caractères pour chiffrer les clés API |
+| `JWT_SECRET` | oui | 16+ caractères pour signer les sessions |
+| `ANTHROPIC_API_KEY` | non | Fallback si pas configurée via /admin |
+
+Les clés API spécifiques aux providers (`ANTHROPIC_API_KEY`, `FAL_KEY`, …) **n'ont plus besoin d'être en env var** : tu les gères depuis `/admin`.
 
 ## Stack
 
@@ -47,16 +79,23 @@ Le compagnon IA est optionnel — l'outil fonctionne sans, tu n'auras juste pas 
 ```
 src/
 ├── engine/           # Three.js stage, organismes, mapping shader
-│   ├── Engine.ts
-│   ├── MappingPass.ts
-│   └── organisms/    # Boids, Particles, Tendrils, Cells
 ├── senses/           # SenseBus (refs) + Hands/Audio/Light
 ├── store/            # sceneStore Zustand
 ├── lib/              # persistence (idb), defaultScenes, recorder
 ├── types/            # Scene type
-└── ui/               # Stage, SceneList, ParamPanel, TopBar, AIChat, MappingOverlay
+├── ui/               # Stage, SceneList, ParamPanel, TopBar, AIChat, MappingOverlay
+└── admin/            # AdminPage, AdminLogin, AdminSetup, AdminDashboard
+
 api/
-└── claude.ts         # Vercel edge function
+├── claude.ts                # Compagnon IA (lit la clé depuis Supabase)
+├── _lib/                    # supabase client, crypto AES-GCM, auth JWT, settings
+└── admin/
+    ├── status.ts            # Health check (env vars + setup state)
+    ├── setup.ts             # Création du compte admin (1er lancement)
+    ├── login.ts | logout.ts | me.ts
+    └── settings.ts          # GET/PUT des clés API chiffrées
+
+supabase/migrations/0001_init.sql   # Schéma SQL initial
 ```
 
 ## Concept

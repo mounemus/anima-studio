@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown } from 'lucide-react'
+import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { useSceneStore } from '../store/sceneStore'
 import { startHands, stopHands, createCameraStream } from '../senses/Hands'
 import { startAudio, stopAudio } from '../senses/Audio'
@@ -139,6 +140,9 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, canvasGetter, stageRef }:
         </button>
         <button onClick={toggleFs} className="ghost icon" title="Plein écran"><Maximize2 size={16} /></button>
         <button onClick={onToggleAI} className="ghost icon" title="Compagnon IA"><MessageCircle size={16} /></button>
+        <Link to="/admin" title="Administration" style={{ display: 'inline-flex' }}>
+          <button className="ghost icon"><Settings size={16} /></button>
+        </Link>
       </div>
       {toast && <div className={`toast ${toast.err ? 'error' : ''}`}>{toast.msg}</div>}
     </>

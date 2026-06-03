@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { getSetting } from './_lib/settings'
 
 export const config = { runtime: 'edge' }
 
@@ -40,8 +41,8 @@ export default async function handler(req: Request): Promise<Response> {
   try { body = await req.json() } catch { return json({ error: 'Bad JSON' }, 400) }
   const message = body.message?.toString().slice(0, 2000)
   if (!message) return json({ error: 'Missing message' }, 400)
-  const apiKey = (globalThis as any).process?.env?.ANTHROPIC_API_KEY
-  if (!apiKey) return json({ error: 'ANTHROPIC_API_KEY non configurée côté serveur Vercel.' }, 500)
+  const apiKey = await getSetting('ANTHROPIC_API_KEY')
+  if (!apiKey) return json({ error: 'Clé Anthropic non configurée. Va sur /admin pour la renseigner.' }, 500)
 
   const client = new Anthropic({ apiKey })
   try {
