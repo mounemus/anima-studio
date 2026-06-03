@@ -19,15 +19,22 @@ export default async function handler(req: Request): Promise<Response> {
   const voice = body.voice || 'nova'
   const speed = Math.max(0.5, Math.min(2, body.speed ?? 1))
 
-  const r = await fetch('https://api.openai.com/v1/audio/speech', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'tts-1', input: text, voice, speed, response_format: 'mp3' }),
-  })
-  if (!r.ok) {
+  // Try models in order of preference, falling back if the project lacks access
+  const MODELS = ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd']
+  let lastErr = ''
+  for (const model of MODELS) {
+    const r = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, input: text, voice, speed, response_format: 'mp3' }),
+    })
+    if (r.ok) {
+      return new Response(r.body, { status: 200, headers: { 'content-type': 'audio/mpeg', 'cache-control': 'no-store', 'x-anima-model': model } })
+    }
     const t = await r.text()
-    return new Response(JSON.stringify({ error: `OpenAI ${r.status}: ${t.slice(0, 200)}` }), { status: 502, headers: { 'content-type': 'application/json' } })
+    lastErr = `${r.status}: ${t.slice(0, 200)}`
+    // If it's a no-access error, try next model; otherwise stop.
+    if (!/does not have access|model_not_found/i.test(t)) break
   }
-  // Stream MP3 back to the client
-  return new Response(r.body, { status: 200, headers: { 'content-type': 'audio/mpeg', 'cache-control': 'no-store' } })
+  return new Response(JSON.stringify({ error: `OpenAI TTS indisponible — ${lastErr}` }), { status: 502, headers: { 'content-type': 'application/json' } })
 }
