@@ -1,4 +1,43 @@
-/** Voice I/O — hold-to-talk Whisper + OpenAI TTS playback */
+/**
+ * Voice I/O — tries OpenAI Whisper/TTS first, falls back to browser Web Speech APIs.
+ * Browser APIs work offline, no key required (Chrome / Edge).
+ */
+
+// ============ Speech Recognition (input) ============
+
+const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+
+export function hasBrowserSTT(): boolean { return !!SpeechRecognitionCtor }
+
+/** Live browser-based recognition: starts mic, resolves with transcript when user stops speaking. */
+export function recognizeLive(lang = 'fr-FR'): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!SpeechRecognitionCtor) return reject(new Error('SpeechRecognition non disponible (utilise Chrome/Edge)'))
+    const r: any = new SpeechRecognitionCtor()
+    r.lang = lang
+    r.continuous = false
+    r.interimResults = false
+    r.maxAlternatives = 1
+    let resolved = false
+    r.onresult = (e: any) => {
+      const t = e.results?.[0]?.[0]?.transcript ?? ''
+      resolved = true
+      resolve(t.trim())
+    }
+    r.onerror = (e: any) => { if (!resolved) reject(new Error(e.error || 'recognition error')) }
+    r.onend = () => { if (!resolved) resolve('') }
+    try { r.start() } catch (e) { reject(e) }
+    // expose so we can stop
+    activeRecognition = r
+  })
+}
+
+let activeRecognition: any = null
+export function stopLiveRecognition() {
+  if (activeRecognition) { try { activeRecognition.stop() } catch {} ; activeRecognition = null }
+}
+
+// ============ MediaRecorder + Whisper (server) ============
 
 let recorder: MediaRecorder | null = null
 let chunks: Blob[] = []
@@ -29,7 +68,7 @@ export function stopRecording(): Promise<Blob | null> {
   })
 }
 
-export async function transcribe(blob: Blob, language = 'fr'): Promise<string> {
+export async function transcribeViaWhisper(blob: Blob, language = 'fr'): Promise<string> {
   const form = new FormData()
   form.append('file', blob, 'audio.webm')
   form.append('language', language)
@@ -39,24 +78,58 @@ export async function transcribe(blob: Blob, language = 'fr'): Promise<string> {
   return d.text ?? ''
 }
 
+// ============ Text-to-Speech (output) ============
+
 let currentAudio: HTMLAudioElement | null = null
+let lastTTSFailed = false   // sticky: once OpenAI denied, stop hammering
+
+export function hasBrowserTTS(): boolean { return 'speechSynthesis' in window }
+
+function speakBrowser(text: string, lang = 'fr-FR'): Promise<void> {
+  return new Promise((resolve) => {
+    if (!('speechSynthesis' in window)) return resolve()
+    window.speechSynthesis.cancel()
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = lang
+    u.rate = 1
+    u.pitch = 1
+    // prefer a French voice if available
+    const voices = window.speechSynthesis.getVoices()
+    const fr = voices.find((v) => v.lang?.startsWith('fr')) ?? voices.find((v) => v.default)
+    if (fr) u.voice = fr
+    u.onend = () => resolve()
+    u.onerror = () => resolve()
+    window.speechSynthesis.speak(u)
+  })
+}
 
 export async function speak(text: string, voice: string = 'nova', speed = 1): Promise<void> {
   stopSpeaking()
-  const r = await fetch('/api/openai/tts', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ text, voice, speed }),
-  })
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({}))
-    throw new Error(d.error || `tts ${r.status}`)
+  if (!text) return
+  // Try OpenAI TTS unless we know it's blocked
+  if (!lastTTSFailed) {
+    try {
+      const r = await fetch('/api/openai/tts', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text, voice, speed }),
+      })
+      if (r.ok) {
+        const blob = await r.blob()
+        const url = URL.createObjectURL(blob)
+        currentAudio = new Audio(url)
+        currentAudio.onended = () => { URL.revokeObjectURL(url); currentAudio = null }
+        await currentAudio.play()
+        return
+      } else {
+        // remember the failure to avoid retrying every time
+        lastTTSFailed = true
+        console.info('TTS OpenAI indisponible → fallback browser SpeechSynthesis')
+      }
+    } catch { lastTTSFailed = true }
   }
-  const blob = await r.blob()
-  const url = URL.createObjectURL(blob)
-  currentAudio = new Audio(url)
-  currentAudio.onended = () => { URL.revokeObjectURL(url); currentAudio = null }
-  await currentAudio.play()
+  // fallback
+  await speakBrowser(text)
 }
 
 export function stopSpeaking() {
@@ -65,4 +138,5 @@ export function stopSpeaking() {
     currentAudio.src = ''
     currentAudio = null
   }
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel()
 }

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Send, Sparkles, Mic, Volume2, VolumeX, Square } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
 import type { Scene } from '../types/scene'
-import { startRecording, stopRecording, transcribe, speak, stopSpeaking } from '../lib/voiceIO'
+import { startRecording, stopRecording, transcribeViaWhisper, recognizeLive, hasBrowserSTT, speak, stopSpeaking } from '../lib/voiceIO'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -91,22 +91,35 @@ export function AIChat({ open }: { open: boolean }) {
     }
   }
 
+  // Voice input strategy: prefer browser SpeechRecognition (free, instant),
+  // fall back to MediaRecorder + Whisper if browser API missing.
+  const useBrowserSTT = hasBrowserSTT()
+
   const beginRec = async () => {
     try {
-      await startRecording()
-      setRecording(true)
+      if (useBrowserSTT) {
+        setRecording(true)
+        const t = await recognizeLive('fr-FR')
+        setRecording(false)
+        if (t) send(t)
+      } else {
+        await startRecording()
+        setRecording(true)
+      }
     } catch (e: any) {
-      setMessages((m) => [...m, { role: 'assistant', text: `❌ Micro refusé: ${e?.message ?? e}` }])
+      setRecording(false)
+      setMessages((m) => [...m, { role: 'assistant', text: `❌ Micro: ${e?.message ?? e}` }])
     }
   }
   const endRec = async () => {
     if (!recording) return
+    if (useBrowserSTT) return  // recognition auto-ends on silence
     setRecording(false)
     setTranscribing(true)
     try {
       const blob = await stopRecording()
       if (!blob || blob.size < 200) { setTranscribing(false); return }
-      const text = await transcribe(blob, 'fr')
+      const text = await transcribeViaWhisper(blob, 'fr')
       setTranscribing(false)
       if (text) send(text)
     } catch (e: any) {
@@ -165,7 +178,7 @@ export function AIChat({ open }: { open: boolean }) {
           onPointerDown={beginRec}
           onPointerUp={endRec}
           onPointerLeave={endRec}
-          title="Maintenir pour parler (Whisper FR)"
+          title={useBrowserSTT ? 'Cliquer puis parler (FR)' : 'Maintenir pour parler (Whisper FR)'}
           style={{ flexShrink: 0 }}
           disabled={loading || transcribing}
         >
