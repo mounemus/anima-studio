@@ -156,20 +156,27 @@ const FRAG_POLYGON = `
   uniform float uTransparent;
   uniform float uOpacity;
 
-  // Ray-casting point-in-polygon
+  // Ray-casting point-in-polygon.
+  // O(N) — we walk consecutive pairs (prev, current) by carrying prev across
+  // iterations instead of the old O(N^2) inner-loop hack to read uPoints[jj].
+  // For N=64 this drops 4096 GLSL ops per pixel to 64.
   bool insidePolygon(vec2 p) {
     bool inside = false;
+    // Seed prev with the last vertex so the first edge wraps around to vertex 0.
+    vec2 prev = uPoints[0];
+    for (int k = 0; k < ${MAX_POLY_POINTS}; k++) {
+      if (k >= uPointCount) break;
+      prev = uPoints[k];
+    }
+    // Now prev holds uPoints[uPointCount-1]. Walk edges.
     for (int i = 0; i < ${MAX_POLY_POINTS}; i++) {
       if (i >= uPointCount) break;
-      vec2 a = uPoints[i];
-      int jj = i == 0 ? uPointCount - 1 : i - 1;
-      vec2 b = vec2(0.0);
-      for (int k = 0; k < ${MAX_POLY_POINTS}; k++) {
-        if (k == jj) { b = uPoints[k]; break; }
-      }
-      if (((a.y > p.y) != (b.y > p.y)) && (p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)) {
+      vec2 cur = uPoints[i];
+      if (((cur.y > p.y) != (prev.y > p.y)) &&
+          (p.x < (prev.x - cur.x) * (p.y - cur.y) / (prev.y - cur.y) + cur.x)) {
         inside = !inside;
       }
+      prev = cur;
     }
     return inside;
   }

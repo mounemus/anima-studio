@@ -158,3 +158,11 @@ export function invalidateWebcamCache() {
     }
   }
 }
+
+/** Dispose every cached entry. Call from Engine.destroy() to release GPU memory
+ *  cleanly during HMR / component unmount. Otherwise this module-level cache
+ *  outlives Engine instances and leaks one VideoTexture per zone per reload. */
+export function disposeAllContentSources() {
+  for (const e of cache.values()) disposeEntry(e)
+  cache.clear()
+}

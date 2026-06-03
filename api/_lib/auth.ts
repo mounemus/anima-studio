@@ -1,9 +1,14 @@
 import { SignJWT, jwtVerify } from 'jose'
+import { kv, kvConfigured, K } from './kv'
 
 // PBKDF2-SHA256 password hashing (edge-compatible via WebCrypto)
 const PBKDF2_ITERS = 200_000
 const PBKDF2_KEYLEN = 32
 const SALT_LEN = 16
+
+// JWT identifier index — when present in KV, the token is valid; absent = revoked.
+const JTI_KEY = (jti: string) => `anima:jti:${jti}`
+const JTI_TTL_SEC = 60 * 60 * 24 * 7    // matches cookie Max-Age
 
 function bytesToB64(b: Uint8Array): string {
   let s = ''
@@ -51,14 +56,28 @@ const ALG = 'HS256'
 
 function secret(): Uint8Array {
   const s = (globalThis as any).process?.env?.JWT_SECRET
-  if (!s || s.length < 16) throw new Error('JWT_SECRET env var missing or too short')
+  // Raised from 16 → 32: HS256 needs ≥256 bits of entropy to resist offline
+  // cracking of intercepted tokens. Generate with: openssl rand -base64 32
+  if (!s || s.length < 32) throw new Error('JWT_SECRET env var missing or too short (need 32+ chars)')
   return new TextEncoder().encode(s)
 }
 
-export interface AdminSession { sub: string; email: string }
+function randomJti(): string {
+  const buf = crypto.getRandomValues(new Uint8Array(16))
+  return bytesToB64(buf).replace(/[+/=]/g, (c) => ({ '+': '-', '/': '_', '=': '' } as any)[c])
+}
+
+export interface AdminSession { sub: string; email: string; jti?: string }
 
 export async function signSession(s: AdminSession): Promise<string> {
-  return await new SignJWT({ email: s.email })
+  const jti = randomJti()
+  // Register the jti as "active" in KV. Absent jti = revoked (logged out / forced).
+  // KV may be down — we still issue the token, but it won't be revocable until KV returns.
+  if (kvConfigured()) {
+    try { await kv().set(JTI_KEY(jti), { sub: s.sub, iat: Date.now() }, { ex: JTI_TTL_SEC }) }
+    catch { /* swallow — token still issued */ }
+  }
+  return await new SignJWT({ email: s.email, jti })
     .setProtectedHeader({ alg: ALG })
     .setSubject(s.sub)
     .setIssuedAt()
@@ -69,10 +88,25 @@ export async function signSession(s: AdminSession): Promise<string> {
 export async function verifySession(token: string): Promise<AdminSession | null> {
   try {
     const r = await jwtVerify(token, secret())
-    return { sub: String(r.payload.sub), email: String(r.payload.email) }
+    const jti = r.payload.jti ? String(r.payload.jti) : undefined
+    // Check revocation list in KV. If KV is configured and the jti is missing → revoked.
+    // If KV is unconfigured, we trust the signature alone (graceful degradation).
+    if (jti && kvConfigured()) {
+      try {
+        const exists = await kv().get(JTI_KEY(jti))
+        if (exists === null || exists === undefined) return null
+      } catch { /* KV glitch — trust signature */ }
+    }
+    return { sub: String(r.payload.sub), email: String(r.payload.email), jti }
   } catch {
     return null
   }
+}
+
+/** Revoke a specific JWT id (called on logout). */
+export async function revokeSession(jti: string | undefined): Promise<void> {
+  if (!jti || !kvConfigured()) return
+  try { await kv().del(JTI_KEY(jti)) } catch { /* ignore */ }
 }
 
 export function cookieHeader(token: string, maxAgeSec = 60 * 60 * 24 * 7) {

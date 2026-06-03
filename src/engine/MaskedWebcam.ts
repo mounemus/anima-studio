@@ -19,6 +19,10 @@ let rafId = 0
 let running = false
 let maskCanvas: HTMLCanvasElement | null = null
 let maskCtx: CanvasRenderingContext2D | null = null
+// Hoisted: reused every frame to avoid allocating 196 608 bytes per loop()
+// (createImageData allocates a fresh Uint8ClampedArray each call → big GC pressure).
+let maskImg: ImageData | null = null
+let lastMaskSize = { w: 0, h: 0 }
 
 function ensure() {
   if (canvas) return
@@ -66,17 +70,21 @@ function loop() {
     ctx.drawImage(video, 0, 0, CANVAS_W, CANVAS_H)
 
     if (mask) {
-      // 2) Build a mask image (white where person, transparent where background)
-      const img = maskCtx.createImageData(mask.w, mask.h)
-      for (let i = 0; i < mask.data.length; i++) {
-        const on = mask.data[i] > 127 ? 255 : 0
-        const o = i * 4
-        img.data[o] = 255
-        img.data[o + 1] = 255
-        img.data[o + 2] = 255
-        img.data[o + 3] = on
+      // 2) Build a mask image (white where person, transparent where background).
+      // Reuse the ImageData buffer across frames when the mask size hasn't changed
+      // (typical case — MediaPipe SelfieSegmenter emits a fixed 256×144 mask).
+      if (!maskImg || lastMaskSize.w !== mask.w || lastMaskSize.h !== mask.h) {
+        maskImg = maskCtx.createImageData(mask.w, mask.h)
+        lastMaskSize = { w: mask.w, h: mask.h }
+        // Pre-fill RGB to white — only alpha changes per frame
+        const d = maskImg.data
+        for (let i = 0; i < d.length; i += 4) { d[i] = 255; d[i + 1] = 255; d[i + 2] = 255 }
       }
-      maskCtx.putImageData(img, 0, 0)
+      const data = maskImg.data
+      for (let i = 0; i < mask.data.length; i++) {
+        data[i * 4 + 3] = mask.data[i] > 127 ? 255 : 0
+      }
+      maskCtx.putImageData(maskImg, 0, 0)
 
       // 3) Use destination-in: keep webcam pixels where mask alpha > 0
       ctx.globalCompositeOperation = 'destination-in'

@@ -8,8 +8,8 @@ import type { Obstacle } from '../types/scene'
 import { resetCounters } from './Obstacles'
 import { soundEngine } from './SoundEngine'
 import { setFlow } from './Flow'
-import { setTrackers } from './ColorTracker'
-import { resolveShapeTexture, pruneShapeTextures, setUseMaskedBody } from './ContentSources'
+import { setTrackers, stopColorTracking } from './ColorTracker'
+import { resolveShapeTexture, pruneShapeTextures, setUseMaskedBody, disposeAllContentSources } from './ContentSources'
 import { startMaskedWebcam, stopMaskedWebcam } from './MaskedWebcam'
 import { createOrganism, ORGANISM_DEFAULTS } from './OrganismFactory'
 
@@ -360,6 +360,10 @@ export class Engine {
     this.zoneOrganisms.clear()
     this.mapping.dispose()
     this.mainRT.dispose(); this.feedbackRT.dispose(); this.feedbackRT2.dispose()
+    // Release any module-level singletons that would otherwise leak across HMR
+    stopMaskedWebcam()
+    stopColorTracking()
+    disposeAllContentSources()
     this.renderer.dispose()
     this.renderer.domElement.remove()
   }

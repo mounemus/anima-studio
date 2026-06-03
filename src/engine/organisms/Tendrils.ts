@@ -26,6 +26,8 @@ export class TendrilsOrganism {
   private aspect = 1
   private c1 = new THREE.Color()
   private c2 = new THREE.Color()
+  // Hoisted: reused per-segment in update() to avoid GC pressure
+  private tmp = new THREE.Color()
   private mat: THREE.LineBasicMaterial
   obstacles: Obstacle[] | undefined
 
@@ -107,7 +109,7 @@ export class TendrilsOrganism {
     const t = performance.now() * 0.001
 
     let segIdx = 0
-    const tmp = new THREE.Color()
+    const tmp = this.tmp
     for (let ti = 0; ti < this.tendrils.length; ti++) {
       const td = this.tendrils[ti]
       td.age += dt

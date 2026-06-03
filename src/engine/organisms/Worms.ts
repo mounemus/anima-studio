@@ -29,6 +29,8 @@ export class WormsOrganism {
   private aspect = 1
   private c1 = new THREE.Color()
   private c2 = new THREE.Color()
+  // Hoisted: reused per-segment in update() to avoid GC pressure (was ~36 alloc/frame × FPS)
+  private tmp = new THREE.Color()
   obstacles: Obstacle[] | undefined
 
   constructor(params: WormsParams, visual: VisualParams) {
@@ -104,7 +106,7 @@ export class WormsOrganism {
     const handY = hand.detected ? -(hand.indexTip.y - 0.5) * 2 : 0
     const handPull = hand.detected ? (0.5 + senseBus.hands.pinch * 1.5) : 0
     const t = performance.now() * 0.001
-    const tmp = new THREE.Color()
+    const tmp = this.tmp
     let segIdx = 0
 
     for (let wi = 0; wi < this.worms.length; wi++) {

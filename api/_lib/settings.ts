@@ -25,12 +25,37 @@ export async function getSetting(key: string): Promise<string | null> {
     try {
       const row = await kv().get<StoredSetting>(K.setting(key))
       if (row?.value) {
-        try { return await decryptString(row.value) } catch { /* corrupt */ }
+        try {
+          const plain = await decryptString(row.value)
+          // Forward-migrate: re-encrypt with the modern HKDF key if the legacy fallback
+          // was used. We detect "legacy was used" by re-encrypting and noticing the
+          // ciphertext header differs — simpler: always re-encrypt on read once per cold
+          // start. The cost is one extra crypto.subtle.encrypt every ~hour (edge cold
+          // starts). Worth it for clean key rotation.
+          if (!migratedThisRun.has(key)) {
+            migratedThisRun.add(key)
+            try {
+              const fresh = await encryptString(plain)
+              if (fresh !== row.value) {
+                await kv().set(K.setting(key), { ...row, value: fresh, updated_at: new Date().toISOString() })
+              }
+            } catch { /* migration is best-effort */ }
+          }
+          return plain
+        } catch (e) {
+          // Log the corruption so we don't silently mask a key-rotation bug,
+          // but still fall back to env var so the user isn't locked out.
+          console.error('[settings.getSetting] decrypt failed for', key, e)
+        }
       }
     } catch { /* KV error */ }
   }
   return (globalThis as any).process?.env?.[key] ?? null
 }
+
+// Per-cold-start migration tracking — re-encrypt each setting at most once per
+// edge function instance, to avoid hammering KV on every request.
+const migratedThisRun = new Set<string>()
 
 export async function listSettings(): Promise<{ key: string; hint: string; configured: boolean }[]> {
   const env = (globalThis as any).process?.env ?? {}
