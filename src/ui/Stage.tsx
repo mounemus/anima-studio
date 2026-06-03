@@ -24,12 +24,13 @@ export function Stage({ onEngineReady }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // load scene on change
+  // load (or fully reload) scene when id OR organism KIND changes
+  // — kind change requires recreating the organism instance, not just updating params.
   useEffect(() => {
     if (current && engineRef.current) engineRef.current.loadScene(current)
-  }, [current?.id])
+  }, [current?.id, current?.organism.kind])
 
-  // apply param updates (don't reload entire scene, just patch)
+  // apply param updates (don't reload entire scene, just patch values)
   useEffect(() => {
     if (current && engineRef.current) {
       engineRef.current.updateOrganismParams(current.organism.values)

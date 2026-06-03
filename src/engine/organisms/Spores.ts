@@ -49,7 +49,9 @@ export class SporesOrganism {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
     geo.setAttribute('size', new THREE.BufferAttribute(this.sizes, 1))
     geo.setDrawRange(0, this.count)
-    // Use a custom ShaderMaterial so we can carry per-vertex size
+    // Use a custom ShaderMaterial so we can carry per-vertex size.
+    // ShaderMaterial does NOT auto-declare `attribute vec3 color` even with vertexColors:true,
+    // so we declare it explicitly. Same goes for `size`.
     this.mat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
@@ -57,25 +59,29 @@ export class SporesOrganism {
       uniforms: { uPx: { value: window.devicePixelRatio || 1 } },
       vertexShader: `
         attribute float size;
+        attribute vec3 color;
         varying vec3 vColor;
         uniform float uPx;
         void main() {
           vColor = color;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = size * 200.0 * uPx / max(0.1, -mv.z + 1.0);
           gl_Position = projectionMatrix * mv;
+          // For an orthographic camera, gl_PointSize is directly pixels.
+          // size is in world units (~0.01–0.06), bump to pixels via the canvas height in clip.
+          gl_PointSize = max(2.0, size * 600.0 * uPx);
         }
       `,
       fragmentShader: `
+        precision highp float;
         varying vec3 vColor;
         void main() {
           vec2 c = gl_PointCoord - 0.5;
           float d = length(c);
+          if (d > 0.5) discard;
           float alpha = smoothstep(0.5, 0.0, d);
-          gl_FragColor = vec4(vColor, alpha * 0.85);
+          gl_FragColor = vec4(vColor, alpha * 0.9);
         }
       `,
-      vertexColors: true,
     })
     this.mesh = new THREE.Points(geo, this.mat)
   }
