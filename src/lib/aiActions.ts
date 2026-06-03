@@ -25,7 +25,8 @@ export interface SafeActions {
   newScene?: any  // kept loose; caller (AIChat) re-runs through this validator before commit
 }
 
-const ORG_KINDS: OrganismKind[] = ['boids', 'particles', 'tendrils', 'cells', 'worms', 'spores', 'psychedelic', 'mandala', 'fractal']
+const ORG_KINDS: OrganismKind[] = ['boids', 'particles', 'tendrils', 'cells', 'worms', 'spores', 'psychedelic', 'mandala', 'fractal', 'mathcurve']
+const CURVE_FORMULAS = ['lissajous', 'rose', 'spirograph', 'butterfly', 'lorenz', 'heart'] as const
 const SHAPE_KINDS: ShapeKind[] = ['quad', 'polygon']
 const BLEND_MODES = ['add', 'normal', 'screen'] as const
 
@@ -55,9 +56,13 @@ function safePalette(raw: any): Palette | undefined {
   return undefined
 }
 
-function safeOrganismValues(kind: OrganismKind, raw: any): Record<string, number> | undefined {
+function safeOrganismValues(kind: OrganismKind, raw: any): Record<string, any> | undefined {
   if (!raw || typeof raw !== 'object') return undefined
-  const out: Record<string, number> = {}
+  const out: Record<string, any> = {}
+  // mathcurve: 'formula' is a string enum, not a number — pass through if valid
+  if (kind === 'mathcurve' && typeof raw.formula === 'string' && (CURVE_FORMULAS as readonly string[]).includes(raw.formula)) {
+    out.formula = raw.formula
+  }
   // Per-kind sane ranges (mirror the SYSTEM prompt in api/claude.ts)
   const ranges: Record<string, Record<string, [number, number]>> = {
     boids: {
@@ -88,10 +93,16 @@ function safeOrganismValues(kind: OrganismKind, raw: any): Record<string, number
     mandala: {
       arms: [3, 24], pointsPerArm: [8, 128], outerRadius: [0.1, 1.4], innerRadius: [0, 0.6],
       waves: [0, 8], freq: [0.05, 4], rotation: [-3, 3], thickness: [0.001, 0.03],
+      layers: [1, 3], connectors: [0, 6], connectorOpacity: [0, 1],
     },
     fractal: {
       iterations: [16, 256], zoom: [0.1, 8], cx: [-1.5, 1.5], cy: [-1.5, 1.5],
       followHand: [0, 1], bailout: [2, 30], brightness: [0.2, 3],
+      orbitSpeed: [0, 2], orbitRadius: [0, 0.5], rotation: [-1, 1], zoomBreath: [0, 0.5],
+    },
+    mathcurve: {
+      samples: [100, 4000], cycles: [0.1, 20], a: [-12, 12], b: [-12, 12], c: [-5, 5], d: [-Math.PI * 2, Math.PI * 2],
+      scale: [0.05, 2.5], speed: [0, 4], thickness: [0.001, 0.025], lineOpacity: [0, 1],
     },
   }
   const r = ranges[kind]

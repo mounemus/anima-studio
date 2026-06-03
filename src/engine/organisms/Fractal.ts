@@ -1,21 +1,18 @@
 /**
  * Fractal — Julia set en fragment shader (GPU, plein écran).
  *
- * Calcule z = z² + c en boucle dans le fragment shader. `c` est piloté par la
- * position de la main (ou un point fixe configurable). Le nombre d'itérations
- * avant échappement définit la couleur (gradient palette).
+ * Animation INTRINSÈQUE :
+ * - `c` orbite en figure de Lissajous (orbitSpeed/orbitRadius), même sans main
+ * - Zoom respire en sinus lent
+ * - Rotation du plan complexe (anglePlane) tourne en continu
+ * - Cycle de teinte automatique sur la palette
+ * - Quand la main est détectée, `c` interpole vers la main (followHand)
  *
  * Interactif :
- * - Main x,y     : déplace le paramètre `c` du Julia → morphe la forme en live
- * - Pinch        : zoom sur le centre
- * - Audio bass   : pulse la luminosité globale
- * - Audio high   : décale la palette (hue shift)
- *
- * Pas de "particules" — c'est un plan plein écran avec shader. Le système de
- * modifiers ne touche pas ce shader (positions=null, count=0 — les modifiers
- * font no-op).
- *
- * Compat : `setAspect` recalcule l'uniform d'aspect ratio.
+ * - Main x,y     : tire `c` vers la main (forcée par followHand 0..1)
+ * - Pinch        : zoom additionnel (jusqu'à 2.5×)
+ * - Audio bass   : pulse luminosité + accélère orbit
+ * - Audio high   : décale hue + accélère rotation du plan
  */
 import * as THREE from 'three'
 import type { VisualParams } from '../../types/scene'
@@ -24,11 +21,15 @@ import { senseBus } from '../../senses/SenseBus'
 export interface FractalParams {
   iterations: number       // 32..256 — précision
   zoom: number             // 0.3..3 — zoom de base
-  cx: number               // -1..1 — composante réelle de c (overridée par main)
-  cy: number               // -1..1 — composante imaginaire de c
-  followHand: number       // 0..1 — interpolation hand-c (0 = static, 1 = full follow)
-  bailout: number          // 2..20 — rayon d'échappement
+  cx: number               // -1..1 — centre c de base (point d'orbite)
+  cy: number               // -1..1
+  followHand: number       // 0..1
+  bailout: number          // 2..20
   brightness: number       // 0.5..2
+  orbitSpeed: number       // 0..2 — vitesse de l'orbite Lissajous de c
+  orbitRadius: number      // 0..0.5 — amplitude de l'orbite
+  rotation: number         // -1..1 rad/sec — rotation du plan complexe
+  zoomBreath: number       // 0..0.5 — amplitude du zoom respiration
 }
 
 const VERT = `
@@ -51,9 +52,9 @@ const FRAG = `
   uniform vec3 uPaletteB;
   uniform vec3 uPaletteC;
   uniform float uBrightness;
-  uniform float uHueShift;     // 0..1
+  uniform float uHueShift;
+  uniform float uAngle;            // rotation du plan complexe
 
-  // HSV → RGB helper for hue shifting
   vec3 hueShift(vec3 col, float h) {
     float U = cos(h * 6.2831853);
     float W = sin(h * 6.2831853);
@@ -65,23 +66,22 @@ const FRAG = `
   }
 
   void main() {
-    // Map uv [0,1] → complex plane around origin, respecting aspect
     vec2 z = (vUv - 0.5) * 2.0 / uZoom;
     z.x *= uAspect;
+    // Rotation du plan
+    float ca = cos(uAngle), sa = sin(uAngle);
+    z = vec2(z.x * ca - z.y * sa, z.x * sa + z.y * ca);
     float n = 0.0;
     float maxI = uIters;
     float bail2 = uBailout * uBailout;
     for (float i = 0.0; i < 256.0; i++) {
       if (i >= maxI) break;
-      // z = z^2 + c
       z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + uC;
       if (dot(z, z) > bail2) { n = i; break; }
     }
     if (n == 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0); return; }
-    // Smooth iteration count (continuous coloring)
     float nu = log(log(length(z)) / log(uBailout)) / log(2.0);
     float t = clamp((n + 1.0 - nu) / maxI, 0.0, 1.0);
-    // Gradient through 3 palette colors
     vec3 col = t < 0.5
       ? mix(uPaletteA, uPaletteB, t * 2.0)
       : mix(uPaletteB, uPaletteC, (t - 0.5) * 2.0);
@@ -93,7 +93,6 @@ const FRAG = `
 
 export class FractalOrganism {
   mesh: THREE.Mesh
-  /** Fractal is GPU-only — no per-vertex positions for modifiers to mutate. */
   positions = new Float32Array(0)
   velocities: Float32Array | null = null
   count = 0
@@ -101,6 +100,8 @@ export class FractalOrganism {
   private aspect = 1
   private params: FractalParams
   private mat: THREE.ShaderMaterial
+  private t = 0
+  private plantAngle = 0
 
   constructor(params: FractalParams, visual: VisualParams) {
     this.params = params
@@ -119,6 +120,7 @@ export class FractalOrganism {
         uBailout: { value: params.bailout },
         uBrightness: { value: params.brightness },
         uHueShift: { value: 0 },
+        uAngle: { value: 0 },
         uPaletteA: { value: new THREE.Color(visual.palette.bg) },
         uPaletteB: { value: new THREE.Color(visual.palette.primary) },
         uPaletteC: { value: new THREE.Color(visual.palette.glow) },
@@ -135,10 +137,8 @@ export class FractalOrganism {
 
   updateParams(p: FractalParams) {
     this.params = p
-    this.mat.uniforms.uZoom.value = p.zoom
     this.mat.uniforms.uIters.value = p.iterations
     this.mat.uniforms.uBailout.value = p.bailout
-    this.mat.uniforms.uBrightness.value = p.brightness
   }
 
   applyVisual(visual: VisualParams) {
@@ -147,26 +147,37 @@ export class FractalOrganism {
     ;(this.mat.uniforms.uPaletteC.value as THREE.Color).set(visual.palette.glow)
   }
 
-  update(_dt: number) {
+  update(dt: number) {
     const p = this.params
     const h = senseBus.hands
     const audio = senseBus.audio
-    // Hand interpolation toward followHand
+    // Always advance time — even without hand or audio, the fractal lives
+    this.t += dt * p.orbitSpeed * (1 + (audio.bass ?? 0) * 0.5)
+    this.plantAngle += dt * p.rotation * (1 + (audio.high ?? 0) * 1.5)
+    // Compute base c using Lissajous orbit around (cx, cy)
+    const orbitX = Math.sin(this.t) * p.orbitRadius
+    const orbitY = Math.cos(this.t * 1.31) * p.orbitRadius  // irrational ratio = never repeats
+    const baseCx = p.cx + orbitX
+    const baseCy = p.cy + orbitY
+    // Hand interpolation (overrides orbit when followHand > 0)
     const cx = h.detected
-      ? p.cx + ((h.indexTip.x - 0.5) * 2 * 0.8 - p.cx) * p.followHand
-      : p.cx
+      ? baseCx + ((h.indexTip.x - 0.5) * 1.6 - baseCx) * p.followHand
+      : baseCx
     const cy = h.detected
-      ? p.cy + (-(h.indexTip.y - 0.5) * 2 * 0.8 - p.cy) * p.followHand
-      : p.cy
+      ? baseCy + (-(h.indexTip.y - 0.5) * 1.6 - baseCy) * p.followHand
+      : baseCy
     ;(this.mat.uniforms.uC.value as THREE.Vector2).set(cx, cy)
-    // Pinch zooms in
-    const z = p.zoom * (1 + (h.detected ? h.pinch * 1.5 : 0))
-    this.mat.uniforms.uZoom.value = z
-    // Audio bass boosts brightness
-    this.mat.uniforms.uBrightness.value = p.brightness * (1 + (audio.bass ?? 0) * 0.4)
-    // Audio high shifts hue
-    const t = performance.now() * 0.0002
-    this.mat.uniforms.uHueShift.value = (t + (audio.high ?? 0) * 0.5) % 1
+    // Zoom breathing + pinch boost
+    const breath = 1 + Math.sin(this.t * 0.4) * p.zoomBreath
+    const pinchBoost = h.detected ? 1 + h.pinch * 1.5 : 1
+    this.mat.uniforms.uZoom.value = p.zoom * breath * pinchBoost
+    // Rotation
+    this.mat.uniforms.uAngle.value = this.plantAngle
+    // Brightness with bass pump
+    this.mat.uniforms.uBrightness.value = p.brightness * (1 + (audio.bass ?? 0) * 0.5)
+    // Automatic hue cycling — always running, audio.high accelerates
+    const hueT = performance.now() * 0.00015
+    this.mat.uniforms.uHueShift.value = (hueT + (audio.high ?? 0) * 0.6) % 1
   }
 
   dispose() {

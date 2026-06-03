@@ -69,7 +69,7 @@ export class SporesOrganism {
           gl_Position = projectionMatrix * mv;
           // For an orthographic camera, gl_PointSize is directly pixels.
           // size is in world units (~0.01–0.06), bump to pixels via the canvas height in clip.
-          gl_PointSize = max(2.0, size * 600.0 * uPx);
+          gl_PointSize = max(3.0, size * 1200.0 * uPx);   // doubled for visibility
         }
       `,
       fragmentShader: `

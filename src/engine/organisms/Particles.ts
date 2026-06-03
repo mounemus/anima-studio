@@ -32,7 +32,7 @@ export class ParticlesOrganism {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
     geo.setDrawRange(0, this.count)
     this.mat = new THREE.PointsMaterial({
-      size: params.size * 0.04,
+      size: params.size * 0.08,         // ⬆ doubled
       vertexColors: true,
       transparent: true,
       opacity: 0.85,

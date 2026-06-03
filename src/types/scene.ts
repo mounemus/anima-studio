@@ -1,8 +1,10 @@
-export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores' | 'psychedelic' | 'mandala' | 'fractal'
+export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores' | 'psychedelic' | 'mandala' | 'fractal' | 'mathcurve'
 
 export interface PsychedelicParams { count: number; speed: number; freq: number; scale: number; trail: number; size: number }
-export interface MandalaParams { arms: number; pointsPerArm: number; outerRadius: number; innerRadius: number; waves: number; freq: number; rotation: number; thickness: number }
-export interface FractalParams { iterations: number; zoom: number; cx: number; cy: number; followHand: number; bailout: number; brightness: number }
+export interface MandalaParams { arms: number; pointsPerArm: number; outerRadius: number; innerRadius: number; waves: number; freq: number; rotation: number; thickness: number; layers: number; connectors: number; connectorOpacity: number }
+export interface FractalParams { iterations: number; zoom: number; cx: number; cy: number; followHand: number; bailout: number; brightness: number; orbitSpeed: number; orbitRadius: number; rotation: number; zoomBreath: number }
+export type CurveFormula = 'lissajous' | 'rose' | 'spirograph' | 'butterfly' | 'lorenz' | 'heart'
+export interface MathCurveParams { formula: CurveFormula; samples: number; cycles: number; a: number; b: number; c: number; d: number; scale: number; speed: number; thickness: number; lineOpacity: number }
 
 export interface WormsParams {
   count: number
@@ -75,6 +77,7 @@ export type OrganismParams =
   | { kind: 'psychedelic'; values: PsychedelicParams }
   | { kind: 'mandala'; values: MandalaParams }
   | { kind: 'fractal'; values: FractalParams }
+  | { kind: 'mathcurve'; values: MathCurveParams }
 
 export interface Palette {
   bg: string

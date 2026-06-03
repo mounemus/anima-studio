@@ -181,8 +181,8 @@ export class BoidsOrganism {
       else if (py[i] < -1) py[i] = 1
     }
 
-    // write matrices
-    const size = p.size * (0.6 + senseBus.audio.bass * 1.8)
+    // write matrices — bumped base scale 2x for visibility
+    const size = p.size * (1.2 + senseBus.audio.bass * 2.5)
     for (let i = 0; i < n; i++) {
       this.dummy.position.set(px[i], py[i], 0)
       this.dummy.scale.set(size, size, 1)

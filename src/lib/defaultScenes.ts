@@ -105,7 +105,7 @@ export const defaultScenes: Scene[] = [
     updatedAt: now(),
     organism: {
       kind: 'mandala',
-      values: { arms: 12, pointsPerArm: 80, outerRadius: 0.9, innerRadius: 0.08, waves: 4, freq: 0.8, rotation: 0.25, thickness: 0.01 },
+      values: { arms: 12, pointsPerArm: 80, outerRadius: 0.9, innerRadius: 0.08, waves: 4, freq: 0.8, rotation: 0.25, thickness: 0.012, layers: 3, connectors: 3, connectorOpacity: 0.5 },
     },
     visual: {
       palette: { bg: '#070314', primary: '#00d4ff', secondary: '#ffd54f', glow: '#ff6ba6' },
@@ -123,7 +123,7 @@ export const defaultScenes: Scene[] = [
     updatedAt: now(),
     organism: {
       kind: 'fractal',
-      values: { iterations: 140, zoom: 1, cx: -0.7269, cy: 0.1889, followHand: 0.7, bailout: 4, brightness: 1.0 },
+      values: { iterations: 140, zoom: 1, cx: -0.7269, cy: 0.1889, followHand: 0.4, bailout: 4, brightness: 1.0, orbitSpeed: 0.4, orbitRadius: 0.15, rotation: 0.12, zoomBreath: 0.08 },
     },
     visual: {
       palette: { bg: '#000000', primary: '#7c3aed', secondary: '#00ffa3', glow: '#ffd54f' },
@@ -133,5 +133,41 @@ export const defaultScenes: Scene[] = [
     evolution: { enabled: false, driftSpeed: 0.02, amplitude: 0.1 },
     mapping: defaultMapping(),
     notes: 'Julia set GPU plein écran. La main pilote en live le paramètre c — morphe la forme fractale en temps réel. Pinch zoome. Explore l\'infini.',
+  },
+  {
+    id: 'lissajous-dance',
+    name: '∞ Lissajous',
+    createdAt: now(),
+    updatedAt: now(),
+    organism: {
+      kind: 'mathcurve',
+      values: { formula: 'lissajous' as const, samples: 2000, cycles: 1, a: 3, b: 5, c: 1, d: 0.6, scale: 0.85, speed: 0.4, thickness: 0.006, lineOpacity: 0.7 },
+    } as any,
+    visual: {
+      palette: { bg: '#000010', primary: '#00ffa3', secondary: '#00d4ff', glow: '#ffd54f' },
+      bloom: 0.6, feedback: 0.93, blendMode: 'add',
+    },
+    senses: { hands: true, audio: true, light: false, bindings: [] },
+    evolution: { enabled: false, driftSpeed: 0.02, amplitude: 0.1 },
+    mapping: defaultMapping(),
+    notes: 'Lissajous 3:5 avec phase animée. Bouge la main pour morpher la figure. Change la formule pour Rose / Spirograph / Butterfly / Lorenz.',
+  },
+  {
+    id: 'spirograph-flower',
+    name: '🌹 Spirograph fleur',
+    createdAt: now(),
+    updatedAt: now(),
+    organism: {
+      kind: 'mathcurve',
+      values: { formula: 'spirograph' as const, samples: 2500, cycles: 5, a: 6, b: 5, c: 2, d: 1.5, scale: 0.7, speed: 0.3, thickness: 0.005, lineOpacity: 0.75 },
+    } as any,
+    visual: {
+      palette: { bg: '#1a0010', primary: '#ff6ba6', secondary: '#7c3aed', glow: '#ffd54f' },
+      bloom: 0.5, feedback: 0.94, blendMode: 'add',
+    },
+    senses: { hands: true, audio: true, light: false, bindings: [] },
+    evolution: { enabled: false, driftSpeed: 0.02, amplitude: 0.1 },
+    mapping: defaultMapping(),
+    notes: 'Spirograph hypotrochoid — change a/b pour voir les pétales évoluer. La main décale les paramètres en live.',
   },
 ]

@@ -53,8 +53,9 @@ const ORGANISM_PRESETS: Record<OrganismKind, Record<string, number>> = {
   worms: { count: 18, segments: 36, speed: 0.7, twist: 1.3, thickness: 0.01, trail: 0.93, segLen: 0.025 },
   spores: { count: 800, speed: 0.5, size: 0.012, bloomGain: 0.7, bloomDecay: 1.2, reactToObstacles: 1, trail: 0.9 },
   psychedelic: { count: 4000, speed: 1.0, freq: 5.0, scale: 1.0, trail: 0.94, size: 2.5 },
-  mandala: { arms: 8, pointsPerArm: 64, outerRadius: 0.85, innerRadius: 0.05, waves: 3, freq: 1.0, rotation: 0.3, thickness: 0.008 },
-  fractal: { iterations: 120, zoom: 1.0, cx: -0.7, cy: 0.27, followHand: 0.6, bailout: 4, brightness: 1.0 },
+  mandala: { arms: 8, pointsPerArm: 64, outerRadius: 0.85, innerRadius: 0.05, waves: 3, freq: 1.0, rotation: 0.3, thickness: 0.008, layers: 2, connectors: 2, connectorOpacity: 0.4 },
+  fractal: { iterations: 120, zoom: 1.0, cx: -0.7, cy: 0.27, followHand: 0.6, bailout: 4, brightness: 1.0, orbitSpeed: 0.3, orbitRadius: 0.12, rotation: 0.15, zoomBreath: 0.08 },
+  mathcurve: { formula: 'lissajous', samples: 800, cycles: 1, a: 3, b: 5, c: 1, d: 0, scale: 0.8, speed: 0.5, thickness: 0.005, lineOpacity: 0.6 } as any,
 }
 
 export function ParamPanel() {
@@ -124,6 +125,7 @@ export function ParamPanel() {
               <option value="psychedelic">🌀 Psychédélique — galaxie 3D-feel</option>
               <option value="mandala">🪷 Mandala — symétrie radiale</option>
               <option value="fractal">🌌 Fractale — Julia set GPU</option>
+              <option value="mathcurve">📐 Courbe math — Lissajous, Rose, Spirograph...</option>
             </select>
 
             <h3>Paramètres</h3>
@@ -198,30 +200,69 @@ export function ParamPanel() {
             {current.organism.kind === 'mandala' && (
               <>
                 <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Kaléidoscope radial — la main x contrôle les bras (3-16), pinch ouvre le centre, audio bass = respiration.
+                  Géométrie sacrée multi-couches — la main x contrôle les bras (3-16), pinch ouvre le centre, audio bass = respiration. Active les connecteurs pour les étoiles inscrites.
                 </p>
                 <Slider label="Bras" value={v.arms} min={3} max={24} step={1} onChange={(x) => patchValues({ arms: Math.round(x) })} format={(x) => Math.round(x).toString()} />
                 <Slider label="Points par bras" value={v.pointsPerArm} min={16} max={128} step={4} onChange={(x) => patchValues({ pointsPerArm: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Couches superposées" value={v.layers ?? 1} min={1} max={3} step={1} onChange={(x) => patchValues({ layers: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Connecteurs (skip-lignes)" value={v.connectors ?? 0} min={0} max={6} step={1} onChange={(x) => patchValues({ connectors: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Opacité connecteurs" value={v.connectorOpacity ?? 0.4} min={0} max={1} step={0.05} onChange={(x) => patchValues({ connectorOpacity: x })} format={(x) => `${Math.round(x * 100)}%`} />
                 <Slider label="Rayon extérieur" value={v.outerRadius} min={0.2} max={1.2} step={0.02} onChange={(x) => patchValues({ outerRadius: x })} />
                 <Slider label="Rayon intérieur" value={v.innerRadius} min={0} max={0.5} step={0.01} onChange={(x) => patchValues({ innerRadius: x })} />
                 <Slider label="Ondulations" value={v.waves} min={0} max={8} step={0.1} onChange={(x) => patchValues({ waves: x })} />
                 <Slider label="Vitesse ondulation" value={v.freq} min={0.1} max={3} step={0.05} onChange={(x) => patchValues({ freq: x })} />
                 <Slider label="Rotation" value={v.rotation} min={-2} max={2} step={0.05} onChange={(x) => patchValues({ rotation: x })} />
-                <Slider label="Épaisseur points" value={v.thickness} min={0.001} max={0.02} step={0.0005} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(4)} />
+                <Slider label="Épaisseur points" value={v.thickness} min={0.001} max={0.03} step={0.0005} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(4)} />
               </>
             )}
             {current.organism.kind === 'fractal' && (
               <>
                 <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Julia set GPU — la main pilote le paramètre c en live (morphe la forme), pinch zoome, audio bass pulse la luminosité.
+                  Julia set GPU — la fractale s'anime toute seule (orbit, zoom respire, rotation). La main pilote c en live, pinch zoome, audio bass pulse la luminosité.
                 </p>
                 <Slider label="Itérations (précision)" value={v.iterations} min={32} max={256} step={4} onChange={(x) => patchValues({ iterations: Math.round(x) })} format={(x) => Math.round(x).toString()} />
                 <Slider label="Zoom" value={v.zoom} min={0.3} max={5} step={0.05} onChange={(x) => patchValues({ zoom: x })} />
                 <Slider label="c réel (cx)" value={v.cx} min={-1} max={1} step={0.005} onChange={(x) => patchValues({ cx: x })} format={(x) => x.toFixed(3)} />
                 <Slider label="c imaginaire (cy)" value={v.cy} min={-1} max={1} step={0.005} onChange={(x) => patchValues({ cy: x })} format={(x) => x.toFixed(3)} />
                 <Slider label="Suivi main" value={v.followHand} min={0} max={1} step={0.05} onChange={(x) => patchValues({ followHand: x })} format={(x) => `${Math.round(x * 100)}%`} />
+                <Slider label="Vitesse orbite (auto)" value={v.orbitSpeed ?? 0.3} min={0} max={2} step={0.02} onChange={(x) => patchValues({ orbitSpeed: x })} />
+                <Slider label="Rayon orbite (auto)" value={v.orbitRadius ?? 0.12} min={0} max={0.5} step={0.005} onChange={(x) => patchValues({ orbitRadius: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Rotation plan (auto)" value={v.rotation ?? 0.15} min={-1} max={1} step={0.02} onChange={(x) => patchValues({ rotation: x })} />
+                <Slider label="Respiration zoom" value={v.zoomBreath ?? 0.08} min={0} max={0.5} step={0.01} onChange={(x) => patchValues({ zoomBreath: x })} />
                 <Slider label="Rayon échappement" value={v.bailout} min={2} max={20} step={0.5} onChange={(x) => patchValues({ bailout: x })} />
                 <Slider label="Luminosité" value={v.brightness} min={0.3} max={2.5} step={0.05} onChange={(x) => patchValues({ brightness: x })} />
+              </>
+            )}
+            {current.organism.kind === 'mathcurve' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Courbe paramétrique math — choisis une formule, ajuste ses paramètres a/b/c/d. La main x/y dérive a/b en live.
+                </p>
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Formule</div>
+                  <select
+                    value={(v as any).formula ?? 'lissajous'}
+                    onChange={(e) => patchValues({ formula: e.target.value as any })}
+                    style={{ width: '100%', fontSize: 12 }}
+                  >
+                    <option value="lissajous">∞ Lissajous (a, b, d=phase)</option>
+                    <option value="rose">🌹 Rose / Rhodonea (a=pétales, b, c)</option>
+                    <option value="spirograph">⚙ Spirograph (a=R, b=tours, c=r, d=offset)</option>
+                    <option value="butterfly">🦋 Butterfly de Fay (a, b)</option>
+                    <option value="lorenz">🦋 Lorenz attractor (chaos, a=vitesse)</option>
+                    <option value="heart">❤ Cardioïde / cœur (a, b)</option>
+                  </select>
+                </div>
+                <Slider label="Échantillons" value={v.samples} min={100} max={4000} step={50} onChange={(x) => patchValues({ samples: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Cycles (périodes)" value={v.cycles} min={0.1} max={10} step={0.1} onChange={(x) => patchValues({ cycles: x })} format={(x) => x.toFixed(1)} />
+                <Slider label="Paramètre a" value={v.a} min={0.1} max={12} step={0.1} onChange={(x) => patchValues({ a: x })} format={(x) => x.toFixed(2)} />
+                <Slider label="Paramètre b" value={v.b} min={0.1} max={12} step={0.1} onChange={(x) => patchValues({ b: x })} format={(x) => x.toFixed(2)} />
+                <Slider label="Paramètre c" value={v.c} min={0} max={5} step={0.05} onChange={(x) => patchValues({ c: x })} format={(x) => x.toFixed(2)} />
+                <Slider label="Paramètre d (phase)" value={v.d} min={-3.14} max={3.14} step={0.05} onChange={(x) => patchValues({ d: x })} format={(x) => x.toFixed(2)} />
+                <Slider label="Échelle" value={v.scale} min={0.1} max={2} step={0.05} onChange={(x) => patchValues({ scale: x })} />
+                <Slider label="Vitesse animation" value={v.speed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Épaisseur points" value={v.thickness} min={0.001} max={0.02} step={0.0005} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(4)} />
+                <Slider label="Opacité ligne" value={v.lineOpacity} min={0} max={1} step={0.05} onChange={(x) => patchValues({ lineOpacity: x })} format={(x) => `${Math.round(x * 100)}%`} />
               </>
             )}
           </div>
