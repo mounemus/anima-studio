@@ -8,6 +8,8 @@ import { loadTexture } from '../lib/textureLoader'
 import type { Obstacle } from '../types/scene'
 import { resetCounters } from './Obstacles'
 import { soundEngine } from './SoundEngine'
+import { setFlow } from './Flow'
+import { setTrackers } from './ColorTracker'
 
 export class Engine {
   private renderer: THREE.WebGLRenderer
@@ -168,6 +170,16 @@ export class Engine {
     if (this.currentScene) this.currentScene = { ...this.currentScene, obstacles: obs }
     if (this.organism) (this.organism as any).obstacles = obs
     soundEngine.sync(obs)
+    // Sync color trackers
+    const trackers = obs
+      .filter((o) => o.enabled && o.kind === 'tracker' && o.tracker)
+      .map((o) => ({ id: o.id, h: o.tracker!.h, s: o.tracker!.s, v: o.tracker!.v, tolerance: o.tracker!.tolerance }))
+    setTrackers(trackers)
+  }
+
+  updateFlow(flow: import('../types/scene').FlowField | undefined) {
+    if (this.currentScene) this.currentScene = { ...this.currentScene, flow }
+    setFlow(flow)
   }
 
   updateMapping(cfg?: import('../types/scene').MappingConfig) {

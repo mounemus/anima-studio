@@ -3,6 +3,7 @@ import type { ParticleParams, VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
 import { solveObstacles } from '../Obstacles'
 import { getSilhouetteMask } from '../../senses/Silhouette'
+import { sampleFlow } from '../Flow'
 
 const MAX = 8000
 
@@ -118,6 +119,10 @@ export class ParticlesOrganism {
         vx += (dx / d) * handPull * dt
         vy += (dy / d) * handPull * dt
       }
+      // flow field
+      const flow = sampleFlow(x, y, t)
+      vx += flow.fx * dt
+      vy += flow.fy * dt
       // obstacles
       if (this.obstacles && this.obstacles.length) {
         const o = solveObstacles(x, y, this.aspect, this.obstacles, getSilhouetteMask())

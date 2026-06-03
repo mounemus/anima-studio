@@ -3,6 +3,7 @@ import type { CellsParams, VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
 import { solveObstacles } from '../Obstacles'
 import { getSilhouetteMask } from '../../senses/Silhouette'
+import { sampleFlow } from '../Flow'
 
 const MAX = 250
 
@@ -122,6 +123,9 @@ export class CellsOrganism {
         fx += (dx / d) * handForce * 0.4
         fy += (dy / d) * handForce * 0.4
       }
+      const flow = sampleFlow(this.px[i], this.py[i], performance.now() * 0.001)
+      fx += flow.fx * 0.5
+      fy += flow.fy * 0.5
       if (this.obstacles && this.obstacles.length) {
         const o = solveObstacles(this.px[i], this.py[i], this.aspect, this.obstacles, getSilhouetteMask())
         fx += o.fx * 0.2

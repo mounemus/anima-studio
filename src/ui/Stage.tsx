@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Engine } from '../engine/Engine'
 import { useSceneStore } from '../store/sceneStore'
 import { startSilhouette, stopSilhouette } from '../senses/Silhouette'
+import { startColorTracking, stopColorTracking } from '../engine/ColorTracker'
 
 interface Props {
   onEngineReady?: (e: Engine) => void
@@ -54,6 +55,22 @@ export function Stage({ onEngineReady }: Props) {
     }
     return () => { /* keep running across renders */ }
   }, [current?.obstacles])
+
+  // Start/stop color tracking based on tracker obstacles
+  useEffect(() => {
+    const needTracker = current?.obstacles?.some((o) => o.kind === 'tracker' && o.enabled) ?? false
+    const video = document.querySelector('video') as HTMLVideoElement | null
+    if (needTracker && video?.srcObject) {
+      startColorTracking(video)
+    } else {
+      stopColorTracking()
+    }
+  }, [current?.obstacles])
+
+  // Propagate flow updates
+  useEffect(() => {
+    if (current && engineRef.current) engineRef.current.updateFlow(current.flow)
+  }, [current?.flow])
 
   return (
     <div className="canvas-wrap" ref={ref} />

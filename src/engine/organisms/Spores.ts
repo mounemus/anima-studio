@@ -3,6 +3,7 @@ import type { SporesParams, VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
 import { solveObstacles } from '../Obstacles'
 import { getSilhouetteMask } from '../../senses/Silhouette'
+import { sampleFlow } from '../Flow'
 
 const MAX = 2500
 
@@ -138,6 +139,10 @@ export class SporesOrganism {
         vx += (dx / d) * handPull * dt * 0.5
         vy += (dy / d) * handPull * dt * 0.5
       }
+      // Flow field
+      const flow = sampleFlow(x, y, performance.now() * 0.001)
+      vx += flow.fx * dt
+      vy += flow.fy * dt
 
       // Obstacles → bloom
       if (this.obstacles && this.obstacles.length && p.reactToObstacles) {

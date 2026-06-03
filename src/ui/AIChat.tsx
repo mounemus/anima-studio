@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Send, Sparkles, Mic, Volume2, VolumeX, Square } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
-import type { Scene } from '../types/scene'
+import type { Scene, FlowField } from '../types/scene'
 import { startRecording, stopRecording, transcribeViaWhisper, recognizeLive, hasBrowserSTT, speak, stopSpeaking } from '../lib/voiceIO'
 
 interface Message {
@@ -11,12 +11,14 @@ interface Message {
 }
 
 const SUGGESTIONS = [
+  '🌱 Invente une espèce de vers lumineux dans le vent',
+  '🌊 Crée une tempête de plancton phosphorescent',
+  '🍄 Imagine un mycélium pulsant en montée',
+  '🐋 Chant baleine — sub-bass + tendrils lents',
+  '⚡ Cluster glitch nerveux audio-réactif',
+  '🌬️ Vent doux vers la gauche, force 1.5',
   'Rends la scène plus apaisante',
-  'Plus vif, plus rapide',
-  'Palette océan profond',
   'Palette aurore boréale',
-  'Augmente la pulsation des basses',
-  'Crée une scène méduses',
 ]
 
 export function AIChat({ open }: { open: boolean }) {
@@ -25,6 +27,7 @@ export function AIChat({ open }: { open: boolean }) {
   const patchValues = useSceneStore((s) => s.patchOrganismValues)
   const updateVisual = useSceneStore((s) => s.updateVisual)
   const updatePalette = useSceneStore((s) => s.updatePalette)
+  const updateFlow = useSceneStore((s) => s.updateFlow)
   const add = useSceneStore((s) => s.add)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -70,6 +73,10 @@ export function AIChat({ open }: { open: boolean }) {
       if (data.actions?.visual) {
         updateVisual(data.actions.visual)
         action = `✨ Rendu ajusté`
+      }
+      if (data.actions?.flow) {
+        updateFlow(data.actions.flow as Partial<FlowField>)
+        action = `🌬️ Flux directionnel modifié`
       }
       if (data.actions?.newScene) {
         const s: Scene = data.actions.newScene

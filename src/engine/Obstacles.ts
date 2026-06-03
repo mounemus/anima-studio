@@ -8,6 +8,7 @@
  */
 import type { Obstacle } from '../types/scene'
 import { senseBus } from '../senses/SenseBus'
+import { trackerStates } from './ColorTracker'
 
 const tmp = { fx: 0, fy: 0, kill: false, bounceNx: 0, bounceNy: 0, hit: false }
 
@@ -105,6 +106,22 @@ function applyObstacle(o: Obstacle, x: number, y: number, aspect: number, mask: 
       const t = inside ? 1 : 1 - (d - r) / m
       if (inside) bumpCounter(o.id)
       pushForce(o, dx, dy, d, t, inside)
+    }
+  } else if (o.kind === 'tracker' && o.tracker) {
+    const state = trackerStates.get(o.id)
+    if (!state || state.confidence < 0.1) return
+    const cx = toWorldX(state.x, aspect)
+    const cy = toWorldY(state.y)
+    const r = toWorldR(o.tracker.radius, aspect)
+    const m = toWorldR(o.margin, aspect)
+    const dx = x - cx, dy = y - cy
+    const d = Math.hypot(dx, dy)
+    const total = r + m
+    if (d < total) {
+      const inside = d < r
+      const t = inside ? 1 : 1 - (d - r) / m
+      if (inside) bumpCounter(o.id)
+      pushForce(o, dx, dy, d, t * state.confidence, inside)
     }
   } else if (o.kind === 'pose' && o.pose && senseBus.pose.detected) {
     const r = toWorldR(o.pose.radius, aspect)

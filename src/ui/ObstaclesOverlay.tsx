@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSceneStore } from '../store/sceneStore'
 import type { Obstacle } from '../types/scene'
+import { trackerStates } from '../engine/ColorTracker'
 
 interface DragInfo {
   obstacleId: string
@@ -93,6 +94,26 @@ export function ObstaclesOverlay({ stageRef, editing, selectedId, onSelect }: {
               <g key={o.id} onClick={() => editing && onSelect(o.id)} style={{ pointerEvents: editing ? 'auto' : 'none', cursor: editing ? 'pointer' : 'default' }}>
                 <polygon points={pts} fill={stroke.replace('0.9', '0.10')} stroke={stroke} strokeWidth={sw} strokeDasharray={o.enabled ? '0' : '5 5'} />
                 <text x={first.x * W + 6} y={first.y * H - 6} fill={stroke} fontSize="11" fontFamily="var(--mono)">{o.name}</text>
+              </g>
+            )
+          } else if (o.kind === 'tracker' && o.tracker) {
+            const state = trackerStates.get(o.id)
+            if (!state) return (
+              <g key={o.id}>
+                <text x={W - 110} y={52} fill={stroke} fontSize="11" fontFamily="var(--mono)" textAnchor="end">
+                  🎯 {o.name} (en attente)
+                </text>
+              </g>
+            )
+            const cx = state.x * W, cy = state.y * H
+            const rPx = o.tracker.radius * Math.max(W, H)
+            return (
+              <g key={o.id} opacity={Math.max(0.25, state.confidence)}>
+                <circle cx={cx} cy={cy} r={rPx} fill="none" stroke={stroke} strokeWidth={sw} strokeDasharray="5 4" />
+                <circle cx={cx} cy={cy} r={4} fill={stroke} />
+                <text x={cx + rPx + 6} y={cy + 4} fill={stroke} fontSize="11" fontFamily="var(--mono)">
+                  🎯 {o.name} ({Math.round(state.confidence * 100)}%)
+                </text>
               </g>
             )
           } else if (o.kind === 'hand' && o.hand) {

@@ -3,6 +3,7 @@ import type { BoidsParams, VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
 import { solveObstacles } from '../Obstacles'
 import { getSilhouetteMask } from '../../senses/Silhouette'
+import { sampleFlow } from '../Flow'
 
 const MAX_COUNT = 5000
 
@@ -143,6 +144,11 @@ export class BoidsOrganism {
         fx += (dx / d) * handForce * 0.8
         fy += (dy / d) * handForce * 0.8
       }
+
+      // flow field
+      const flow = sampleFlow(px[i], py[i], performance.now() * 0.001)
+      fx += flow.fx
+      fy += flow.fy
 
       // obstacles
       if (this.obstacles && this.obstacles.length) {

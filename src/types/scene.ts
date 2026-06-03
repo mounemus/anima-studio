@@ -142,7 +142,7 @@ export interface MappingConfig {
   testPattern?: TestPattern
 }
 
-export type ObstacleKind = 'circle' | 'polygon' | 'hand' | 'silhouette' | 'pose'
+export type ObstacleKind = 'circle' | 'polygon' | 'hand' | 'silhouette' | 'pose' | 'tracker'
 export type ObstacleInteraction = 'avoid' | 'attract' | 'bounce' | 'kill'
 
 export type Waveform = 'sine' | 'triangle' | 'sawtooth' | 'square'
@@ -181,11 +181,27 @@ export interface Obstacle {
   silhouette?: { invert: boolean }
   /** for pose: which joints to use (MediaPipe indices) + per-joint radius */
   pose?: { joints: number[]; radius: number }
+  /** for tracker: HSV target color + tolerance + radius. Position auto-updated by color tracker. */
+  tracker?: { h: number; s: number; v: number; tolerance: number; radius: number; label?: string }
   /** visual hint on stage when overlay is on */
   visible: boolean
   /** sonification (optional) */
   sound?: SoundConfig
 }
+
+export interface FlowField {
+  enabled: boolean
+  /** angle in radians (0 = right, π/2 = down, π = left, 3π/2 = up) */
+  angle: number
+  /** 0..3 — magnitude of the directional push */
+  strength: number
+  /** 0..2 — additional Perlin-style swirl on top of the base direction */
+  turbulence: number
+}
+
+export const defaultFlow = (): FlowField => ({
+  enabled: false, angle: 0, strength: 0.6, turbulence: 0.2,
+})
 
 export interface Scene {
   id: string
@@ -198,6 +214,7 @@ export interface Scene {
   evolution: Evolution
   mapping: MappingConfig
   obstacles?: Obstacle[]
+  flow?: FlowField
   notes?: string
 }
 
@@ -227,6 +244,7 @@ export const defaultObstacle = (kind: ObstacleKind, i = 0): Obstacle => {
   if (kind === 'hand') base.hand = { source: 'palm', radius: 0.12 }
   if (kind === 'silhouette') base.silhouette = { invert: false }
   if (kind === 'pose') base.pose = { joints: [15, 16, 11, 12], radius: 0.08 }  // wrists + shoulders
+  if (kind === 'tracker') base.tracker = { h: 0, s: 0.7, v: 0.7, tolerance: 0.18, radius: 0.1 }
   base.sound = { enabled: false, note: 'auto', waveform: 'sine', volume: 0.5, density: true, cutoff: 2000, audioReactivity: 0 }
   return base
 }

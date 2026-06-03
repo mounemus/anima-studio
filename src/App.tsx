@@ -11,9 +11,10 @@ import { MirrorView } from './ui/MirrorView'
 import { PoseOverlay } from './ui/PoseOverlay'
 import { useSceneStore } from './store/sceneStore'
 import type { Engine } from './engine/Engine'
-import { Eye, AlertTriangle } from 'lucide-react'
+import { Eye, AlertTriangle, Pipette } from 'lucide-react'
 import { enterFullscreen } from './lib/recorder'
 import { isOutputWindow } from './lib/multiDisplay'
+import { pickColorAt } from './engine/ColorTracker'
 
 export function App() {
   const load = useSceneStore((s) => s.load)
@@ -25,9 +26,21 @@ export function App() {
   const [outputMode, setOutputMode] = useState(isOutput)
   const [mirrorMode, setMirrorMode] = useState(false)
   const [selectedObstacle, setSelectedObstacle] = useState<string | null>(null)
+  const [pickingForObstacle, setPickingForObstacle] = useState<string | null>(null)
   const addObstacle = useSceneStore((s) => s.addObstacle)
   const updateObstacle = useSceneStore((s) => s.updateObstacle)
   const currentSceneId = useSceneStore((s) => s.currentId)
+
+  // Listen for the pipette request from the obstacle UI
+  useEffect(() => {
+    const onPick = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail
+      setPickingForObstacle(id)
+      if (!mirrorMode) setMirrorMode(true)
+    }
+    window.addEventListener('anima:pick-color', onPick)
+    return () => window.removeEventListener('anima:pick-color', onPick)
+  }, [mirrorMode])
   useEffect(() => {
     const onSelect = (e: Event) => setSelectedObstacle((e as CustomEvent<string | null>).detail)
     window.addEventListener('anima:obstacle-select', onSelect)
@@ -47,23 +60,25 @@ export function App() {
     return () => clearInterval(id)
   }, [])
 
-  // Keyboard shortcuts: F = output mode, Esc = exit output mode
+  // Keyboard shortcuts: F = output mode, Esc = exit output mode / cancel color pick
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // ignore if typing
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       if (e.key === 'f' || e.key === 'F') {
         e.preventDefault()
         setOutputMode((x) => !x)
-      } else if (e.key === 'Escape' && outputMode) {
-        setOutputMode(false)
-        if (document.fullscreenElement) document.exitFullscreen()
+      } else if (e.key === 'Escape') {
+        if (pickingForObstacle) { setPickingForObstacle(null); return }
+        if (outputMode) {
+          setOutputMode(false)
+          if (document.fullscreenElement) document.exitFullscreen()
+        }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [outputMode])
+  }, [outputMode, pickingForObstacle])
 
   // Enter/exit fullscreen alongside output mode (best-effort, may be blocked by browser)
   useEffect(() => {
@@ -79,19 +94,37 @@ export function App() {
     if (engineRef.current) engineRef.current.setTransparent(mirrorMode)
   }, [mirrorMode])
 
-  // Tap-to-place obstacle when in Mirror mode — ONLY with Alt key held (avoid accidental triggers)
+  // Pointer handler for the stage:
+  // - if a color-pick is pending → sample the webcam pixel and update the tracker obstacle
+  // - else: Alt+click to place a new attract circle
   const onStageClick = (e: React.PointerEvent) => {
     if (!mirrorMode || !stageRef.current || !currentSceneId) return
-    if (!e.altKey) return                       // require Alt to place
-    // Ignore clicks on canvas chrome only — never trigger on regular click on the canvas surface
     const target = e.target as HTMLElement
-    // We accept clicks on: canvas, .mirror-bg (the video), or .stage itself
     const onCanvas = target.tagName === 'CANVAS' || target === stageRef.current ||
       target.classList.contains('mirror-bg') || target.classList.contains('canvas-wrap')
     if (!onCanvas) return
     const r = stageRef.current.getBoundingClientRect()
     const x = (e.clientX - r.left) / r.width
     const y = (e.clientY - r.top) / r.height
+
+    // Color picker active?
+    if (pickingForObstacle) {
+      const vid = videoRef.current
+      const hsv = vid ? pickColorAt(vid, x, y) : null
+      if (hsv) {
+        const scene = useSceneStore.getState().scenes.find((s) => s.id === currentSceneId)
+        const obs = scene?.obstacles?.find((o) => o.id === pickingForObstacle)
+        if (obs?.tracker) {
+          updateObstacle(pickingForObstacle, {
+            tracker: { ...obs.tracker, h: hsv.h, s: hsv.s, v: hsv.v },
+          })
+        }
+      }
+      setPickingForObstacle(null)
+      return
+    }
+
+    if (!e.altKey) return                       // require Alt to place
     addObstacle('circle')
     setTimeout(() => {
       const scene = useSceneStore.getState().scenes.find((s) => s.id === currentSceneId)
@@ -133,9 +166,14 @@ export function App() {
             {!outputMode && <MappingOverlay stageRef={stageRef} />}
             {!outputMode && <ObstaclesOverlay stageRef={stageRef} editing={true} selectedId={selectedObstacle} onSelect={setSelectedObstacle} />}
             {!outputMode && <AIChat open={aiOpen} />}
-            {mirrorMode && !outputMode && (
+            {mirrorMode && !outputMode && !pickingForObstacle && (
               <div className="tap-hint">
                 🪞 Miroir AR · <kbd>Alt</kbd> + clic sur l'image pour poser un attracteur
+              </div>
+            )}
+            {pickingForObstacle && (
+              <div className="tap-hint" style={{ background: 'rgba(0,212,255,0.18)', borderColor: 'var(--accent-2)', color: 'var(--accent-2)' }}>
+                <Pipette size={12} style={{ verticalAlign: 'middle' }} /> Pipette active — clique sur l'objet à tracker · <kbd onClick={() => setPickingForObstacle(null)} style={{ cursor: 'pointer' }}>Esc</kbd>
               </div>
             )}
             {outputMode && (

@@ -1,11 +1,18 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX, Wand2, Bone } from 'lucide-react'
+import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX, Wand2, Bone, Pipette, Wind, Navigation } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
 import type { OrganismKind, TestPattern, ObstacleInteraction, Waveform, SoundConfig } from '../types/scene'
 import { LiveImg2Img } from '../lib/liveImg2Img'
 import { soundEngine } from '../engine/SoundEngine'
 import { SOUND_PRESETS, applyPreset } from '../lib/soundPresets'
 import { JOINT_LABELS } from '../senses/SenseBus'
+
+function hsvToCss(h: number, s: number, v: number): string {
+  // HSV → HSL: l = v - vs/2, s_hsl = (v - l) / min(l, 1 - l)
+  const l = v - v * s / 2
+  const sHsl = (l === 0 || l === 1) ? 0 : (v - l) / Math.min(l, 1 - l)
+  return `hsl(${Math.round(h * 360)} ${Math.round(sHsl * 100)}% ${Math.round(l * 100)}%)`
+}
 import { saveCalibration, listCalibrations, deleteCalibration, exportCalibration, type CalibrationProfile } from '../lib/calibrations'
 
 interface SliderProps {
@@ -250,6 +257,8 @@ function SensesTab() {
         les graves font respirer la taille ; médiums/aigus modulent vitesse.
       </p>
 
+      <FlowControl />
+
       <h3 style={{ marginTop: 18 }}>🧬 Évolution générative</h3>
       <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none', marginBottom: 10 }}>
         <input
@@ -277,6 +286,64 @@ function SensesTab() {
         Les paramètres dérivent en continu par bruit Perlin. L'organisme paraît vivant et respire de lui-même.
       </p>
     </div>
+  )
+}
+
+function FlowControl() {
+  const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
+  const update = useSceneStore((s) => s.updateFlow)
+  const flow = current.flow ?? { enabled: false, angle: 0, strength: 0.6, turbulence: 0.2 }
+  const degrees = Math.round((flow.angle * 180 / Math.PI + 360) % 360)
+  // Dial size in px
+  const r = 36
+  const cx = r, cy = r
+  const handleX = cx + Math.cos(flow.angle) * (r - 6)
+  const handleY = cy + Math.sin(flow.angle) * (r - 6)
+
+  const onDial = (e: React.PointerEvent<SVGSVGElement>) => {
+    const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect()
+    const px = e.clientX - rect.left - cx
+    const py = e.clientY - rect.top - cy
+    const a = Math.atan2(py, px)
+    update({ angle: a, enabled: true })
+  }
+
+  return (
+    <>
+      <h3 style={{ marginTop: 18, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span><Wind size={11} style={{ verticalAlign: 'middle', color: 'var(--accent)' }} /> Flux directionnel</span>
+        {flow.enabled && <span style={{ fontSize: 10, color: 'var(--text-mute)', fontFamily: 'var(--mono)' }}>{degrees}°</span>}
+      </h3>
+      <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none', marginBottom: 10 }}>
+        <input type="checkbox" checked={flow.enabled} onChange={(e) => update({ enabled: e.target.checked })} />
+        <span>Activer le vent / courant</span>
+      </label>
+      {flow.enabled && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+            <svg
+              width={r * 2} height={r * 2}
+              onPointerDown={onDial} onPointerMove={(e) => e.buttons === 1 && onDial(e)}
+              style={{ cursor: 'crosshair', flexShrink: 0 }}
+            >
+              <circle cx={cx} cy={cy} r={r - 1} fill="var(--bg)" stroke="var(--line)" strokeWidth={1} />
+              <line x1={cx} y1={cy} x2={handleX} y2={handleY} stroke="var(--accent)" strokeWidth={2} strokeLinecap="round" />
+              <polygon
+                points={`${handleX - 4},${handleY - 4} ${handleX + 6},${handleY} ${handleX - 4},${handleY + 4}`}
+                fill="var(--accent)"
+                transform={`rotate(${flow.angle * 180 / Math.PI} ${handleX} ${handleY})`}
+              />
+              <circle cx={cx} cy={cy} r={2.5} fill="var(--text-mute)" />
+            </svg>
+            <div style={{ flex: 1, fontSize: 11, color: 'var(--text-mute)', lineHeight: 1.4 }}>
+              <Navigation size={10} style={{ verticalAlign: 'middle' }} /> Glisse sur la jauge pour orienter le flux. Force et turbulence ajustables ci-dessous.
+            </div>
+          </div>
+          <Slider label="Force" value={flow.strength} min={0} max={3} step={0.05} onChange={(v) => update({ strength: v })} />
+          <Slider label="Turbulence" value={flow.turbulence} min={0} max={2} step={0.05} onChange={(v) => update({ turbulence: v })} />
+        </>
+      )}
+    </>
   )
 }
 
@@ -499,6 +566,7 @@ function ObstaclesTab() {
         <button onClick={() => add('hand')} style={{ fontSize: 12, justifyContent: 'center' }}><Hand size={12} /> Main</button>
         <button onClick={() => add('silhouette')} style={{ fontSize: 12, justifyContent: 'center' }}><User size={12} /> Silhouette</button>
         <button onClick={() => add('pose')} style={{ fontSize: 12, justifyContent: 'center', gridColumn: 'span 2' }}><Bone size={12} /> Articulations (pose corps)</button>
+        <button onClick={() => add('tracker')} style={{ fontSize: 12, justifyContent: 'center', gridColumn: 'span 2' }}><Pipette size={12} /> Tracker couleur (objet AR)</button>
       </div>
 
       {obs.length > 0 && (
@@ -629,6 +697,41 @@ function ObstaclesTab() {
             </>
           )}
 
+          {sel.kind === 'tracker' && sel.tracker && (
+            <>
+              <h3 style={{ marginTop: 10 }}>Cible couleur</h3>
+              <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                Active AR + caméra, puis clique <strong>Pipette</strong> et tape sur l'objet réel dans l'image.
+                L'obstacle suivra automatiquement cet objet.
+              </p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                <div style={{
+                  width: 40, height: 40, borderRadius: 8,
+                  background: hsvToCss(sel.tracker.h, sel.tracker.s, sel.tracker.v),
+                  border: '2px solid var(--line)',
+                  flexShrink: 0,
+                }} title="Couleur cible" />
+                <button
+                  className="primary"
+                  onClick={() => window.dispatchEvent(new CustomEvent('anima:pick-color', { detail: sel.id }))}
+                  style={{ fontSize: 12, flex: 1, justifyContent: 'center' }}
+                >
+                  <Pipette size={12} /> Pipette → cliquer sur l'image AR
+                </button>
+              </div>
+              <Slider label="Tolérance match" value={sel.tracker.tolerance} min={0.05} max={0.5} step={0.01}
+                onChange={(t) => update(sel.id, { tracker: { ...sel.tracker!, tolerance: t } })}
+                format={(t) => `${Math.round(t * 100)}%`}
+              />
+              <Slider label="Rayon obstacle" value={sel.tracker.radius} min={0.02} max={0.3} step={0.01}
+                onChange={(r) => update(sel.id, { tracker: { ...sel.tracker!, radius: r } })}
+                format={(r) => `${Math.round(r * 100)}%`}
+              />
+              <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 6 }}>
+                Tolérance plus large = match plus généreux (mais risque de bruit). Active une seule pipette à la fois.
+              </p>
+            </>
+          )}
           {sel.kind === 'pose' && sel.pose && (
             <>
               <h3 style={{ marginTop: 10 }}>Articulations actives</h3>
