@@ -18,9 +18,10 @@ const FRAG = `
   uniform vec3 uTint;                  // overall tint multiplier
   uniform float uTransparent;          // 0 = opaque (normal), 1 = content-based alpha (AR mirror)
 
+  // Newton iteration WITHOUT clamping (else outside-quad detection is dead code).
   vec2 invQuadMap(vec2 p) {
     vec2 uv = vec2(0.5);
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < 14; i++) {
       vec2 m1 = mix(uC0, uC1, uv.x);
       vec2 m2 = mix(uC3, uC2, uv.x);
       vec2 cur = mix(m1, m2, uv.y);
@@ -28,11 +29,23 @@ const FRAG = `
       vec2 dU = mix(uC1 - uC0, uC2 - uC3, uv.y);
       vec2 dV = m2 - m1;
       float det = dU.x * dV.y - dU.y * dV.x;
-      if (abs(det) < 1e-6) break;
+      if (abs(det) < 1e-6) return vec2(-99.0);  // singular → return outside-sentinel
       uv += vec2(d.x * dV.y - d.y * dV.x, d.y * dU.x - d.x * dU.y) / det;
-      uv = clamp(uv, 0.0, 1.0);
+      // bail early if iteration is diverging far outside
+      if (uv.x < -0.5 || uv.x > 1.5 || uv.y < -0.5 || uv.y > 1.5) return uv;
     }
     return uv;
+  }
+
+  // Fast point-in-quad test using signed edge cross products.
+  bool insideQuad(vec2 p) {
+    float c0 = (uC1.x - uC0.x) * (p.y - uC0.y) - (uC1.y - uC0.y) * (p.x - uC0.x);
+    float c1 = (uC2.x - uC1.x) * (p.y - uC1.y) - (uC2.y - uC1.y) * (p.x - uC1.x);
+    float c2 = (uC3.x - uC2.x) * (p.y - uC2.y) - (uC3.y - uC2.y) * (p.x - uC2.x);
+    float c3 = (uC0.x - uC3.x) * (p.y - uC3.y) - (uC0.y - uC3.y) * (p.x - uC3.x);
+    float mn = min(min(c0, c1), min(c2, c3));
+    float mx = max(max(c0, c1), max(c2, c3));
+    return mn >= -1e-4 || mx <= 1e-4;   // tolerate either winding
   }
 
   vec3 patternColor(vec2 uv) {
