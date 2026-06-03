@@ -6,6 +6,8 @@ import { MappingPass } from './MappingPass'
 import { senseBus } from '../senses/SenseBus'
 import { loadTexture } from '../lib/textureLoader'
 import type { Obstacle } from '../types/scene'
+import { resetCounters } from './Obstacles'
+import { soundEngine } from './SoundEngine'
 
 export class Engine {
   private renderer: THREE.WebGLRenderer
@@ -162,6 +164,7 @@ export class Engine {
   updateObstacles(obs: Obstacle[]) {
     if (this.currentScene) this.currentScene = { ...this.currentScene, obstacles: obs }
     if (this.organism) (this.organism as any).obstacles = obs
+    soundEngine.sync(obs)
   }
 
   updateMapping(cfg?: import('../types/scene').MappingConfig) {
@@ -190,6 +193,10 @@ export class Engine {
 
     if (!this.currentScene) return
 
+    // Reset per-frame obstacle counters; record total population for density normalization
+    resetCounters()
+    soundEngine.totalAgents = (this.currentScene.organism.values as any).count ?? 0
+
     // Evolution: organic drift of organism params via low-freq noise (in-engine, no React loop)
     if (this.currentScene.evolution.enabled && this.organism) {
       this.evolutionT += dt * this.currentScene.evolution.driftSpeed
@@ -208,6 +215,8 @@ export class Engine {
     }
 
     if (this.organism) this.organism.update(dt)
+    // After organisms moved, push counters → audio
+    soundEngine.tick()
 
     // render organisms to mainRT
     this.renderer.setRenderTarget(this.mainRT)

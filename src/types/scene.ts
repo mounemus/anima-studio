@@ -123,6 +123,21 @@ export interface MappingConfig {
 export type ObstacleKind = 'circle' | 'polygon' | 'hand' | 'silhouette'
 export type ObstacleInteraction = 'avoid' | 'attract' | 'bounce' | 'kill'
 
+export type Waveform = 'sine' | 'triangle' | 'sawtooth' | 'square'
+
+export interface SoundConfig {
+  enabled: boolean
+  /** MIDI note number (60 = C4). If 'auto', derived from obstacle index. */
+  note: number | 'auto'
+  waveform: Waveform
+  /** 0..1 volume scaler */
+  volume: number
+  /** if true: continuous tone modulated by density; if false: pulse on entry */
+  density: boolean
+  /** lowpass cutoff Hz (200..8000) */
+  cutoff: number
+}
+
 export interface Obstacle {
   id: string
   name: string
@@ -142,6 +157,8 @@ export interface Obstacle {
   silhouette?: { invert: boolean }
   /** visual hint on stage when overlay is on */
   visible: boolean
+  /** sonification (optional) */
+  sound?: SoundConfig
 }
 
 export interface Scene {
@@ -183,6 +200,7 @@ export const defaultObstacle = (kind: ObstacleKind, i = 0): Obstacle => {
   ] }
   if (kind === 'hand') base.hand = { source: 'palm', radius: 0.12 }
   if (kind === 'silhouette') base.silhouette = { invert: false }
+  base.sound = { enabled: false, note: 'auto', waveform: 'sine', volume: 0.5, density: true, cutoff: 2000 }
   return base
 }
 

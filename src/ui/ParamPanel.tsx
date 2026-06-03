@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes } from 'lucide-react'
+import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
-import type { OrganismKind, TestPattern, ObstacleInteraction } from '../types/scene'
+import type { OrganismKind, TestPattern, ObstacleInteraction, Waveform, SoundConfig } from '../types/scene'
 import { LiveImg2Img } from '../lib/liveImg2Img'
+import { soundEngine } from '../engine/SoundEngine'
 import { saveCalibration, listCalibrations, deleteCalibration, exportCalibration, type CalibrationProfile } from '../lib/calibrations'
 
 interface SliderProps {
@@ -591,8 +592,118 @@ function ObstaclesTab() {
               </p>
             </>
           )}
+
+          <SoundSection obstacleId={sel.id} sound={sel.sound} onChange={(s) => update(sel.id, { sound: s })} />
         </div>
       )}
+
+      <MasterSoundControl />
+    </div>
+  )
+}
+
+const NOTES = [
+  { v: 'auto', label: 'Auto (penta)' },
+  { v: 48, label: 'C3 (do)' }, { v: 50, label: 'D3 (ré)' }, { v: 52, label: 'E3 (mi)' },
+  { v: 55, label: 'G3 (sol)' }, { v: 57, label: 'A3 (la)' },
+  { v: 60, label: 'C4 (do)' }, { v: 62, label: 'D4 (ré)' }, { v: 64, label: 'E4 (mi)' },
+  { v: 67, label: 'G4 (sol)' }, { v: 69, label: 'A4 (la)' },
+  { v: 72, label: 'C5 (do)' }, { v: 76, label: 'E5 (mi)' }, { v: 79, label: 'G5 (sol)' },
+]
+const WAVEFORMS: { v: Waveform; label: string }[] = [
+  { v: 'sine', label: 'Sinus (doux)' },
+  { v: 'triangle', label: 'Triangle' },
+  { v: 'sawtooth', label: 'Dent (riche)' },
+  { v: 'square', label: 'Carré (8-bit)' },
+]
+
+function SoundSection({ obstacleId, sound, onChange }: {
+  obstacleId: string
+  sound: SoundConfig | undefined
+  onChange: (s: SoundConfig) => void
+}) {
+  const [density, setDensity] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setDensity(soundEngine.density(obstacleId)), 100)
+    return () => clearInterval(id)
+  }, [obstacleId])
+
+  const s = sound ?? { enabled: false, note: 'auto' as const, waveform: 'sine' as Waveform, volume: 0.5, density: true, cutoff: 2000 }
+
+  const toggle = () => {
+    if (!s.enabled) soundEngine.ensure()
+    onChange({ ...s, enabled: !s.enabled })
+  }
+
+  return (
+    <>
+      <h3 style={{ marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span><Music2 size={11} style={{ verticalAlign: 'middle', color: 'var(--accent)' }} /> Son</span>
+        {s.enabled && (
+          <span style={{ fontSize: 10, color: 'var(--text-mute)', fontFamily: 'var(--mono)' }}>
+            densité: {(density * 100).toFixed(0)}%
+          </span>
+        )}
+      </h3>
+      <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none', marginBottom: 10 }}>
+        <input type="checkbox" checked={s.enabled} onChange={toggle} />
+        <span>Sonifier cet obstacle</span>
+      </label>
+      {s.enabled && (
+        <>
+          <div className="palette-row">
+            <label>Note</label>
+            <select value={String(s.note)} onChange={(e) => onChange({ ...s, note: e.target.value === 'auto' ? 'auto' : parseInt(e.target.value) })}>
+              {NOTES.map((n) => <option key={String(n.v)} value={String(n.v)}>{n.label}</option>)}
+            </select>
+          </div>
+          <div className="palette-row">
+            <label>Waveform</label>
+            <select value={s.waveform} onChange={(e) => onChange({ ...s, waveform: e.target.value as Waveform })}>
+              {WAVEFORMS.map((w) => <option key={w.v} value={w.v}>{w.label}</option>)}
+            </select>
+          </div>
+          <Slider label="Volume" value={s.volume} min={0} max={1} step={0.01} onChange={(v) => onChange({ ...s, volume: v })} format={(v) => `${Math.round(v * 100)}%`} />
+          <Slider label="Cutoff filtre" value={s.cutoff} min={200} max={8000} step={50} onChange={(v) => onChange({ ...s, cutoff: v })} format={(v) => `${Math.round(v)}Hz`} />
+          <div style={{ background: 'var(--bg-elev-2)', height: 4, borderRadius: 2, overflow: 'hidden', marginTop: 8 }}>
+            <div style={{ width: `${density * 100}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent), var(--accent-3))', transition: 'width 80ms linear' }} />
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 8, lineHeight: 1.4 }}>
+            Le volume varie avec la densité d'organismes dans l'obstacle. Plus l'écosystème est dense → plus la note est forte.
+          </p>
+        </>
+      )}
+    </>
+  )
+}
+
+function MasterSoundControl() {
+  const [muted, setMuted] = useState(soundEngine.isMuted())
+  const [vol, setVol] = useState(0.6)
+  const ready = soundEngine.isReady()
+
+  if (!ready) return null
+
+  const toggleMute = () => {
+    const m = !muted
+    soundEngine.setMuted(m)
+    setMuted(m)
+  }
+  const onVol = (v: number) => {
+    setVol(v)
+    soundEngine.setMasterVolume(v)
+  }
+
+  return (
+    <div style={{ marginTop: 16, padding: 10, background: 'var(--bg)', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--line)' }}>
+      <h3 style={{ marginTop: 0 }}>🎚️ Mixer global</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        <button onClick={toggleMute} className={muted ? 'danger' : 'primary'} style={{ flexShrink: 0 }}>
+          {muted ? <VolumeX size={12} /> : <Volume2 size={12} />}
+          {muted ? 'Muet' : 'Audio ON'}
+        </button>
+      </div>
+      <Slider label="Volume master" value={vol} min={0} max={1} step={0.01} onChange={onVol} format={(v) => `${Math.round(v * 100)}%`} />
     </div>
   )
 }

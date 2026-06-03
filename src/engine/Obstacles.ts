@@ -11,6 +11,15 @@ import { senseBus } from '../senses/SenseBus'
 
 const tmp = { fx: 0, fy: 0, kill: false, bounceNx: 0, bounceNy: 0, hit: false }
 
+/** Per-obstacle hit counter for sonification. Reset by resetCounters(), incremented when an agent is inside. */
+export const obstacleCounters = new Map<string, number>()
+export function resetCounters() {
+  obstacleCounters.clear()
+}
+function bumpCounter(id: string) {
+  obstacleCounters.set(id, (obstacleCounters.get(id) ?? 0) + 1)
+}
+
 /** Convert normalized canvas point (0..1, top-left origin) to world (x ∈ [-aspect, aspect], y ∈ [-1, 1]) */
 function toWorldX(nx: number, aspect: number): number { return (nx - 0.5) * 2 * aspect }
 function toWorldY(ny: number): number { return -(ny - 0.5) * 2 }
@@ -45,6 +54,7 @@ function applyObstacle(o: Obstacle, x: number, y: number, aspect: number, mask: 
     if (d < total) {
       const inside = d < r
       const t = inside ? 1 : 1 - (d - r) / m  // 0..1
+      if (inside) bumpCounter(o.id)
       pushForce(o, dx, dy, d, t, inside)
     }
   } else if (o.kind === 'polygon' && o.polygon) {
@@ -77,6 +87,7 @@ function applyObstacle(o: Obstacle, x: number, y: number, aspect: number, mask: 
     const inside = pointInPolygon(x, y, pts, aspect)
     if (inside || minDist < m) {
       const t = inside ? 1 : 1 - minDist / m
+      if (inside) bumpCounter(o.id)
       pushForce(o, nx, ny, 1, t, inside)
     }
   } else if (o.kind === 'hand' && o.hand) {
@@ -92,6 +103,7 @@ function applyObstacle(o: Obstacle, x: number, y: number, aspect: number, mask: 
     if (d < total) {
       const inside = d < r
       const t = inside ? 1 : 1 - (d - r) / m
+      if (inside) bumpCounter(o.id)
       pushForce(o, dx, dy, d, t, inside)
     }
   } else if (o.kind === 'silhouette' && mask) {
@@ -110,6 +122,7 @@ function applyObstacle(o: Obstacle, x: number, y: number, aspect: number, mask: 
       const gx = left - right
       const gy = up - down
       const len = Math.max(1e-3, Math.hypot(gx, gy))
+      bumpCounter(o.id)
       pushForce(o, gx / len, -gy / len, 1, 1, true)
     }
   }
