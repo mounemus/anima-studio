@@ -60,3 +60,24 @@ function openWithTimeout(): Promise<IDBPDatabase> {
 
 /** Force a fresh open (used if user wants to retry after closing other tabs). */
 export function resetDb() { dbp = null }
+
+/**
+ * Nuke the IndexedDB completely. Returns a promise that resolves once deleted.
+ * Use as a last resort when the DB is permanently stuck (locked by another process,
+ * corrupted, version mismatch, etc.). After this, calling db() will create a fresh empty DB.
+ */
+export async function destroyDb(): Promise<void> {
+  dbp = null
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.deleteDatabase(DB_NAME)
+    const timer = setTimeout(() => {
+      // even delete can hang if another connection is open — just resolve and reload
+      resolve()
+    }, 2000)
+    req.onsuccess = () => { clearTimeout(timer); resolve() }
+    req.onerror = () => { clearTimeout(timer); reject(req.error) }
+    req.onblocked = () => {
+      console.warn('Delete blocked — another tab still has the DB open. Will resolve via timeout.')
+    }
+  })
+}
