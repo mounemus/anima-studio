@@ -44,17 +44,18 @@ export function Stage({ onEngineReady }: Props) {
     }
   }, [current?.organism, current?.visual, current?.mapping, current?.obstacles])
 
-  // Start/stop silhouette segmentation based on whether a silhouette obstacle is enabled
+  // Start/stop silhouette segmentation when needed (silhouette obstacle OR maskBody)
   useEffect(() => {
-    const needSilhouette = current?.obstacles?.some((o) => o.kind === 'silhouette' && o.enabled) ?? false
+    const needForObstacle = current?.obstacles?.some((o) => o.kind === 'silhouette' && o.enabled) ?? false
+    const needForMaskBody = !!current?.mapping?.arMaskBody
+    const need = needForObstacle || needForMaskBody
     const video = document.querySelector('video') as HTMLVideoElement | null
-    if (needSilhouette && video?.srcObject) {
+    if (need && video?.srcObject) {
       startSilhouette(video).catch((e) => console.warn('Silhouette failed', e))
     } else {
       stopSilhouette()
     }
-    return () => { /* keep running across renders */ }
-  }, [current?.obstacles])
+  }, [current?.obstacles, current?.mapping?.arMaskBody])
 
   // Start/stop color tracking based on tracker obstacles
   useEffect(() => {

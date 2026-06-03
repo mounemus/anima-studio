@@ -8,6 +8,16 @@ import { MappingOverlay } from './ui/MappingOverlay'
 import { ObstaclesOverlay } from './ui/ObstaclesOverlay'
 import { AIChat } from './ui/AIChat'
 import { MirrorView } from './ui/MirrorView'
+
+function MirrorVisibility({ mirrorMode, videoRef }: { mirrorMode: boolean; videoRef: React.RefObject<HTMLVideoElement> }) {
+  // Hide the full-screen mirror background when mapping wants to clip AR to zones
+  // (the webcam still shows inside the zones via per-shape webcam content)
+  const clipped = useSceneStore((s) => {
+    const sc = s.scenes.find((x) => x.id === s.currentId)
+    return !!(sc?.mapping.enabled && sc?.mapping.arClipToZones)
+  })
+  return <MirrorView videoRef={videoRef} active={mirrorMode && !clipped} />
+}
 import { PoseOverlay } from './ui/PoseOverlay'
 import { SilhouetteOverlay } from './ui/SilhouetteOverlay'
 import { useSceneStore } from './store/sceneStore'
@@ -169,7 +179,8 @@ export function App() {
       >
         {ready ? (
           <>
-            <MirrorView videoRef={videoRef} active={mirrorMode} />
+            {/* Hide the full-screen mirror when mapping wants to clip AR to zones */}
+            <MirrorVisibility mirrorMode={mirrorMode} videoRef={videoRef} />
             <Stage onEngineReady={(e) => { engineRef.current = e; e.setTransparent(mirrorMode) }} />
             {!outputMode && <SilhouetteOverlay stageRef={stageRef} />}
             <PoseOverlay stageRef={stageRef} visible={!outputMode} />

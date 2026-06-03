@@ -10,7 +10,8 @@ import { resetCounters } from './Obstacles'
 import { soundEngine } from './SoundEngine'
 import { setFlow } from './Flow'
 import { setTrackers } from './ColorTracker'
-import { resolveShapeTexture, pruneShapeTextures } from './ContentSources'
+import { resolveShapeTexture, pruneShapeTextures, setUseMaskedBody } from './ContentSources'
+import { startMaskedWebcam, stopMaskedWebcam } from './MaskedWebcam'
 
 export class Engine {
   private renderer: THREE.WebGLRenderer
@@ -193,6 +194,9 @@ export class Engine {
     // Sync per-shape content textures
     const c = cfg ?? this.currentScene?.mapping
     const shapes = c?.shapes ?? []
+    // Update the masked-body flag BEFORE resolving textures so webcam zones get the right one
+    setUseMaskedBody(!!c?.arMaskBody)
+    if (c?.arMaskBody) startMaskedWebcam(); else stopMaskedWebcam()
     const ids = new Set<string>()
     for (const s of shapes) {
       ids.add(s.id)

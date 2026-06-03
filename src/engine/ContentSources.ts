@@ -5,6 +5,7 @@
  */
 import * as THREE from 'three'
 import type { ShapeContent } from '../types/scene'
+import { getMaskedWebcamTexture } from './MaskedWebcam'
 
 interface VideoEntry {
   kind: 'video'
@@ -66,7 +67,11 @@ function loadImage(src: string): ImageEntry {
   return { kind: 'image', src, texture: tex }
 }
 
-function bindWebcam(): WebcamEntry {
+function bindWebcam(useMaskedBody: boolean): WebcamEntry {
+  if (useMaskedBody) {
+    const masked = getMaskedWebcamTexture()
+    return { kind: 'webcam', texture: masked as unknown as THREE.VideoTexture | null }
+  }
   const cam = document.querySelector('video.mirror-bg') as HTMLVideoElement | null
   const source = cam ?? (document.querySelector('video') as HTMLVideoElement | null)
   if (!source) return { kind: 'webcam', texture: null }
@@ -81,22 +86,31 @@ function bindWebcam(): WebcamEntry {
  * Returns the THREE.Texture for the given shape's content (or null = use default organism source).
  * Caches resources and disposes them when the content type/src changes.
  */
+/** Global flag — when true, all 'webcam' content uses the masked body texture instead of raw video. */
+let useMaskedBody = false
+export function setUseMaskedBody(v: boolean) { useMaskedBody = v }
+
 export function resolveShapeTexture(shapeId: string, content: ShapeContent | undefined): THREE.Texture | null {
   if (!content || content.type === 'organism') {
-    // Free any prior entry for this shape
     const existing = cache.get(cacheKey(shapeId))
     if (existing) { disposeEntry(existing); cache.delete(cacheKey(shapeId)) }
     return null
   }
   const existing = cache.get(cacheKey(shapeId))
-  // Re-use if same kind + src
   if (existing) {
     if (content.type === 'video' && existing.kind === 'video' && existing.src === content.src) return existing.texture
     if (content.type === 'image' && existing.kind === 'image' && existing.src === content.src) return existing.texture
-    if (content.type === 'webcam' && existing.kind === 'webcam' && existing.texture) return existing.texture
-    // Different kind or src → dispose & rebuild
-    disposeEntry(existing)
-    cache.delete(cacheKey(shapeId))
+    if (content.type === 'webcam' && existing.kind === 'webcam' && existing.texture) {
+      // For webcam, always re-resolve in case the mask flag toggled
+      const fresh = bindWebcam(useMaskedBody)
+      if (fresh.texture && fresh.texture !== existing.texture) {
+        disposeEntry(existing); cache.delete(cacheKey(shapeId))
+      } else {
+        return existing.texture
+      }
+    } else {
+      disposeEntry(existing); cache.delete(cacheKey(shapeId))
+    }
   }
   if (content.type === 'video' && content.src) {
     const e = loadVideo(content.src)
@@ -109,7 +123,7 @@ export function resolveShapeTexture(shapeId: string, content: ShapeContent | und
     return e.texture
   }
   if (content.type === 'webcam') {
-    const e = bindWebcam()
+    const e = bindWebcam(useMaskedBody)
     if (e.texture) cache.set(cacheKey(shapeId), e)
     return e.texture
   }

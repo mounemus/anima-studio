@@ -963,7 +963,7 @@ function MappingTab() {
   return (
     <div className="section">
       <h3>Projection mapping</h3>
-      <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none', marginBottom: 12 }}>
+      <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none', marginBottom: 8 }}>
         <input
           type="checkbox"
           checked={m.enabled}
@@ -971,6 +971,35 @@ function MappingTab() {
         />
         <span>Activer le mapping</span>
       </label>
+      {m.enabled && (
+        <div style={{ background: 'var(--bg)', padding: 8, borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)', marginBottom: 12 }}>
+          <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>🪞 AR + Zones</div>
+          <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none', marginBottom: 6, fontSize: 12 }}>
+            <input
+              type="checkbox"
+              checked={m.arClipToZones ?? false}
+              onChange={(e) => update({ arClipToZones: e.target.checked })}
+            />
+            <span><strong>AR seulement dans les zones</strong></span>
+          </label>
+          <p style={{ fontSize: 10, color: 'var(--text-mute)', marginBottom: 8, marginLeft: 22, lineHeight: 1.4 }}>
+            Cache l'image webcam plein écran — elle n'apparaît plus que dans les zones avec contenu <em>Webcam</em>.
+            Le reste = fond noir / transparent / organismes selon les autres zones.
+          </p>
+          <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none', marginBottom: 6, fontSize: 12 }}>
+            <input
+              type="checkbox"
+              checked={m.arMaskBody ?? false}
+              onChange={(e) => update({ arMaskBody: e.target.checked })}
+            />
+            <span><strong>Masquer l'environnement (corps uniquement)</strong></span>
+          </label>
+          <p style={{ fontSize: 10, color: 'var(--text-mute)', marginLeft: 22, lineHeight: 1.4 }}>
+            Toute zone <em>Webcam</em> ne montre que ton corps (via SelfieSegmenter), pas la pièce derrière.
+            Les obstacles <em>silhouette / pose / tracker</em> restent actifs pour l'interaction.
+          </p>
+        </div>
+      )}
 
       <h3 style={{ marginTop: 10 }}>Zones (Kantan-style)</h3>
       <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>

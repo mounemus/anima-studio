@@ -153,16 +153,17 @@ export interface MappingShape {
 
 export interface MappingConfig {
   enabled: boolean
-  /** Legacy single-quad: kept for compatibility with old scenes. */
   corners: [Vec2, Vec2, Vec2, Vec2]
-  /** Multi-shape Kantan-style mapping. When empty, falls back to `corners`. */
   shapes?: MappingShape[]
-  /** Currently selected shape index (UI state, persisted for convenience) */
   selectedShape?: number
   edgeBlend: {
     left: number; right: number; top: number; bottom: number; gamma: number
   }
   testPattern?: TestPattern
+  /** AR scoping: when true, the fullscreen AR webcam background is hidden — webcam only appears INSIDE zones that have content.type === 'webcam'. */
+  arClipToZones?: boolean
+  /** Mask all webcam content with SelfieSegmenter silhouette → only the body shows, environment is transparent. */
+  arMaskBody?: boolean
 }
 
 export type ObstacleKind = 'circle' | 'polygon' | 'hand' | 'silhouette' | 'pose' | 'tracker'
