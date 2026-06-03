@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Scene, OrganismParams, VisualParams, MappingConfig } from '../types/scene'
+import type { Scene, OrganismParams, VisualParams, MappingConfig, AITexture, Evolution } from '../types/scene'
 import { defaultScenes } from '../lib/defaultScenes'
 import { saveScene, loadAllScenes, deleteScene as dbDelete } from '../lib/persistence'
 
@@ -19,6 +19,9 @@ interface SceneStoreState {
   updateVisual: (v: Partial<VisualParams>) => void
   updatePalette: (p: Partial<VisualParams['palette']>) => void
   updateMapping: (m: Partial<MappingConfig>) => void
+  setTexture: (tex: AITexture | null) => void
+  setTextureIntensity: (v: number) => void
+  updateEvolution: (e: Partial<Evolution>) => void
   rename: (name: string) => void
   setNotes: (notes: string) => void
 
@@ -121,6 +124,30 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
   updateMapping: (m) => {
     set((st) => {
       const next = st.scenes.map((s) => s.id === st.currentId ? { ...s, mapping: { ...s.mapping, ...m }, updatedAt: Date.now() } : s)
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  setTexture: (tex) => {
+    set((st) => {
+      const next = st.scenes.map((s) => s.id === st.currentId ? { ...s, visual: { ...s.visual, texture: tex }, updatedAt: Date.now() } : s)
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  setTextureIntensity: (v) => {
+    set((st) => {
+      const next = st.scenes.map((s) => s.id === st.currentId ? { ...s, visual: { ...s.visual, textureIntensity: v }, updatedAt: Date.now() } : s)
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  updateEvolution: (e) => {
+    set((st) => {
+      const next = st.scenes.map((s) => s.id === st.currentId ? { ...s, evolution: { ...s.evolution, ...e }, updatedAt: Date.now() } : s)
       return { scenes: next }
     })
     debouncePersist(() => get().persistCurrent())

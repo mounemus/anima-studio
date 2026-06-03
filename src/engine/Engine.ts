@@ -4,6 +4,7 @@ import { BoidsOrganism, ParticlesOrganism, TendrilsOrganism, CellsOrganism } fro
 import type { OrganismLike } from './organisms'
 import { MappingPass } from './MappingPass'
 import { senseBus } from '../senses/SenseBus'
+import { loadTexture } from '../lib/textureLoader'
 
 export class Engine {
   private renderer: THREE.WebGLRenderer
@@ -23,6 +24,9 @@ export class Engine {
   private width = 1; private height = 1
   private bg = new THREE.Color(0x06070d)
   private stats = { fps: 0, frame: 0, fpsAcc: 0, fpsT: performance.now() }
+  private currentTextureUrl: string | null = null
+  private evolutionT = 0
+  private baseValues: Record<string, number> = {}
 
   constructor(container: HTMLElement) {
     this.container = container
@@ -113,6 +117,9 @@ export class Engine {
       this.organism.setAspect(aspect)
       this.scene.add(this.organism.mesh)
     }
+    // snapshot base values for evolution drift
+    this.baseValues = { ...(s.organism.values as unknown as Record<string, number>) }
+    this.evolutionT = 0
     this.applyVisual(s.visual)
     this.mapping.apply(s.mapping)
     // clear feedback
@@ -125,13 +132,29 @@ export class Engine {
 
   updateOrganismParams(p: any) {
     if (this.organism) this.organism.updateParams(p)
+    this.baseValues = { ...(p as unknown as Record<string, number>) }
   }
 
   applyVisual(v: VisualParams) {
     this.bg.set(v.palette.bg)
     if (this.organism) this.organism.applyVisual(v)
     this.feedbackQuadMat.uniforms.uFade.value = v.feedback
+    // texture sync
+    const newUrl = v.texture?.url ?? null
+    if (newUrl !== this.currentTextureUrl) {
+      this.currentTextureUrl = newUrl
+      if (newUrl) {
+        loadTexture(newUrl).then((tex) => {
+          if (this.currentTextureUrl === newUrl && this.organism?.setTexture) {
+            this.organism.setTexture(tex)
+          }
+        }).catch((e) => console.warn('Texture load failed', e))
+      } else {
+        this.organism?.setTexture?.(null)
+      }
+    }
   }
+
 
   updateMapping() {
     if (this.currentScene) this.mapping.apply(this.currentScene.mapping)
@@ -153,6 +176,23 @@ export class Engine {
     }
 
     if (!this.currentScene) return
+
+    // Evolution: organic drift of organism params via low-freq noise (in-engine, no React loop)
+    if (this.currentScene.evolution.enabled && this.organism) {
+      this.evolutionT += dt * this.currentScene.evolution.driftSpeed
+      const amp = this.currentScene.evolution.amplitude
+      const evolved: Record<string, number> = { ...this.baseValues }
+      let idx = 0
+      for (const k in this.baseValues) {
+        const base = this.baseValues[k]
+        if (typeof base !== 'number' || k === 'count' || k === 'length') continue
+        const n = Math.sin(this.evolutionT * (0.7 + idx * 0.3) + idx * 1.7) * 0.7
+                + Math.sin(this.evolutionT * 2.3 + idx * 0.9) * 0.3
+        evolved[k] = Math.max(0, base * (1 + n * amp))
+        idx++
+      }
+      this.organism.updateParams(evolved)
+    }
 
     if (this.organism) this.organism.update(dt)
 

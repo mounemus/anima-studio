@@ -458,3 +458,9 @@ input[type="range"]::-webkit-slider-thumb {
   .key-input-row { flex-wrap: wrap; }
   .key-input-row input { flex: 1 1 100%; margin-bottom: 6px; }
 }
+
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

@@ -54,11 +54,21 @@ export interface Palette {
   glow: string
 }
 
+export interface AITexture {
+  url: string
+  prompt: string
+  model: string
+  seed?: number
+  generatedAt: number
+}
+
 export interface VisualParams {
   palette: Palette
   bloom: number
   feedback: number       // 0..1 trail fade
   blendMode: 'add' | 'normal' | 'screen'
+  texture?: AITexture | null
+  textureIntensity?: number   // 0..1, 0 = pure palette, 1 = pure texture
 }
 
 export interface SenseBinding {

@@ -9,5 +9,6 @@ export interface OrganismLike {
   update(dt: number): void
   applyVisual(v: import('../../types/scene').VisualParams): void
   updateParams(p: any): void
+  setTexture?(tex: import('three').Texture | null): void
   dispose(): void
 }

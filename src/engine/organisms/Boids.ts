@@ -26,6 +26,7 @@ export class BoidsOrganism {
       opacity: 0.95,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
+      alphaTest: 0.01,
     })
     this.mesh = new THREE.InstancedMesh(geo, mat, MAX_COUNT)
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
@@ -72,6 +73,13 @@ export class BoidsOrganism {
       colors[i * 3 + 2] = this.color.b
     }
     this.mesh.instanceColor!.needsUpdate = true
+  }
+
+  setTexture(tex: THREE.Texture | null) {
+    const mat = this.mesh.material as THREE.MeshBasicMaterial
+    mat.map = tex
+    if (tex) mat.color.setRGB(1, 1, 1)  // let texture colors show through instanceColor mult
+    mat.needsUpdate = true
   }
 
   update(dt: number) {

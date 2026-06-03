@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Sparkles, X, Loader } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
 import type { OrganismKind } from '../types/scene'
 
@@ -158,6 +159,9 @@ export function ParamPanel() {
                 <option value="normal">Normal</option>
               </select>
             </div>
+
+            <h3 style={{ marginTop: 14 }}><Sparkles size={11} style={{ verticalAlign: 'middle', color: 'var(--accent)' }} /> Texture IA</h3>
+            <TextureGen />
           </div>
         )}
 
@@ -185,6 +189,7 @@ export function ParamPanel() {
 function SensesTab() {
   const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
   const setScenes = useSceneStore((s) => s.persistCurrent)
+  const updateEvolution = useSceneStore((s) => s.updateEvolution)
 
   const toggle = (key: 'hands' | 'audio' | 'light') => {
     current.senses[key] = !current.senses[key]
@@ -211,10 +216,126 @@ function SensesTab() {
         </label>
       </div>
       <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 16, lineHeight: 1.5 }}>
-        Les capteurs autorisés démarreront via la barre supérieure. La main attire les organismes ;
-        le pinch (pouce-index) intensifie l'effet ; les graves font respirer la taille ;
-        les médiums/aigus modulent vitesse et chaleur.
+        La main attire les organismes ; le pinch intensifie l'effet ;
+        les graves font respirer la taille ; médiums/aigus modulent vitesse.
       </p>
+
+      <h3 style={{ marginTop: 18 }}>🧬 Évolution générative</h3>
+      <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none', marginBottom: 10 }}>
+        <input
+          type="checkbox"
+          checked={current.evolution.enabled}
+          onChange={(e) => updateEvolution({ enabled: e.target.checked })}
+        />
+        <span>Activer la dérive organique</span>
+      </label>
+      <Slider
+        label="Vitesse de dérive"
+        value={current.evolution.driftSpeed}
+        min={0.01} max={0.3} step={0.005}
+        onChange={(x) => updateEvolution({ driftSpeed: x })}
+        format={(x) => x.toFixed(3)}
+      />
+      <Slider
+        label="Amplitude"
+        value={current.evolution.amplitude}
+        min={0.05} max={0.6} step={0.01}
+        onChange={(x) => updateEvolution({ amplitude: x })}
+        format={(x) => `±${(x * 100).toFixed(0)}%`}
+      />
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 6, lineHeight: 1.5 }}>
+        Les paramètres dérivent en continu par bruit Perlin. L'organisme paraît vivant et respire de lui-même.
+      </p>
+    </div>
+  )
+}
+
+const TEXTURE_PROMPTS = [
+  'Iridescent organic membrane, microscopic, glowing',
+  'Bioluminescent jellyfish scales, dark sea',
+  'Mycelium network, fluorescent, dark background',
+  'Coral reef macro, electric colors, abstract',
+  'Lava cells, molten gold, organic',
+  'Crystal cellular structure, holographic',
+]
+
+function TextureGen() {
+  const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
+  const setTexture = useSceneStore((s) => s.setTexture)
+  const [prompt, setPrompt] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const generate = async (promptOverride?: string) => {
+    const finalPrompt = (promptOverride ?? prompt).trim()
+    if (!finalPrompt || busy) return
+    setBusy(true); setErr(null)
+    try {
+      const r = await fetch('/api/fal/generate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: finalPrompt, size: 'square' }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || 'erreur')
+      setTexture({
+        url: d.url,
+        prompt: d.prompt,
+        model: d.model,
+        seed: d.seed,
+        generatedAt: Date.now(),
+      })
+      setPrompt('')
+    } catch (e: any) { setErr(e.message) }
+    finally { setBusy(false) }
+  }
+
+  const tex = current.visual.texture
+  return (
+    <div>
+      {tex && (
+        <div style={{ position: 'relative', marginBottom: 10 }}>
+          <img src={tex.url} alt="" style={{ width: '100%', borderRadius: 'var(--radius-sm)', display: 'block' }} crossOrigin="anonymous" />
+          <button
+            className="ghost icon"
+            onClick={() => setTexture(null)}
+            style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
+            title="Retirer la texture"
+          >
+            <X size={14} />
+          </button>
+          <div style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 6, fontStyle: 'italic' }}>"{tex.prompt}"</div>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        <input
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && generate()}
+          placeholder="Prompt (anglais conseillé)..."
+          disabled={busy}
+          style={{ flex: 1, fontSize: 12 }}
+        />
+        <button className="primary" onClick={() => generate()} disabled={busy || !prompt.trim()}>
+          {busy ? <Loader size={12} className="spin" /> : <Sparkles size={12} />}
+          {busy ? '...' : 'Générer'}
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+        {TEXTURE_PROMPTS.map((p) => (
+          <button
+            key={p}
+            className="ghost"
+            onClick={() => generate(p)}
+            disabled={busy}
+            style={{ fontSize: 10, padding: '3px 7px' }}
+            title={p}
+          >
+            {p.split(',')[0].slice(0, 24)}
+          </button>
+        ))}
+      </div>
+      {err && <div className="form-error" style={{ marginTop: 8 }}>{err}</div>}
     </div>
   )
 }

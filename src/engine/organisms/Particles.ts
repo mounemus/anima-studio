@@ -65,6 +65,11 @@ export class ParticlesOrganism {
     this.mat.blending = visual.blendMode === 'normal' ? THREE.NormalBlending : THREE.AdditiveBlending
   }
 
+  setTexture(tex: THREE.Texture | null) {
+    this.mat.map = tex
+    this.mat.needsUpdate = true
+  }
+
   private respawn(i: number) {
     const a = Math.random() * Math.PI * 2
     const r = Math.random() * (this.params?.spread ?? 0.5)

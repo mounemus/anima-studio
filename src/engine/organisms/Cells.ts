@@ -76,6 +76,12 @@ export class CellsOrganism {
     mat.blending = visual.blendMode === 'normal' ? THREE.NormalBlending : THREE.AdditiveBlending
   }
 
+  setTexture(tex: THREE.Texture | null) {
+    const mat = this.mesh.material as THREE.MeshBasicMaterial
+    mat.map = tex
+    mat.needsUpdate = true
+  }
+
   update(dt: number) {
     const p = this.params
     const n = this.count
