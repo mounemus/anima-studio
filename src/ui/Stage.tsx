@@ -16,10 +16,13 @@ export function Stage({ onEngineReady }: Props) {
     if (!ref.current) return
     const e = new Engine(ref.current)
     engineRef.current = e
+    // Expose renderer for WebXR helpers (one-shot read by TopBar)
+    ;(window as any).__animaRenderer = e.getRenderer()
     onEngineReady?.(e)
     return () => {
       e.destroy()
       engineRef.current = null
+      try { delete (window as any).__animaRenderer } catch { /* noop */ }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

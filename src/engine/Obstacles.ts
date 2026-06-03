@@ -106,6 +106,25 @@ function applyObstacle(o: Obstacle, x: number, y: number, aspect: number, mask: 
       if (inside) bumpCounter(o.id)
       pushForce(o, dx, dy, d, t, inside)
     }
+  } else if (o.kind === 'pose' && o.pose && senseBus.pose.detected) {
+    const r = toWorldR(o.pose.radius, aspect)
+    const m = toWorldR(o.margin, aspect)
+    const total = r + m
+    // Check against each enabled joint
+    for (const ji of o.pose.joints) {
+      const j = senseBus.pose.landmarks[ji]
+      if (!j || j.vis < 0.3) continue
+      const cx = toWorldX(j.x, aspect)
+      const cy = toWorldY(j.y)
+      const dx = x - cx, dy = y - cy
+      const d = Math.hypot(dx, dy)
+      if (d < total) {
+        const inside = d < r
+        const t = inside ? 1 : 1 - (d - r) / m
+        if (inside) bumpCounter(o.id)
+        pushForce(o, dx, dy, d, t, inside)
+      }
+    }
   } else if (o.kind === 'silhouette' && mask) {
     // Sample mask at this world position
     const nx = (x / aspect) * 0.5 + 0.5            // 0..1

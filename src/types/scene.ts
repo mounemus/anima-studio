@@ -142,7 +142,7 @@ export interface MappingConfig {
   testPattern?: TestPattern
 }
 
-export type ObstacleKind = 'circle' | 'polygon' | 'hand' | 'silhouette'
+export type ObstacleKind = 'circle' | 'polygon' | 'hand' | 'silhouette' | 'pose'
 export type ObstacleInteraction = 'avoid' | 'attract' | 'bounce' | 'kill'
 
 export type Waveform = 'sine' | 'triangle' | 'sawtooth' | 'square'
@@ -179,6 +179,8 @@ export interface Obstacle {
   hand?: { source: 'palm' | 'index'; radius: number }
   /** for silhouette: threshold + invert */
   silhouette?: { invert: boolean }
+  /** for pose: which joints to use (MediaPipe indices) + per-joint radius */
+  pose?: { joints: number[]; radius: number }
   /** visual hint on stage when overlay is on */
   visible: boolean
   /** sonification (optional) */
@@ -224,6 +226,7 @@ export const defaultObstacle = (kind: ObstacleKind, i = 0): Obstacle => {
   ] }
   if (kind === 'hand') base.hand = { source: 'palm', radius: 0.12 }
   if (kind === 'silhouette') base.silhouette = { invert: false }
+  if (kind === 'pose') base.pose = { joints: [15, 16, 11, 12], radius: 0.08 }  // wrists + shoulders
   base.sound = { enabled: false, note: 'auto', waveform: 'sine', volume: 0.5, density: true, cutoff: 2000, audioReactivity: 0 }
   return base
 }

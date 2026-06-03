@@ -35,6 +35,16 @@ export interface MidiData {
   mod: number
 }
 
+/** MediaPipe Pose landmark — normalized 0..1 (origin top-left), z relative to hips */
+export interface PoseLandmark { x: number; y: number; z: number; vis: number }
+
+export interface PoseData {
+  detected: boolean
+  /** 33 landmarks. Indices: 0=nose, 11/12=shoulders, 13/14=elbows, 15/16=wrists,
+   *  23/24=hips, 25/26=knees, 27/28=ankles, 31/32=feet */
+  landmarks: PoseLandmark[]
+}
+
 export const senseBus = {
   hands: {
     detected: false,
@@ -55,6 +65,31 @@ export const senseBus = {
     notes: new Float32Array(128),
     mod: 0,
   } as MidiData,
+  pose: {
+    detected: false,
+    landmarks: Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, vis: 0 })),
+  } as PoseData,
+}
+
+/** MediaPipe pose joint indices, named for readability. */
+export const JOINT = {
+  NOSE: 0,
+  LEFT_EYE: 2, RIGHT_EYE: 5,
+  LEFT_EAR: 7, RIGHT_EAR: 8,
+  LEFT_SHOULDER: 11, RIGHT_SHOULDER: 12,
+  LEFT_ELBOW: 13, RIGHT_ELBOW: 14,
+  LEFT_WRIST: 15, RIGHT_WRIST: 16,
+  LEFT_HIP: 23, RIGHT_HIP: 24,
+  LEFT_KNEE: 25, RIGHT_KNEE: 26,
+  LEFT_ANKLE: 27, RIGHT_ANKLE: 28,
+  LEFT_FOOT: 31, RIGHT_FOOT: 32,
+} as const
+
+export const JOINT_LABELS: Record<number, string> = {
+  0: 'Tête', 11: 'Épaule G', 12: 'Épaule D',
+  13: 'Coude G', 14: 'Coude D', 15: 'Poignet G', 16: 'Poignet D',
+  23: 'Hanche G', 24: 'Hanche D', 25: 'Genou G', 26: 'Genou D',
+  27: 'Cheville G', 28: 'Cheville D', 31: 'Pied G', 32: 'Pied D',
 }
 
 export type SenseSource = string

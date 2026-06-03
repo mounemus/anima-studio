@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music } from 'lucide-react'
+import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music, ScanFace, Glasses } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { listDisplays, openOutputWindow, type DisplayInfo } from '../lib/multiDisplay'
 import { startMIDI, stopMIDI } from '../senses/MIDI'
 import { useSceneStore } from '../store/sceneStore'
 import { startHands, stopHands, createCameraStream } from '../senses/Hands'
+import { startPose, stopPose } from '../senses/Pose'
 import { startAudio, stopAudio } from '../senses/Audio'
 import { startLight, stopLight } from '../senses/Light'
 import { enterFullscreen, startRecording, stopRecording, screenshot } from '../lib/recorder'
+import { isXRARSupported, startXR, endXR } from '../lib/webxr'
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement>
@@ -15,16 +17,22 @@ interface Props {
   onToggleAI: () => void
   onToggleOutput: () => void
   outputMode: boolean
+  onToggleMirror: () => void
+  mirrorMode: boolean
   canvasGetter: () => HTMLCanvasElement | null
   stageRef: React.RefObject<HTMLDivElement>
 }
 
-export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMode, canvasGetter, stageRef }: Props) {
+export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMode, onToggleMirror, mirrorMode, canvasGetter, stageRef }: Props) {
   const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))
   const [handsOn, setHandsOn] = useState(false)
   const [audioOn, setAudioOn] = useState(false)
   const [lightOn, setLightOn] = useState(false)
   const [midiOn, setMidiOn] = useState(false)
+  const [xrSupported, setXrSupported] = useState(false)
+  const [xrOn, setXrOn] = useState(false)
+
+  useEffect(() => { isXRARSupported().then(setXrSupported) }, [])
   const [recOn, setRecOn] = useState(false)
   const [fps, setFps] = useState(0)
   const [toast, setToast] = useState<{ msg: string; err?: boolean } | null>(null)
@@ -61,12 +69,14 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
 
   const toggleHands = async () => {
     if (!videoRef.current) return
-    if (handsOn) { stopHands(); setHandsOn(false); return }
+    if (handsOn) { stopHands(); stopPose(); setHandsOn(false); return }
     try {
       await createCameraStream(videoRef.current)
       await startHands(videoRef.current)
+      // Also start pose tracking — same camera stream, lightweight model
+      startPose(videoRef.current).catch((e) => console.warn('Pose start failed', e))
       setHandsOn(true)
-      showToast('Webcam + tracking main actifs')
+      showToast('Webcam + tracking main/corps actifs')
     } catch (e: any) {
       showToast('Webcam refusée: ' + (e?.message ?? e), true)
     }
@@ -92,6 +102,18 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
     }
     startLight(videoRef.current)
     setLightOn(true)
+  }
+
+  const toggleXR = async () => {
+    const canvas = canvasGetter()
+    if (!canvas) return
+    // We need the THREE renderer; expose via a small hack: window.__animaRenderer is set by Stage
+    const r = (window as any).__animaRenderer
+    if (!r) { showToast('Renderer non prêt', true); return }
+    if (xrOn) { endXR(); setXrOn(false); return }
+    const ok = await startXR(r, () => setXrOn(false))
+    if (ok) { setXrOn(true); showToast('Session AR démarrée') }
+    else showToast('Impossible d\'entrer en AR sur ce navigateur', true)
   }
 
   const toggleMIDI = async () => {
@@ -159,6 +181,14 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
         <button onClick={toggleMIDI} className={midiOn ? 'primary' : ''} title="Activer un contrôleur MIDI (WebMIDI)">
           <Music size={14} /> {midiOn ? 'MIDI ON' : 'MIDI'}
         </button>
+        <button onClick={onToggleMirror} className={mirrorMode ? 'primary' : ''} title="Mode Miroir AR — webcam en fond, organismes par-dessus">
+          <ScanFace size={14} /> {mirrorMode ? 'AR ON' : 'AR'}
+        </button>
+        {xrSupported && (
+          <button onClick={toggleXR} className={xrOn ? 'primary' : ''} title="Entrer en réalité augmentée (WebXR — mobile compatible)">
+            <Glasses size={14} /> XR
+          </button>
+        )}
 
         <div className="spacer" />
 

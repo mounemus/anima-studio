@@ -26,6 +26,7 @@ export class Engine {
   private container: HTMLElement
   private width = 1; private height = 1
   private bg = new THREE.Color(0x06070d)
+  private bgAlpha = 1
   private stats = { fps: 0, frame: 0, fpsAcc: 0, fpsT: performance.now() }
   private currentTextureUrl: string | null = null
   private evolutionT = 0
@@ -35,7 +36,7 @@ export class Engine {
     this.container = container
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,
-      alpha: false,
+      alpha: true,                  // allow transparent canvas for AR/mirror mode
       powerPreference: 'high-performance',
       preserveDrawingBuffer: true,  // for screenshot
     })
@@ -222,7 +223,7 @@ export class Engine {
 
     // render organisms to mainRT
     this.renderer.setRenderTarget(this.mainRT)
-    this.renderer.setClearColor(this.bg, 1)
+    this.renderer.setClearColor(this.bg, this.bgAlpha)
     this.renderer.clear()
     this.renderer.render(this.scene, this.camera)
 
@@ -239,12 +240,20 @@ export class Engine {
     // final draw: mapping (always-on; identity quad if no mapping)
     this.mapping.setSource(this.feedbackRT.texture)
     this.renderer.setRenderTarget(null)
-    this.renderer.setClearColor(0x000000, 1)
+    this.renderer.setClearColor(0x000000, this.bgAlpha)
     this.renderer.clear()
     this.renderer.render(this.mapping.scene, this.mapping.camera)
   }
 
   getStats() { return { fps: this.stats.fps, sense: { ...senseBus.hands } } }
+
+  /** Switch between opaque rendering (with bg color) and transparent (for AR mirror overlay). */
+  setTransparent(transparent: boolean) {
+    this.bgAlpha = transparent ? 0 : 1
+  }
+
+  /** Expose renderer for advanced integrations (WebXR session). */
+  getRenderer() { return this.renderer }
 
   getCanvas() { return this.renderer.domElement }
 

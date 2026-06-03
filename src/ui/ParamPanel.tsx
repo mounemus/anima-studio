@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX, Wand2 } from 'lucide-react'
+import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX, Wand2, Bone } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
 import type { OrganismKind, TestPattern, ObstacleInteraction, Waveform, SoundConfig } from '../types/scene'
 import { LiveImg2Img } from '../lib/liveImg2Img'
 import { soundEngine } from '../engine/SoundEngine'
 import { SOUND_PRESETS, applyPreset } from '../lib/soundPresets'
+import { JOINT_LABELS } from '../senses/SenseBus'
 import { saveCalibration, listCalibrations, deleteCalibration, exportCalibration, type CalibrationProfile } from '../lib/calibrations'
 
 interface SliderProps {
@@ -497,6 +498,7 @@ function ObstaclesTab() {
         <button onClick={() => add('polygon')} style={{ fontSize: 12, justifyContent: 'center' }}><Pentagon size={12} /> Polygone</button>
         <button onClick={() => add('hand')} style={{ fontSize: 12, justifyContent: 'center' }}><Hand size={12} /> Main</button>
         <button onClick={() => add('silhouette')} style={{ fontSize: 12, justifyContent: 'center' }}><User size={12} /> Silhouette</button>
+        <button onClick={() => add('pose')} style={{ fontSize: 12, justifyContent: 'center', gridColumn: 'span 2' }}><Bone size={12} /> Articulations (pose corps)</button>
       </div>
 
       {obs.length > 0 && (
@@ -627,6 +629,42 @@ function ObstaclesTab() {
             </>
           )}
 
+          {sel.kind === 'pose' && sel.pose && (
+            <>
+              <h3 style={{ marginTop: 10 }}>Articulations actives</h3>
+              <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                Coche les joints qui seront des obstacles. Active la caméra + mode AR pour les voir.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 10 }}>
+                {Object.entries(JOINT_LABELS).map(([idxStr, label]) => {
+                  const idx = parseInt(idxStr)
+                  const on = sel.pose!.joints.includes(idx)
+                  return (
+                    <label key={idx} style={{ display: 'flex', gap: 6, fontSize: 11, cursor: 'pointer', userSelect: 'none', padding: '3px 5px', borderRadius: 4, background: on ? 'rgba(0,255,163,0.08)' : 'transparent' }}>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...sel.pose!.joints, idx]
+                            : sel.pose!.joints.filter((j) => j !== idx)
+                          update(sel.id, { pose: { ...sel.pose!, joints: next } })
+                        }}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  )
+                })}
+              </div>
+              <Slider label="Rayon par joint" value={sel.pose.radius} min={0.02} max={0.3} step={0.01}
+                onChange={(r) => update(sel.id, { pose: { ...sel.pose!, radius: r } })}
+                format={(r) => `${Math.round(r * 100)}%`}
+              />
+              <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 4 }}>
+                Chaque joint devient une petite zone {sel.interaction === 'attract' ? 'attractive' : sel.interaction === 'avoid' ? 'd\'évitement' : sel.interaction}.
+              </p>
+            </>
+          )}
           {sel.kind === 'silhouette' && sel.silhouette && (
             <>
               <h3 style={{ marginTop: 10 }}>Silhouette corporelle</h3>
