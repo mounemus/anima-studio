@@ -53,13 +53,21 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
   },
 
   load: async () => {
-    let existing = await loadAllScenes()
-    if (existing.length === 0) {
-      // seed with defaults
-      for (const s of defaultScenes) await saveScene(s)
-      existing = [...defaultScenes]
+    try {
+      let existing = await loadAllScenes()
+      if (existing.length === 0) {
+        // seed with defaults
+        for (const s of defaultScenes) {
+          try { await saveScene(s) } catch (e) { console.warn('seed save failed', e) }
+        }
+        existing = [...defaultScenes]
+      }
+      set({ scenes: existing, currentId: existing[0]?.id ?? null })
+    } catch (e) {
+      // DB unavailable (locked, blocked, version mismatch) — fall back to in-memory defaults
+      console.error('IndexedDB load failed, using in-memory defaults', e)
+      set({ scenes: [...defaultScenes], currentId: defaultScenes[0]?.id ?? null })
     }
-    set({ scenes: existing, currentId: existing[0]?.id ?? null })
   },
 
   select: (id) => set({ currentId: id }),

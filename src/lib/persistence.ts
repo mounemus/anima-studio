@@ -1,42 +1,24 @@
-import { openDB, type IDBPDatabase } from 'idb'
+import { db, SCENES } from './db'
 import type { Scene } from '../types/scene'
-
-const DB = 'anima-studio'
-const STORE = 'scenes'
-
-let dbp: Promise<IDBPDatabase> | null = null
-
-function db() {
-  if (!dbp) {
-    dbp = openDB(DB, 1, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains(STORE)) {
-          db.createObjectStore(STORE, { keyPath: 'id' })
-        }
-      },
-    })
-  }
-  return dbp
-}
 
 export async function saveScene(s: Scene) {
   const d = await db()
-  await d.put(STORE, { ...s, updatedAt: Date.now() })
+  await d.put(SCENES, { ...s, updatedAt: Date.now() })
 }
 
 export async function loadAllScenes(): Promise<Scene[]> {
   const d = await db()
-  return await d.getAll(STORE)
+  return await d.getAll(SCENES)
 }
 
 export async function deleteScene(id: string) {
   const d = await db()
-  await d.delete(STORE, id)
+  await d.delete(SCENES, id)
 }
 
 export async function clearAll() {
   const d = await db()
-  await d.clear(STORE)
+  await d.clear(SCENES)
 }
 
 export function exportSceneJSON(s: Scene) {

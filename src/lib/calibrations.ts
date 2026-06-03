@@ -1,23 +1,6 @@
 /** Calibration profiles : sauvegarde de configurations mapping nommées (un par site/installation). */
-import { openDB, type IDBPDatabase } from 'idb'
+import { db, CALIBRATIONS } from './db'
 import type { MappingConfig } from '../types/scene'
-
-const DB = 'anima-studio'
-const STORE = 'calibrations'
-
-let dbp: Promise<IDBPDatabase> | null = null
-
-function db() {
-  if (!dbp) {
-    dbp = openDB(DB, 2, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains('scenes')) db.createObjectStore('scenes', { keyPath: 'id' })
-        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' })
-      },
-    })
-  }
-  return dbp
-}
 
 export interface CalibrationProfile {
   id: string
@@ -31,22 +14,22 @@ export interface CalibrationProfile {
 
 export async function saveCalibration(p: CalibrationProfile) {
   const d = await db()
-  await d.put(STORE, { ...p, updatedAt: Date.now() })
+  await d.put(CALIBRATIONS, { ...p, updatedAt: Date.now() })
 }
 
 export async function listCalibrations(): Promise<CalibrationProfile[]> {
   const d = await db()
-  return (await d.getAll(STORE)).sort((a, b) => b.updatedAt - a.updatedAt)
+  return ((await d.getAll(CALIBRATIONS)) as CalibrationProfile[]).sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
 export async function deleteCalibration(id: string) {
   const d = await db()
-  await d.delete(STORE, id)
+  await d.delete(CALIBRATIONS, id)
 }
 
 export async function getCalibration(id: string): Promise<CalibrationProfile | undefined> {
   const d = await db()
-  return await d.get(STORE, id)
+  return (await d.get(CALIBRATIONS, id)) as CalibrationProfile | undefined
 }
 
 export function exportCalibration(p: CalibrationProfile) {
