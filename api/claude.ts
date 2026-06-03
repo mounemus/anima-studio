@@ -49,7 +49,7 @@ export default async function handler(req: Request): Promise<Response> {
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
       system: [
-        { type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } } as any,
       ],
       messages: [
         {
