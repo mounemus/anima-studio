@@ -1,9 +1,8 @@
 /**
- * ColorTracker — samples the webcam at ~10 Hz and finds the weighted centroid
- * of pixels matching a target HSV color (within tolerance).
- *
- * The centroid is published in `trackerStates[obstacleId]` and consumed by the
- * Obstacles solver to position 'tracker' obstacles in real time.
+ * ColorTracker — finds the weighted centroid of pixels matching a target HSV color,
+ * with SPATIAL COHERENCE: once locked, search is restricted to a window around the
+ * previous position. This prevents the tracker from jumping to skin tones or
+ * similar-colored objects elsewhere in the frame.
  */
 
 interface TrackerState {
@@ -17,6 +16,8 @@ export const trackerStates = new Map<string, TrackerState>()
 
 const SAMPLE_W = 160
 const SAMPLE_H = 120
+const MIN_MATCH = 25     // min matching pixels to update position
+const RESYNC_FRAMES = 30 // after this many bad frames, reset to global search
 
 let canvas: HTMLCanvasElement | null = null
 let ctx: CanvasRenderingContext2D | null = null
@@ -24,17 +25,24 @@ let video: HTMLVideoElement | null = null
 let timer = 0
 let running = false
 
-/** Per-tracker config registered from the obstacle list. */
 interface ConfigEntry { id: string; h: number; s: number; v: number; tolerance: number }
 const configs: ConfigEntry[] = []
+const lostCount = new Map<string, number>()  // consecutive misses per tracker
 
 export function setTrackers(list: ConfigEntry[]) {
   configs.length = 0
   for (const c of list) configs.push(c)
-  // Drop state for removed trackers
   for (const id of Array.from(trackerStates.keys())) {
-    if (!list.some((c) => c.id === id)) trackerStates.delete(id)
+    if (!list.some((c) => c.id === id)) { trackerStates.delete(id); lostCount.delete(id) }
   }
+  // Reset lost count when a config's color changes (id stays same but values change)
+  // Caller is expected to clear state explicitly if needed; we just keep last seen.
+}
+
+/** Force the tracker to forget its locked position (used when the user re-picks). */
+export function resetTracker(id: string) {
+  trackerStates.delete(id)
+  lostCount.delete(id)
 }
 
 export function startColorTracking(videoEl: HTMLVideoElement) {
@@ -70,62 +78,77 @@ function rgbToHsv(r: number, g: number, b: number): { h: number; s: number; v: n
   return { h, s, v: max }
 }
 
+/** Distance between two HSV colors, accounting for hue circularity and low-sat unreliability. */
+function colorDist(h1: number, s1: number, v1: number, h2: number, s2: number, v2: number): number {
+  // Reject very dark or very bright/desaturated noise
+  if (v1 < 0.08) return 99
+  if (v1 > 0.96 && s1 < 0.08) return 99       // washed out white/highlight
+  let dh = Math.abs(h1 - h2)
+  if (dh > 0.5) dh = 1 - dh
+  // Hue weight grows with both saturations (if either is low, hue is meaningless)
+  const hueRelevance = Math.min(s1, s2)
+  const ds = Math.abs(s1 - s2)
+  const dv = Math.abs(v1 - v2)
+  return dh * 2.5 * (0.4 + hueRelevance * 0.6) + ds * 0.7 + dv * 0.5
+}
+
 function loop() {
   if (!running || !video || !ctx || !canvas) return
   if (video.readyState >= 2 && configs.length > 0) {
     ctx.drawImage(video, 0, 0, SAMPLE_W, SAMPLE_H)
     const data = ctx.getImageData(0, 0, SAMPLE_W, SAMPLE_H).data
-    // Compute centroid per tracker
-    const acc: Record<string, { sx: number; sy: number; n: number }> = {}
-    for (const c of configs) acc[c.id] = { sx: 0, sy: 0, n: 0 }
-    for (let py = 0; py < SAMPLE_H; py += 2) {     // sample every 2 rows for speed
-      for (let px = 0; px < SAMPLE_W; px += 2) {
-        const i = (py * SAMPLE_W + px) * 4
-        const r = data[i], g = data[i + 1], b = data[i + 2]
-        if (r + g + b < 30) continue   // skip near-black
-        const hsv = rgbToHsv(r, g, b)
-        for (const c of configs) {
-          let dh = Math.abs(hsv.h - c.h)
-          if (dh > 0.5) dh = 1 - dh  // hue wraps
-          const ds = Math.abs(hsv.s - c.s) * 0.7
-          const dv = Math.abs(hsv.v - c.v) * 0.5
-          const dist = dh * 2 + ds + dv
-          if (dist < c.tolerance) {
-            const a = acc[c.id]
-            a.sx += px; a.sy += py; a.n++
-          }
-        }
-      }
-    }
     const now = performance.now()
     for (const c of configs) {
-      const a = acc[c.id]
-      const prev = trackerStates.get(c.id) ?? { x: 0.5, y: 0.5, confidence: 0, lastSeen: 0 }
-      if (a.n > 8) {
-        // Mirror X to match the visually-mirrored webcam display in MirrorView
-        const cx = 1 - (a.sx / a.n) / SAMPLE_W
-        const cy = (a.sy / a.n) / SAMPLE_H
-        const conf = Math.min(1, a.n / 80)
-        // exponential smoothing
-        prev.x = prev.x * 0.65 + cx * 0.35
-        prev.y = prev.y * 0.65 + cy * 0.35
-        prev.confidence = Math.max(prev.confidence * 0.7, conf)
-        prev.lastSeen = now
-      } else {
-        prev.confidence *= 0.85
+      const prev = trackerStates.get(c.id)
+      // Search window: small if locked, full frame otherwise
+      let minX = 0, maxX = SAMPLE_W, minY = 0, maxY = SAMPLE_H
+      if (prev && prev.confidence > 0.25) {
+        // Locked → ~25% of frame around previous position, expanding as confidence drops
+        const winSize = SAMPLE_W * (0.18 + (1 - prev.confidence) * 0.18)
+        const cxp = prev.x * SAMPLE_W
+        const cyp = prev.y * SAMPLE_H
+        minX = Math.max(0, Math.floor(cxp - winSize))
+        maxX = Math.min(SAMPLE_W, Math.ceil(cxp + winSize))
+        minY = Math.max(0, Math.floor(cyp - winSize))
+        maxY = Math.min(SAMPLE_H, Math.ceil(cyp + winSize * 1.2))   // a bit taller for vertical hand movement
       }
-      trackerStates.set(c.id, prev)
+      let sx = 0, sy = 0, n = 0
+      for (let py = minY; py < maxY; py += 2) {
+        for (let px = minX; px < maxX; px += 2) {
+          const i = (py * SAMPLE_W + px) * 4
+          const hsv = rgbToHsv(data[i], data[i + 1], data[i + 2])
+          const d = colorDist(hsv.h, hsv.s, hsv.v, c.h, c.s, c.v)
+          if (d < c.tolerance) { sx += px; sy += py; n++ }
+        }
+      }
+      const nextPrev: TrackerState = prev ?? { x: 0.5, y: 0.5, confidence: 0, lastSeen: 0 }
+      if (n >= MIN_MATCH) {
+        const cx = 1 - (sx / n) / SAMPLE_W   // mirror X
+        const cy = (sy / n) / SAMPLE_H
+        const windowArea = ((maxX - minX) / 2) * ((maxY - minY) / 2)
+        const density = Math.min(1, n / Math.max(1, windowArea * 0.25))
+        const newConf = Math.min(1, density * 1.3)
+        // Smooth position to avoid jitter
+        nextPrev.x = nextPrev.confidence > 0.3 ? nextPrev.x * 0.6 + cx * 0.4 : cx
+        nextPrev.y = nextPrev.confidence > 0.3 ? nextPrev.y * 0.6 + cy * 0.4 : cy
+        nextPrev.confidence = Math.max(nextPrev.confidence * 0.5, newConf)
+        nextPrev.lastSeen = now
+        lostCount.set(c.id, 0)
+      } else {
+        nextPrev.confidence *= 0.92
+        const lost = (lostCount.get(c.id) ?? 0) + 1
+        lostCount.set(c.id, lost)
+        // After too many bad frames, drop the lock so we search globally next time
+        if (lost > RESYNC_FRAMES) nextPrev.confidence = 0
+      }
+      trackerStates.set(c.id, nextPrev)
     }
   }
-  timer = window.setTimeout(loop, 80)  // ~12 Hz
+  timer = window.setTimeout(loop, 75)  // ~13 Hz
 }
 
-/** Sample a single pixel color from a video element at normalized stage coords (0..1, top-left origin).
- *  Returns the HSV components. Used by the UI color picker.
- *  Tries the visible mirror video first (most reliable), falls back to the hidden tracking video.
- */
+/** Sample a pixel color from a video element at normalized stage coords (0..1, top-left origin). */
 export function pickColorAt(videoEl: HTMLVideoElement | null, nx: number, ny: number): { h: number; s: number; v: number } | null {
-  // Prefer the visible mirror video — guaranteed to be pumping frames
   const candidates: HTMLVideoElement[] = []
   const mirror = document.querySelector('video.mirror-bg') as HTMLVideoElement | null
   if (mirror && mirror.readyState >= 2 && mirror.videoWidth > 0) candidates.push(mirror)
@@ -137,13 +160,10 @@ export function pickColorAt(videoEl: HTMLVideoElement | null, nx: number, ny: nu
   const tc = tmp.getContext('2d')
   if (!tc) return null
   tc.drawImage(v, 0, 0, SAMPLE_W, SAMPLE_H)
-  // The mirror video is displayed mirrored (scaleX -1), so a stage click at X=nx
-  // corresponds to the source-video pixel at X=(1-nx).
   const px = Math.max(0, Math.min(SAMPLE_W - 1, Math.floor((1 - nx) * SAMPLE_W)))
   const py = Math.max(0, Math.min(SAMPLE_H - 1, Math.floor(ny * SAMPLE_H)))
-  // Average a small 5×5 neighborhood for stability
   let sr = 0, sg = 0, sb = 0, n = 0
-  const half = 2
+  const half = 3
   const x0 = Math.max(0, px - half)
   const y0 = Math.max(0, py - half)
   const w = Math.min(SAMPLE_W - x0, 2 * half + 1)

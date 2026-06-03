@@ -14,7 +14,7 @@ import type { Engine } from './engine/Engine'
 import { Eye, AlertTriangle, Pipette } from 'lucide-react'
 import { enterFullscreen } from './lib/recorder'
 import { isOutputWindow } from './lib/multiDisplay'
-import { pickColorAt } from './engine/ColorTracker'
+import { pickColorAt, resetTracker, trackerStates } from './engine/ColorTracker'
 
 export function App() {
   const load = useSceneStore((s) => s.load)
@@ -118,7 +118,10 @@ export function App() {
           updateObstacle(pickingForObstacle, {
             tracker: { ...obs.tracker, h: hsv.h, s: hsv.s, v: hsv.v },
           })
-          // Visual feedback : flash a ring at the sampled position for 600ms
+          // Reset spatial lock then pre-seed at the click point so the search window
+          // starts centered on what the user actually selected.
+          resetTracker(pickingForObstacle)
+          trackerStates.set(pickingForObstacle, { x, y, confidence: 0.5, lastSeen: performance.now() })
           setPickFlash({ x, y, color: `hsl(${Math.round(hsv.h * 360)} ${Math.round(hsv.s * 100)}% ${Math.round(hsv.v * 100)}%)` })
           setTimeout(() => setPickFlash(null), 700)
         }

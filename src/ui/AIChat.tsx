@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Send, Sparkles, Mic, Volume2, VolumeX, Square } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
 import type { Scene, FlowField } from '../types/scene'
+import { defaultMapping } from '../types/scene'
 import { startRecording, stopRecording, transcribeViaWhisper, recognizeLive, hasBrowserSTT, speak, stopSpeaking } from '../lib/voiceIO'
 
 interface Message {
@@ -79,10 +80,30 @@ export function AIChat({ open }: { open: boolean }) {
         action = `🌬️ Flux directionnel modifié`
       }
       if (data.actions?.newScene) {
-        const s: Scene = data.actions.newScene
-        s.id = `scene-${Date.now().toString(36)}`
-        s.createdAt = Date.now()
-        s.updatedAt = Date.now()
+        // Normalise the AI's returned scene — Claude may return a partial shape (no senses/mapping/evolution).
+        const ai = data.actions.newScene as Partial<Scene> & { palette?: any }
+        const visual = (ai.visual ?? {}) as any
+        const palette = ai.palette ?? visual.palette ?? current?.visual.palette ?? { bg: '#06070d', primary: '#00ffa3', secondary: '#00d4ff', glow: '#7c3aed' }
+        const s: Scene = {
+          id: `scene-${Date.now().toString(36)}`,
+          name: ai.name ?? '✨ Création IA',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          organism: ai.organism ?? current!.organism,
+          visual: {
+            palette,
+            bloom: visual.bloom ?? 0.5,
+            feedback: visual.feedback ?? 0.92,
+            blendMode: visual.blendMode ?? 'add',
+            texture: visual.texture ?? null,
+          },
+          senses: ai.senses ?? { hands: true, audio: true, light: false, bindings: [] },
+          evolution: ai.evolution ?? { enabled: false, driftSpeed: 0.05, amplitude: 0.15 },
+          mapping: ai.mapping ?? defaultMapping(),
+          flow: ai.flow,
+          obstacles: ai.obstacles ?? [],
+          notes: ai.notes ?? `Généré par IA depuis : "${text}"`,
+        }
         await add(s)
         action = `🌱 Nouvelle scène créée: ${s.name}`
       }
@@ -160,6 +181,14 @@ export function AIChat({ open }: { open: boolean }) {
         {messages.length === 0 && (
           <div className="ai-empty">
             <p style={{ marginBottom: 12 }}>Tape ou maintiens 🎙️ pour parler. Tu peux demander de modifier la scène, créer une ambiance, ajuster les couleurs...</p>
+            <button
+              className="primary"
+              onClick={() => send('Invente une nouvelle espèce d\'organisme totalement originale, avec une palette, un flux directionnel et une ambiance cohérente. Surprends-moi.')}
+              style={{ width: '100%', justifyContent: 'center', fontSize: 12, marginBottom: 10 }}
+              disabled={loading || transcribing}
+            >
+              🌱 Inventer une nouvelle espèce
+            </button>
             <div>
               {SUGGESTIONS.map((s) => (
                 <kbd key={s} onClick={() => send(s)}>{s}</kbd>
