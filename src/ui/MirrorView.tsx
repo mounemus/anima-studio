@@ -1,45 +1,63 @@
 /** AR Mirror — shows the live webcam as a full-stage background, behind the canvas. */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement>
   active: boolean
-  opacity?: number   // 0..1 of the mirror visibility
+  opacity?: number
 }
 
 /**
- * Renders the same MediaStream as the hidden tracking video but visually shown,
- * mirrored horizontally to match the user's expectations.
+ * Renders a visible <video> tied to the same MediaStream as the hidden tracking <video>,
+ * mirrored horizontally for natural self-recognition.
  */
-export function MirrorView({ videoRef, active, opacity = 0.65 }: Props) {
+export function MirrorView({ videoRef, active, opacity = 0.7 }: Props) {
   const dispRef = useRef<HTMLVideoElement>(null)
+  const [streamReady, setStreamReady] = useState(false)
 
   useEffect(() => {
-    if (!active || !dispRef.current || !videoRef.current) return
+    if (!active) { setStreamReady(false); return }
+    if (!dispRef.current) return
     const display = dispRef.current
-    const src = videoRef.current
-    // Tie display to source stream
+    let cancelled = false
+
     const apply = () => {
-      if (src.srcObject && display.srcObject !== src.srcObject) {
-        display.srcObject = src.srcObject
-        display.play().catch(() => {})
+      const src = videoRef.current
+      if (!src || cancelled) return
+      const stream = src.srcObject as MediaStream | null
+      if (stream && display.srcObject !== stream) {
+        display.srcObject = stream
+        setStreamReady(true)
+      }
+      // Force play if paused (browser autoplay can stall on second video)
+      if (display.srcObject && display.paused) {
+        display.play().catch((e) => console.warn('mirror play failed', e))
       }
     }
+
     apply()
-    const id = setInterval(apply, 500)
-    return () => clearInterval(id)
+    const id = setInterval(apply, 250)
+    return () => { cancelled = true; clearInterval(id) }
   }, [active, videoRef])
 
   if (!active) return null
 
   return (
-    <video
-      ref={dispRef}
-      className="mirror-bg"
-      style={{ opacity }}
-      autoPlay
-      playsInline
-      muted
-    />
+    <>
+      <video
+        ref={dispRef}
+        className="mirror-bg"
+        style={{ opacity }}
+        autoPlay
+        playsInline
+        muted
+      />
+      {!streamReady && (
+        <div className="mirror-waiting">
+          <div className="mirror-waiting-spinner" />
+          Démarrage de la caméra…
+        </div>
+      )}
+    </>
   )
 }

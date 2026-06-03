@@ -79,18 +79,20 @@ export function App() {
     if (engineRef.current) engineRef.current.setTransparent(mirrorMode)
   }, [mirrorMode])
 
-  // Tap-to-place obstacle when in Mirror mode
+  // Tap-to-place obstacle when in Mirror mode — ONLY with Alt key held (avoid accidental triggers)
   const onStageClick = (e: React.PointerEvent) => {
     if (!mirrorMode || !stageRef.current || !currentSceneId) return
-    // Ignore taps on UI overlays
+    if (!e.altKey) return                       // require Alt to place
+    // Ignore clicks on canvas chrome only — never trigger on regular click on the canvas surface
     const target = e.target as HTMLElement
-    if (target.closest('.right-panel, .left-panel, .topbar, .ai-chat, .sense-monitor, .toolbar-floating, .obstacles-overlay, .mapping-overlay')) return
+    // We accept clicks on: canvas, .mirror-bg (the video), or .stage itself
+    const onCanvas = target.tagName === 'CANVAS' || target === stageRef.current ||
+      target.classList.contains('mirror-bg') || target.classList.contains('canvas-wrap')
+    if (!onCanvas) return
     const r = stageRef.current.getBoundingClientRect()
     const x = (e.clientX - r.left) / r.width
     const y = (e.clientY - r.top) / r.height
-    // Add a circle obstacle at the tap position with attract interaction by default
     addObstacle('circle')
-    // Find the just-added obstacle (last in list) and move it
     setTimeout(() => {
       const scene = useSceneStore.getState().scenes.find((s) => s.id === currentSceneId)
       const last = scene?.obstacles?.[scene.obstacles.length - 1]
@@ -133,7 +135,7 @@ export function App() {
             {!outputMode && <AIChat open={aiOpen} />}
             {mirrorMode && !outputMode && (
               <div className="tap-hint">
-                🪞 Mode Miroir AR · <kbd>tap</kbd> sur l'image pour poser un attracteur
+                🪞 Miroir AR · <kbd>Alt</kbd> + clic sur l'image pour poser un attracteur
               </div>
             )}
             {outputMode && (
@@ -150,7 +152,18 @@ export function App() {
         )}
       </div>
       <ParamPanel />
-      <video ref={videoRef} style={{ display: 'none' }} autoPlay playsInline muted />
+      {/*
+        Tracking video : kept "displayed" (1×1 px off-screen, opacity 0) instead of display:none.
+        Some browsers stall the MediaStream pipeline on display:none, which prevents the visible
+        Mirror video from showing live frames.
+      */}
+      <video
+        ref={videoRef}
+        style={{ position: 'fixed', left: 0, top: 0, width: 1, height: 1, opacity: 0, pointerEvents: 'none', zIndex: -1 }}
+        autoPlay
+        playsInline
+        muted
+      />
       {dbStatus === 'fallback' && (
         <div className="db-warning">
           <AlertTriangle size={14} />
