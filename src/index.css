@@ -704,7 +704,7 @@ button.ghost.active {
   animation: spin 0.9s linear infinite;
 }
 
-/* === Pose skeleton overlay (faint) === */
+/* === Pose skeleton overlay === */
 .pose-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
 .pose-joint {
   fill: rgba(0, 255, 163, 0.85);
@@ -716,6 +716,13 @@ button.ghost.active {
   stroke-width: 2;
   stroke-linecap: round;
   fill: none;
+}
+.silhouette-overlay {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 3;
+  mix-blend-mode: screen;
 }
 
 /* === Mirror tap hint === */

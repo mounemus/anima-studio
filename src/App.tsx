@@ -9,6 +9,7 @@ import { ObstaclesOverlay } from './ui/ObstaclesOverlay'
 import { AIChat } from './ui/AIChat'
 import { MirrorView } from './ui/MirrorView'
 import { PoseOverlay } from './ui/PoseOverlay'
+import { SilhouetteOverlay } from './ui/SilhouetteOverlay'
 import { useSceneStore } from './store/sceneStore'
 import type { Engine } from './engine/Engine'
 import { Eye, AlertTriangle, Pipette } from 'lucide-react'
@@ -170,7 +171,8 @@ export function App() {
           <>
             <MirrorView videoRef={videoRef} active={mirrorMode} />
             <Stage onEngineReady={(e) => { engineRef.current = e; e.setTransparent(mirrorMode) }} />
-            <PoseOverlay stageRef={stageRef} visible={mirrorMode && !outputMode} />
+            {!outputMode && <SilhouetteOverlay stageRef={stageRef} />}
+            <PoseOverlay stageRef={stageRef} visible={!outputMode} />
             {!outputMode && <SenseMonitor />}
             {!outputMode && <MappingOverlay stageRef={stageRef} />}
             {!outputMode && <ObstaclesOverlay stageRef={stageRef} editing={true} selectedId={selectedObstacle} onSelect={setSelectedObstacle} />}

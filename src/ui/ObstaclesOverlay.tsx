@@ -3,6 +3,10 @@ import { useSceneStore } from '../store/sceneStore'
 import type { Obstacle } from '../types/scene'
 import { trackerStates } from '../engine/ColorTracker'
 
+// Per-tracker motion trail (kept in module scope so it survives renders)
+const trailMap = new Map<string, { x: number; y: number }[]>()
+const MAX_TRAIL = 16
+
 interface DragInfo {
   obstacleId: string
   kind: 'circle-center' | 'circle-radius' | 'poly-vertex'
@@ -25,6 +29,14 @@ export function ObstaclesOverlay({ stageRef, editing, selectedId, onSelect }: {
     if (stageRef.current) ro.observe(stageRef.current)
     return () => ro.disconnect()
   }, [stageRef])
+
+  // Repaint tracker visuals at ~30fps so trail/crosshair stays live
+  useEffect(() => {
+    let id = 0
+    const tick = () => { force((x) => x + 1); id = window.setTimeout(tick, 33) }
+    tick()
+    return () => clearTimeout(id)
+  }, [])
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -110,12 +122,58 @@ export function ObstaclesOverlay({ stageRef, editing, selectedId, onSelect }: {
             )
             const cx = state.x * W, cy = state.y * H
             const rPx = o.tracker.radius * Math.max(W, H)
+            // Update motion trail
+            let trail = trailMap.get(o.id)
+            if (!trail) { trail = []; trailMap.set(o.id, trail) }
+            if (state.confidence > 0.2) {
+              const last = trail[trail.length - 1]
+              if (!last || Math.hypot(last.x - cx, last.y - cy) > 4) {
+                trail.push({ x: cx, y: cy })
+                if (trail.length > MAX_TRAIL) trail.shift()
+              }
+            } else if (trail.length > 0) {
+              trail.shift()
+            }
+            // Velocity arrow (predicted next position ~120ms ahead)
+            const vxPx = state.vx * 1000 * 0.12 * W
+            const vyPx = state.vy * 1000 * 0.12 * H
+            const hasVel = Math.hypot(vxPx, vyPx) > 4
+            // Sampled color swatch
+            const targetHsl = `hsl(${Math.round(o.tracker.h * 360)} ${Math.round(o.tracker.s * 100)}% ${Math.round(o.tracker.v * 100)}%)`
             return (
-              <g key={o.id} opacity={Math.max(0.25, state.confidence)}>
+              <g key={o.id} opacity={Math.max(0.4, state.confidence)}>
+                {/* Motion trail (faint dots fading older) */}
+                {trail.map((p, i) => (
+                  <circle key={i} cx={p.x} cy={p.y} r={2} fill={stroke} opacity={(i + 1) / trail!.length * 0.5} />
+                ))}
+                {/* Outer obstacle radius */}
                 <circle cx={cx} cy={cy} r={rPx} fill="none" stroke={stroke} strokeWidth={sw} strokeDasharray="5 4" />
-                <circle cx={cx} cy={cy} r={4} fill={stroke} />
-                <text x={cx + rPx + 6} y={cy + 4} fill={stroke} fontSize="11" fontFamily="var(--mono)">
-                  🎯 {o.name} ({Math.round(state.confidence * 100)}%)
+                {/* Inner reticle ring */}
+                <circle cx={cx} cy={cy} r={Math.max(8, rPx * 0.18)} fill="none" stroke={stroke} strokeWidth={1.5} />
+                {/* Crosshair lines */}
+                <line x1={cx - rPx * 0.5} y1={cy} x2={cx - rPx * 0.18} y2={cy} stroke={stroke} strokeWidth={1.5} />
+                <line x1={cx + rPx * 0.18} y1={cy} x2={cx + rPx * 0.5} y2={cy} stroke={stroke} strokeWidth={1.5} />
+                <line x1={cx} y1={cy - rPx * 0.5} x2={cx} y2={cy - rPx * 0.18} stroke={stroke} strokeWidth={1.5} />
+                <line x1={cx} y1={cy + rPx * 0.18} x2={cx} y2={cy + rPx * 0.5} stroke={stroke} strokeWidth={1.5} />
+                {/* Center dot with color swatch */}
+                <circle cx={cx} cy={cy} r={5} fill={targetHsl} stroke="white" strokeWidth={1.5} />
+                {/* Velocity arrow */}
+                {hasVel && (
+                  <g>
+                    <line x1={cx} y1={cy} x2={cx + vxPx} y2={cy + vyPx} stroke={stroke} strokeWidth={2} />
+                    <polygon
+                      points={`${cx + vxPx},${cy + vyPx} ${cx + vxPx - 8},${cy + vyPx - 4} ${cx + vxPx - 8},${cy + vyPx + 4}`}
+                      transform={`rotate(${Math.atan2(vyPx, vxPx) * 180 / Math.PI} ${cx + vxPx} ${cy + vyPx})`}
+                      fill={stroke}
+                    />
+                  </g>
+                )}
+                {/* Label */}
+                <text x={cx + rPx + 8} y={cy - 2} fill={stroke} fontSize="11" fontFamily="var(--mono)">
+                  🎯 {o.name}
+                </text>
+                <text x={cx + rPx + 8} y={cy + 12} fill="var(--text-mute)" fontSize="10" fontFamily="var(--mono)">
+                  {Math.round(state.confidence * 100)}% {hasVel ? `· ${Math.round(Math.hypot(vxPx, vyPx))}px/0.1s` : ''}
                 </text>
               </g>
             )
