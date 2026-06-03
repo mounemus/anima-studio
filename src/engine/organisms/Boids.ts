@@ -1,6 +1,8 @@
 import * as THREE from 'three'
-import type { BoidsParams, VisualParams } from '../../types/scene'
+import type { BoidsParams, VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
+import { solveObstacles } from '../Obstacles'
+import { getSilhouetteMask } from '../../senses/Silhouette'
 
 const MAX_COUNT = 5000
 
@@ -15,6 +17,7 @@ export class BoidsOrganism {
   private aspect = 1
   private count: number
   private params: BoidsParams
+  obstacles: Obstacle[] | undefined
 
   constructor(params: BoidsParams, visual: VisualParams) {
     this.params = params
@@ -139,6 +142,19 @@ export class BoidsOrganism {
         const d = Math.max(0.05, Math.sqrt(dx * dx + dy * dy))
         fx += (dx / d) * handForce * 0.8
         fy += (dy / d) * handForce * 0.8
+      }
+
+      // obstacles
+      if (this.obstacles && this.obstacles.length) {
+        const o = solveObstacles(px[i], py[i], aspect, this.obstacles, getSilhouetteMask())
+        fx += o.fx
+        fy += o.fy
+        if (o.kill) {
+          px[i] = (Math.random() - 0.5) * 2 * aspect
+          py[i] = (Math.random() - 0.5) * 2
+          vx[i] = 0; vy[i] = 0
+          continue
+        }
       }
 
       // integrate

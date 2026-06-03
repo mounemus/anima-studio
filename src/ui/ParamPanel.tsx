@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen } from 'lucide-react'
+import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
-import type { OrganismKind, TestPattern } from '../types/scene'
+import type { OrganismKind, TestPattern, ObstacleInteraction } from '../types/scene'
 import { LiveImg2Img } from '../lib/liveImg2Img'
 import { saveCalibration, listCalibrations, deleteCalibration, exportCalibration, type CalibrationProfile } from '../lib/calibrations'
 
@@ -47,7 +47,7 @@ export function ParamPanel() {
   const updatePalette = useSceneStore((s) => s.updatePalette)
   const rename = useSceneStore((s) => s.rename)
   const setNotes = useSceneStore((s) => s.setNotes)
-  const [tab, setTab] = useState<'organism' | 'visual' | 'senses' | 'mapping' | 'notes'>('organism')
+  const [tab, setTab] = useState<'organism' | 'visual' | 'senses' | 'obstacles' | 'mapping' | 'notes'>('organism')
 
   if (!current) return <div className="right-panel"><div className="ai-empty">Aucune scène sélectionnée</div></div>
 
@@ -71,6 +71,7 @@ export function ParamPanel() {
         <button className={`tab ${tab === 'organism' ? 'active' : ''}`} onClick={() => setTab('organism')}>Organisme</button>
         <button className={`tab ${tab === 'visual' ? 'active' : ''}`} onClick={() => setTab('visual')}>Visuel</button>
         <button className={`tab ${tab === 'senses' ? 'active' : ''}`} onClick={() => setTab('senses')}>Sens</button>
+        <button className={`tab ${tab === 'obstacles' ? 'active' : ''}`} onClick={() => setTab('obstacles')}>Obstacles</button>
         <button className={`tab ${tab === 'mapping' ? 'active' : ''}`} onClick={() => setTab('mapping')}>Map</button>
         <button className={`tab ${tab === 'notes' ? 'active' : ''}`} onClick={() => setTab('notes')}>Notes</button>
       </div>
@@ -168,6 +169,8 @@ export function ParamPanel() {
         )}
 
         {tab === 'senses' && <SensesTab />}
+
+        {tab === 'obstacles' && <ObstaclesTab />}
 
         {tab === 'mapping' && <MappingTab />}
 
@@ -422,6 +425,174 @@ function TextureGen() {
       </div>
 
       {err && <div className="form-error" style={{ marginTop: 8 }}>{err}</div>}
+    </div>
+  )
+}
+
+const INTERACTIONS: { v: ObstacleInteraction; label: string; help: string }[] = [
+  { v: 'avoid', label: '↻ Éviter', help: 'Les organismes contournent l\'obstacle.' },
+  { v: 'attract', label: '⇢ Attirer', help: 'Les organismes sont attirés vers l\'obstacle.' },
+  { v: 'bounce', label: '↺ Rebondir', help: 'Les organismes rebondissent sur le bord.' },
+  { v: 'kill', label: '✕ Tuer/Respawn', help: 'Les organismes touchés réapparaissent ailleurs.' },
+]
+
+function ObstaclesTab() {
+  const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
+  const add = useSceneStore((s) => s.addObstacle)
+  const remove = useSceneStore((s) => s.removeObstacle)
+  const update = useSceneStore((s) => s.updateObstacle)
+  const obs = current.obstacles ?? []
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  useEffect(() => {
+    // expose selection to overlay via a custom event so Stage knows about edit selection
+    window.dispatchEvent(new CustomEvent('anima:obstacle-select', { detail: selectedId }))
+  }, [selectedId])
+
+  const sel = obs.find((o) => o.id === selectedId) ?? obs[obs.length - 1]
+  useEffect(() => { if (!sel && obs.length) setSelectedId(obs[obs.length - 1].id) }, [obs.length])
+
+  return (
+    <div className="section">
+      <h3><Shapes size={11} style={{ verticalAlign: 'middle', color: 'var(--accent)' }} /> Obstacles physiques</h3>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 10 }}>
+        Les organismes interagissent physiquement avec ces zones : éviter, être attirés, rebondir ou disparaître.
+      </p>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 12 }}>
+        <button onClick={() => add('circle')} style={{ fontSize: 12, justifyContent: 'center' }}><Circle size={12} /> Cercle</button>
+        <button onClick={() => add('polygon')} style={{ fontSize: 12, justifyContent: 'center' }}><Pentagon size={12} /> Polygone</button>
+        <button onClick={() => add('hand')} style={{ fontSize: 12, justifyContent: 'center' }}><Hand size={12} /> Main</button>
+        <button onClick={() => add('silhouette')} style={{ fontSize: 12, justifyContent: 'center' }}><User size={12} /> Silhouette</button>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
+        {obs.length === 0 && (
+          <p style={{ fontSize: 11, color: 'var(--text-mute)', fontStyle: 'italic' }}>
+            Aucun obstacle. Ajoute-en un pour que les organismes commencent à réagir.
+          </p>
+        )}
+        {obs.map((o) => (
+          <div
+            key={o.id}
+            onClick={() => setSelectedId(o.id)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '6px 8px',
+              border: `1px solid ${o.id === selectedId ? 'var(--accent)' : 'var(--line)'}`,
+              borderRadius: 'var(--radius-sm)',
+              cursor: 'pointer',
+              opacity: o.enabled ? 1 : 0.5,
+              background: o.id === selectedId ? 'var(--bg-elev-2)' : 'transparent',
+            }}
+          >
+            <button
+              className="ghost icon"
+              onClick={(e) => { e.stopPropagation(); update(o.id, { enabled: !o.enabled }) }}
+              title={o.enabled ? 'Désactiver' : 'Activer'}
+              style={{ padding: 2 }}
+            >
+              {o.enabled ? <Eye size={12} /> : <EyeOff size={12} />}
+            </button>
+            <span style={{ fontSize: 10, color: 'var(--text-mute)', fontFamily: 'var(--mono)', minWidth: 18 }}>
+              {o.kind === 'circle' ? '○' : o.kind === 'polygon' ? '⬠' : o.kind === 'hand' ? '✋' : '👤'}
+            </span>
+            <input
+              value={o.name}
+              onChange={(e) => update(o.id, { name: e.target.value })}
+              onClick={(e) => e.stopPropagation()}
+              style={{ flex: 1, background: 'transparent', border: 'none', padding: 2, fontSize: 12 }}
+            />
+            <span style={{ fontSize: 10, color: 'var(--text-mute)' }}>{o.interaction}</span>
+            <button
+              className="ghost icon danger"
+              onClick={(e) => { e.stopPropagation(); if (confirm(`Supprimer ${o.name} ?`)) remove(o.id) }}
+              style={{ padding: 2 }}
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {sel && (
+        <div style={{ padding: 10, background: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
+          <h3 style={{ marginTop: 0 }}>Configuration : {sel.name}</h3>
+
+          <div className="palette-row">
+            <label>Interaction</label>
+            <select value={sel.interaction} onChange={(e) => update(sel.id, { interaction: e.target.value as ObstacleInteraction })}>
+              {INTERACTIONS.map((it) => <option key={it.v} value={it.v}>{it.label}</option>)}
+            </select>
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 10 }}>
+            {INTERACTIONS.find((i) => i.v === sel.interaction)?.help}
+          </p>
+
+          <Slider label="Force" value={sel.strength} min={0} max={2} step={0.05} onChange={(x) => update(sel.id, { strength: x })} />
+          <Slider label="Marge (douceur)" value={sel.margin} min={0.02} max={0.4} step={0.01} onChange={(x) => update(sel.id, { margin: x })} format={(x) => `${Math.round(x * 100)}%`} />
+
+          {sel.kind === 'circle' && sel.circle && (
+            <>
+              <h3 style={{ marginTop: 10 }}>Cercle</h3>
+              <Slider label="Centre X" value={sel.circle.cx} min={0} max={1} step={0.01} onChange={(x) => update(sel.id, { circle: { ...sel.circle!, cx: x } })} format={(x) => `${Math.round(x * 100)}%`} />
+              <Slider label="Centre Y" value={sel.circle.cy} min={0} max={1} step={0.01} onChange={(y) => update(sel.id, { circle: { ...sel.circle!, cy: y } })} format={(y) => `${Math.round(y * 100)}%`} />
+              <Slider label="Rayon" value={sel.circle.r} min={0.02} max={0.6} step={0.01} onChange={(r) => update(sel.id, { circle: { ...sel.circle!, r } })} format={(r) => `${Math.round(r * 100)}%`} />
+            </>
+          )}
+
+          {sel.kind === 'polygon' && sel.polygon && (
+            <>
+              <h3 style={{ marginTop: 10 }}>Polygone ({sel.polygon.points.length} sommets)</h3>
+              <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                Glisse les sommets sur la scène pour ajuster la forme.
+              </p>
+              <button onClick={() => update(sel.id, { polygon: { points: [...sel.polygon!.points, { x: 0.5, y: 0.5 }] } })} style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}>
+                <Plus size={12} /> Ajouter un sommet
+              </button>
+              {sel.polygon.points.length > 3 && (
+                <button onClick={() => update(sel.id, { polygon: { points: sel.polygon!.points.slice(0, -1) } })} style={{ width: '100%', justifyContent: 'center', fontSize: 12, marginTop: 4 }}>
+                  <Trash2 size={12} /> Retirer le dernier sommet
+                </button>
+              )}
+            </>
+          )}
+
+          {sel.kind === 'hand' && sel.hand && (
+            <>
+              <h3 style={{ marginTop: 10 }}>Main</h3>
+              <div className="palette-row">
+                <label>Source</label>
+                <select value={sel.hand.source} onChange={(e) => update(sel.id, { hand: { ...sel.hand!, source: e.target.value as any } })}>
+                  <option value="palm">Paume</option>
+                  <option value="index">Index</option>
+                </select>
+              </div>
+              <Slider label="Rayon" value={sel.hand.radius} min={0.03} max={0.4} step={0.01} onChange={(r) => update(sel.id, { hand: { ...sel.hand!, radius: r } })} format={(r) => `${Math.round(r * 100)}%`} />
+              <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 8 }}>
+                ⚠️ Active la caméra dans la TopBar pour activer le tracking de la main.
+              </p>
+            </>
+          )}
+
+          {sel.kind === 'silhouette' && sel.silhouette && (
+            <>
+              <h3 style={{ marginTop: 10 }}>Silhouette corporelle</h3>
+              <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none', marginBottom: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={sel.silhouette.invert}
+                  onChange={(e) => update(sel.id, { silhouette: { invert: e.target.checked } })}
+                />
+                <span>Inverser (l'organisme reste DANS la silhouette)</span>
+              </label>
+              <p style={{ fontSize: 11, color: 'var(--text-mute)' }}>
+                Segmentation MediaPipe SelfieSegmenter à 10 fps. Active la caméra pour démarrer.
+                Combinez avec <strong>kill</strong> : les organismes "disparaissent" derrière toi.
+              </p>
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }

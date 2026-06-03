@@ -120,6 +120,30 @@ export interface MappingConfig {
   testPattern?: TestPattern
 }
 
+export type ObstacleKind = 'circle' | 'polygon' | 'hand' | 'silhouette'
+export type ObstacleInteraction = 'avoid' | 'attract' | 'bounce' | 'kill'
+
+export interface Obstacle {
+  id: string
+  name: string
+  kind: ObstacleKind
+  enabled: boolean
+  interaction: ObstacleInteraction
+  strength: number              // 0..2
+  /** how much "soft margin" around the obstacle the force extends, in world units (~0.05–0.4) */
+  margin: number
+  /** for circle */
+  circle?: { cx: number; cy: number; r: number }   // 0..1 normalized
+  /** for polygon */
+  polygon?: { points: Vec2[] }
+  /** for hand: which landmark to use as center (default = palm), and radius */
+  hand?: { source: 'palm' | 'index'; radius: number }
+  /** for silhouette: threshold + invert */
+  silhouette?: { invert: boolean }
+  /** visual hint on stage when overlay is on */
+  visible: boolean
+}
+
 export interface Scene {
   id: string
   name: string
@@ -130,6 +154,7 @@ export interface Scene {
   senses: SenseConfig
   evolution: Evolution
   mapping: MappingConfig
+  obstacles?: Obstacle[]
   notes?: string
 }
 
@@ -141,6 +166,25 @@ export const defaultMapping = (): MappingConfig => ({
   edgeBlend: { left: 0, right: 0, top: 0, bottom: 0, gamma: 2.2 },
   testPattern: 'none',
 })
+
+export const defaultObstacle = (kind: ObstacleKind, i = 0): Obstacle => {
+  const base: Obstacle = {
+    id: `obs-${Date.now().toString(36)}-${i}`,
+    name: kind === 'hand' ? 'Main' : kind === 'silhouette' ? 'Silhouette' : `Obstacle ${i + 1}`,
+    kind, enabled: true,
+    interaction: 'avoid',
+    strength: 1,
+    margin: 0.15,
+    visible: true,
+  }
+  if (kind === 'circle') base.circle = { cx: 0.5, cy: 0.5, r: 0.15 }
+  if (kind === 'polygon') base.polygon = { points: [
+    { x: 0.4, y: 0.4 }, { x: 0.6, y: 0.4 }, { x: 0.6, y: 0.6 }, { x: 0.4, y: 0.6 },
+  ] }
+  if (kind === 'hand') base.hand = { source: 'palm', radius: 0.12 }
+  if (kind === 'silhouette') base.silhouette = { invert: false }
+  return base
+}
 
 export const defaultShape = (i = 0): MappingShape => ({
   id: `shape-${Date.now().toString(36)}-${i}`,

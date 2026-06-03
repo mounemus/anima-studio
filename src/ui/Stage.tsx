@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Engine } from '../engine/Engine'
 import { useSceneStore } from '../store/sceneStore'
+import { startSilhouette, stopSilhouette } from '../senses/Silhouette'
 
 interface Props {
   onEngineReady?: (e: Engine) => void
@@ -34,8 +35,21 @@ export function Stage({ onEngineReady }: Props) {
       engineRef.current.updateOrganismParams(current.organism.values)
       engineRef.current.applyVisual(current.visual)
       engineRef.current.updateMapping(current.mapping)
+      engineRef.current.updateObstacles(current.obstacles ?? [])
     }
-  }, [current?.organism, current?.visual, current?.mapping])
+  }, [current?.organism, current?.visual, current?.mapping, current?.obstacles])
+
+  // Start/stop silhouette segmentation based on whether a silhouette obstacle is enabled
+  useEffect(() => {
+    const needSilhouette = current?.obstacles?.some((o) => o.kind === 'silhouette' && o.enabled) ?? false
+    const video = document.querySelector('video') as HTMLVideoElement | null
+    if (needSilhouette && video?.srcObject) {
+      startSilhouette(video).catch((e) => console.warn('Silhouette failed', e))
+    } else {
+      stopSilhouette()
+    }
+    return () => { /* keep running across renders */ }
+  }, [current?.obstacles])
 
   return (
     <div className="canvas-wrap" ref={ref} />

@@ -1,6 +1,8 @@
 import * as THREE from 'three'
-import type { TendrilsParams, VisualParams } from '../../types/scene'
+import type { TendrilsParams, VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
+import { solveObstacles } from '../Obstacles'
+import { getSilhouetteMask } from '../../senses/Silhouette'
 
 const MAX_TENDRILS = 80
 const MAX_LEN = 64
@@ -25,6 +27,7 @@ export class TendrilsOrganism {
   private c1 = new THREE.Color()
   private c2 = new THREE.Color()
   private mat: THREE.LineBasicMaterial
+  obstacles: Obstacle[] | undefined
 
   constructor(params: TendrilsParams, visual: VisualParams) {
     this.params = params
@@ -115,6 +118,16 @@ export class TendrilsOrganism {
         const targetAngle = Math.atan2(handY - td.head.y, handX - td.head.x)
         const diff = ((targetAngle - td.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI
         td.angle += diff * 0.05 * handPull
+      }
+      // obstacles: nudge angle away from obstacles
+      if (this.obstacles && this.obstacles.length) {
+        const o = solveObstacles(td.head.x, td.head.y, aspect, this.obstacles, getSilhouetteMask())
+        if (Math.abs(o.fx) + Math.abs(o.fy) > 0.01) {
+          const wantA = Math.atan2(o.fy, o.fx)
+          const diff = ((wantA - td.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI
+          td.angle += diff * 0.08
+        }
+        if (o.kill) { td.head.x = (Math.random() - 0.5) * 2 * aspect; td.head.y = (Math.random() - 0.5) * 2 }
       }
       // move head
       td.head.x += Math.cos(td.angle) * td.speed * speedScale * dt

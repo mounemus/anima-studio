@@ -1,21 +1,30 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { Stage } from './ui/Stage'
 import { SceneList } from './ui/SceneList'
 import { ParamPanel } from './ui/ParamPanel'
 import { SenseMonitor } from './ui/SenseMonitor'
 import { TopBar } from './ui/TopBar'
 import { MappingOverlay } from './ui/MappingOverlay'
+import { ObstaclesOverlay } from './ui/ObstaclesOverlay'
 import { AIChat } from './ui/AIChat'
 import { useSceneStore } from './store/sceneStore'
 import type { Engine } from './engine/Engine'
 import { Eye } from 'lucide-react'
 import { enterFullscreen } from './lib/recorder'
+import { isOutputWindow } from './lib/multiDisplay'
 
 export function App() {
   const load = useSceneStore((s) => s.load)
   const ready = useSceneStore((s) => s.scenes.length > 0)
   const [aiOpen, setAiOpen] = useState(false)
-  const [outputMode, setOutputMode] = useState(false)
+  const isOutput = useMemo(() => isOutputWindow(), [])
+  const [outputMode, setOutputMode] = useState(isOutput)
+  const [selectedObstacle, setSelectedObstacle] = useState<string | null>(null)
+  useEffect(() => {
+    const onSelect = (e: Event) => setSelectedObstacle((e as CustomEvent<string | null>).detail)
+    window.addEventListener('anima:obstacle-select', onSelect)
+    return () => window.removeEventListener('anima:obstacle-select', onSelect)
+  }, [])
   const engineRef = useRef<Engine | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null!)
   const stageRef = useRef<HTMLDivElement>(null!)
@@ -75,6 +84,7 @@ export function App() {
             <Stage onEngineReady={(e) => { engineRef.current = e }} />
             {!outputMode && <SenseMonitor />}
             {!outputMode && <MappingOverlay stageRef={stageRef} />}
+            {!outputMode && <ObstaclesOverlay stageRef={stageRef} editing={true} selectedId={selectedObstacle} onSelect={setSelectedObstacle} />}
             {!outputMode && <AIChat open={aiOpen} />}
             {outputMode && (
               <div className="output-hint" onClick={() => setOutputMode(false)}>

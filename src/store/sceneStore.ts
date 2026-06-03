@@ -1,7 +1,7 @@
 import { create } from 'zustand'
-import type { Scene, OrganismParams, VisualParams, MappingConfig, AITexture, Evolution, MappingShape, TestPattern } from '../types/scene'
+import type { Scene, OrganismParams, VisualParams, MappingConfig, AITexture, Evolution, MappingShape, TestPattern, Obstacle, ObstacleKind } from '../types/scene'
 import { defaultScenes } from '../lib/defaultScenes'
-import { defaultShape } from '../types/scene'
+import { defaultShape, defaultObstacle } from '../types/scene'
 import { saveScene, loadAllScenes, deleteScene as dbDelete } from '../lib/persistence'
 
 interface SceneStoreState {
@@ -25,6 +25,9 @@ interface SceneStoreState {
   updateMappingShape: (id: string, patch: Partial<MappingShape>) => void
   selectMappingShape: (idx: number) => void
   setTestPattern: (p: TestPattern) => void
+  addObstacle: (kind: ObstacleKind) => void
+  removeObstacle: (id: string) => void
+  updateObstacle: (id: string, patch: Partial<Obstacle>) => void
   setTexture: (tex: AITexture | null) => void
   setTextureIntensity: (v: number) => void
   updateEvolution: (e: Partial<Evolution>) => void
@@ -184,6 +187,38 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
       const next = st.scenes.map((s) => s.id === st.currentId ? { ...s, mapping: { ...s.mapping, testPattern: p } } : s)
       return { scenes: next }
     })
+  },
+
+  addObstacle: (kind) => {
+    set((st) => {
+      const next = st.scenes.map((s) => {
+        if (s.id !== st.currentId) return s
+        const obs = [...(s.obstacles ?? []), defaultObstacle(kind, (s.obstacles ?? []).length)]
+        return { ...s, obstacles: obs, updatedAt: Date.now() }
+      })
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  removeObstacle: (id) => {
+    set((st) => {
+      const next = st.scenes.map((s) => s.id === st.currentId ? { ...s, obstacles: (s.obstacles ?? []).filter((o) => o.id !== id), updatedAt: Date.now() } : s)
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  updateObstacle: (id, patch) => {
+    set((st) => {
+      const next = st.scenes.map((s) => {
+        if (s.id !== st.currentId) return s
+        const obs = (s.obstacles ?? []).map((o) => o.id === id ? { ...o, ...patch } : o)
+        return { ...s, obstacles: obs, updatedAt: Date.now() }
+      })
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
   },
 
   setTexture: (tex) => {

@@ -1,6 +1,8 @@
 import * as THREE from 'three'
-import type { CellsParams, VisualParams } from '../../types/scene'
+import type { CellsParams, VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
+import { solveObstacles } from '../Obstacles'
+import { getSilhouetteMask } from '../../senses/Silhouette'
 
 const MAX = 250
 
@@ -20,6 +22,7 @@ export class CellsOrganism {
   private c1 = new THREE.Color()
   private c2 = new THREE.Color()
   private cTmp = new THREE.Color()
+  obstacles: Obstacle[] | undefined
 
   constructor(params: CellsParams, visual: VisualParams) {
     this.params = params
@@ -118,6 +121,16 @@ export class CellsOrganism {
         const d = Math.max(0.05, Math.hypot(dx, dy))
         fx += (dx / d) * handForce * 0.4
         fy += (dy / d) * handForce * 0.4
+      }
+      if (this.obstacles && this.obstacles.length) {
+        const o = solveObstacles(this.px[i], this.py[i], this.aspect, this.obstacles, getSilhouetteMask())
+        fx += o.fx * 0.2
+        fy += o.fy * 0.2
+        if (o.kill) {
+          this.px[i] = (Math.random() - 0.5) * 2 * this.aspect
+          this.py[i] = (Math.random() - 0.5) * 2
+          this.vx[i] = 0; this.vy[i] = 0
+        }
       }
       this.vx[i] = this.vx[i] * 0.9 + fx
       this.vy[i] = this.vy[i] * 0.9 + fy

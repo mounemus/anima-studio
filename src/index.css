@@ -508,3 +508,61 @@ button.ghost.active {
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* === Obstacles overlay === */
+.obstacles-overlay { z-index: 5; }
+.obstacle-handle {
+  position: absolute;
+  width: 14px; height: 14px;
+  margin: -7px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  border: 2px solid #fff;
+  pointer-events: auto;
+  cursor: grab;
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.7);
+  z-index: 11;
+}
+.obstacle-handle.radius {
+  background: var(--accent-3);
+  box-shadow: 0 0 8px rgba(124, 58, 237, 0.7);
+}
+.obstacle-handle:active { cursor: grabbing; }
+
+/* === Display menu === */
+.display-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 280px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  padding: 6px;
+  z-index: 200;
+}
+.display-menu-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-mute);
+  padding: 6px 8px 4px;
+}
+.display-item {
+  display: flex; flex-direction: column;
+  align-items: flex-start; gap: 2px;
+  width: 100%; padding: 8px 10px;
+  background: transparent; border: 1px solid transparent;
+  font-size: 12px;
+  text-align: left;
+}
+.display-item:hover { background: var(--bg-elev-2); border-color: var(--line); }
+.display-menu-hint {
+  margin-top: 4px;
+  padding: 8px 10px;
+  font-size: 10px;
+  color: var(--text-mute);
+  border-top: 1px solid var(--line);
+  line-height: 1.4;
+}

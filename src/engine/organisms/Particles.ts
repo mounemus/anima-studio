@@ -1,6 +1,8 @@
 import * as THREE from 'three'
-import type { ParticleParams, VisualParams } from '../../types/scene'
+import type { ParticleParams, VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
+import { solveObstacles } from '../Obstacles'
+import { getSilhouetteMask } from '../../senses/Silhouette'
 
 const MAX = 8000
 
@@ -14,6 +16,7 @@ export class ParticlesOrganism {
   private count: number
   private params: ParticleParams
   private mat: THREE.PointsMaterial
+  obstacles: Obstacle[] | undefined
 
   constructor(params: ParticleParams, visual: VisualParams) {
     this.params = params
@@ -114,6 +117,13 @@ export class ParticlesOrganism {
         const d = Math.max(0.05, Math.hypot(dx, dy))
         vx += (dx / d) * handPull * dt
         vy += (dy / d) * handPull * dt
+      }
+      // obstacles
+      if (this.obstacles && this.obstacles.length) {
+        const o = solveObstacles(x, y, this.aspect, this.obstacles, getSilhouetteMask())
+        vx += o.fx * dt
+        vy += o.fy * dt
+        if (o.kill) { this.respawn(i); continue }
       }
       // damp
       vx *= 0.985; vy *= 0.985

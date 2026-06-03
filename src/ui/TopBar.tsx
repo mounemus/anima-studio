@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor } from 'lucide-react'
+import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { listDisplays, openOutputWindow, type DisplayInfo } from '../lib/multiDisplay'
 import { useSceneStore } from '../store/sceneStore'
 import { startHands, stopHands, createCameraStream } from '../senses/Hands'
 import { startAudio, stopAudio } from '../senses/Audio'
@@ -25,6 +26,26 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
   const [recOn, setRecOn] = useState(false)
   const [fps, setFps] = useState(0)
   const [toast, setToast] = useState<{ msg: string; err?: boolean } | null>(null)
+  const [displays, setDisplays] = useState<DisplayInfo[] | null>(null)
+  const [showDisplayMenu, setShowDisplayMenu] = useState(false)
+
+  const openDisplayMenu = async () => {
+    if (showDisplayMenu) { setShowDisplayMenu(false); return }
+    try {
+      const d = await listDisplays()
+      setDisplays(d)
+      setShowDisplayMenu(true)
+    } catch (e: any) {
+      showToast('Impossible de lister les écrans: ' + (e?.message ?? e), true)
+    }
+  }
+
+  const sendOutputTo = (d: DisplayInfo) => {
+    setShowDisplayMenu(false)
+    const w = openOutputWindow(d)
+    if (w) showToast(`Sortie ouverte sur ${d.label}`)
+    else showToast('Popup bloquée — autorise les fenêtres pour ce site.', true)
+  }
 
   useEffect(() => {
     const id = setInterval(() => setFps(fpsRef.current ?? 0), 400)
@@ -140,6 +161,25 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
         <button onClick={toggleRec} className={`ghost icon ${recOn ? 'rec active' : 'rec'}`} title={recOn ? 'Arrêter l\'enregistrement' : 'Enregistrer WebM'}>
           <Video size={16} />
         </button>
+        <div style={{ position: 'relative' }}>
+          <button onClick={openDisplayMenu} className="ghost icon" title="Ouvrir la sortie sur un écran"><MonitorPlay size={16} /></button>
+          {showDisplayMenu && displays && (
+            <div className="display-menu">
+              <div className="display-menu-title">Écrans détectés</div>
+              {displays.map((d) => (
+                <button key={d.id} onClick={() => sendOutputTo(d)} className="display-item">
+                  <span style={{ fontWeight: 500 }}>{d.label}</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-mute)' }}>
+                    {d.width}×{d.height} {d.isPrimary ? '· principal' : ''} {d.isInternal ? '' : '· externe'}
+                  </span>
+                </button>
+              ))}
+              <div className="display-menu-hint">
+                Note : Chrome demande la permission "Gestion des fenêtres" pour détecter les écrans externes.
+              </div>
+            </div>
+          )}
+        </div>
         <button onClick={onToggleOutput} className={`ghost icon ${outputMode ? 'active' : ''}`} title="Mode SORTIE (F) — cache l'UI"><Monitor size={16} /></button>
         <button onClick={toggleFs} className="ghost icon" title="Plein écran"><Maximize2 size={16} /></button>
         <button onClick={onToggleAI} className="ghost icon" title="Compagnon IA"><MessageCircle size={16} /></button>

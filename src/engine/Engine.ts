@@ -5,6 +5,7 @@ import type { OrganismLike } from './organisms'
 import { MappingPass } from './MappingPass'
 import { senseBus } from '../senses/SenseBus'
 import { loadTexture } from '../lib/textureLoader'
+import type { Obstacle } from '../types/scene'
 
 export class Engine {
   private renderer: THREE.WebGLRenderer
@@ -115,6 +116,7 @@ export class Engine {
     }
     if (this.organism) {
       this.organism.setAspect(aspect)
+      ;(this.organism as any).obstacles = s.obstacles ?? []
       this.scene.add(this.organism.mesh)
     }
     // snapshot base values for evolution drift
@@ -156,6 +158,11 @@ export class Engine {
     }
   }
 
+
+  updateObstacles(obs: Obstacle[]) {
+    if (this.currentScene) this.currentScene = { ...this.currentScene, obstacles: obs }
+    if (this.organism) (this.organism as any).obstacles = obs
+  }
 
   updateMapping(cfg?: import('../types/scene').MappingConfig) {
     if (cfg) {
