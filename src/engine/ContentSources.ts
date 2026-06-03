@@ -74,7 +74,10 @@ function bindWebcam(useMaskedBody: boolean): WebcamEntry {
   }
   const cam = document.querySelector('video.mirror-bg') as HTMLVideoElement | null
   const source = cam ?? (document.querySelector('video') as HTMLVideoElement | null)
-  if (!source) return { kind: 'webcam', texture: null }
+  // CRITICAL: only bind a VideoTexture if the video has a live MediaStream.
+  // Otherwise the texture is just black (no pixels are ever painted into it) and
+  // the zone shows pure black instead of falling back to the main organism source.
+  if (!source || !source.srcObject) return { kind: 'webcam', texture: null }
   const texture = new THREE.VideoTexture(source)
   texture.colorSpace = THREE.SRGBColorSpace
   texture.minFilter = THREE.LinearFilter
@@ -135,6 +138,17 @@ export function pruneShapeTextures(currentShapeIds: Set<string>) {
   for (const id of Array.from(cache.keys())) {
     if (!currentShapeIds.has(id)) {
       const e = cache.get(id)!
+      disposeEntry(e)
+      cache.delete(id)
+    }
+  }
+}
+
+/** Force-invalidate all cached webcam entries so they re-bind on the next resolve.
+ *  Call this when the camera goes on/off so zones pick up the new MediaStream. */
+export function invalidateWebcamCache() {
+  for (const [id, e] of Array.from(cache.entries())) {
+    if (e.kind === 'webcam') {
       disposeEntry(e)
       cache.delete(id)
     }

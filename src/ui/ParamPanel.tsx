@@ -1149,6 +1149,39 @@ function MappingTab() {
   )
 }
 
+function WebcamZoneStatus() {
+  const [cameraOn, setCameraOn] = useState<boolean>(!!(window as any).__animaCameraOn)
+  const [arOn, setArOn] = useState<boolean>(!!(window as any).__animaArOn)
+  useEffect(() => {
+    const onCam = (e: Event) => setCameraOn(!!(e as CustomEvent<boolean>).detail)
+    const onAr = (e: Event) => setArOn(!!(e as CustomEvent<boolean>).detail)
+    window.addEventListener('anima:camera-state', onCam)
+    window.addEventListener('anima:ar-state', onAr)
+    return () => {
+      window.removeEventListener('anima:camera-state', onCam)
+      window.removeEventListener('anima:ar-state', onAr)
+    }
+  }, [])
+  return (
+    <div style={{ marginBottom: 8, padding: 8, background: cameraOn ? 'rgba(0,255,163,0.08)' : 'rgba(255,180,0,0.10)', border: `1px solid ${cameraOn ? 'rgba(0,255,163,0.3)' : 'rgba(255,180,0,0.3)'}`, borderRadius: 'var(--radius-sm)' }}>
+      <p style={{ fontSize: 11, color: cameraOn ? 'var(--accent)' : '#ffb400', margin: 0, marginBottom: 6 }}>
+        {cameraOn
+          ? `✓ Caméra active${arOn ? ' · AR ON' : ''} — la zone affiche le flux webcam en direct`
+          : '⚠ Caméra inactive — la zone est vide sans flux'}
+      </p>
+      {!cameraOn && (
+        <button
+          onClick={() => window.dispatchEvent(new Event('anima:request-camera'))}
+          className="primary"
+          style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}
+        >
+          📹 Démarrer la caméra
+        </button>
+      )}
+    </div>
+  )
+}
+
 function ShapeContentEditor({ shape, update }: { shape: import('../types/scene').MappingShape; update: (p: Partial<import('../types/scene').MappingShape>) => void }) {
   const content = shape.content ?? { type: 'organism' as const, opacity: 1 }
   const fileRef = useRef<HTMLInputElement>(null)
@@ -1237,11 +1270,7 @@ function ShapeContentEditor({ shape, update }: { shape: import('../types/scene')
           </p>
         </div>
       )}
-      {content.type === 'webcam' && (
-        <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-          Utilise le flux de la caméra (active <strong>Caméra</strong> ou <strong>AR</strong>).
-        </p>
-      )}
+      {content.type === 'webcam' && <WebcamZoneStatus />}
       {content.type === 'organism' && (
         <div style={{ marginBottom: 10, padding: 8, background: 'var(--bg-elev-2)', borderRadius: 'var(--radius-sm)' }}>
           <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 5 }}>Organisme de cette zone</div>

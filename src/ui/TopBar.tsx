@@ -34,6 +34,26 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
   const [xrOn, setXrOn] = useState(false)
 
   useEffect(() => { isXRARSupported().then(setXrSupported) }, [])
+
+  // Broadcast camera state to the rest of the app (ContentSources, ParamPanel, Stage)
+  // so they can react when the user turns the webcam on/off.
+  useEffect(() => {
+    ;(window as any).__animaCameraOn = handsOn
+    window.dispatchEvent(new CustomEvent('anima:camera-state', { detail: handsOn }))
+  }, [handsOn])
+  // Same for AR state
+  useEffect(() => {
+    ;(window as any).__animaArOn = mirrorMode
+    window.dispatchEvent(new CustomEvent('anima:ar-state', { detail: mirrorMode }))
+  }, [mirrorMode])
+  // Listen for requests to auto-start the camera (e.g. when a zone selects 'webcam' content
+  // or when the user toggles AR — webcam zones are useless without an active MediaStream).
+  useEffect(() => {
+    const onReq = () => { if (!handsOn) toggleHands() }
+    window.addEventListener('anima:request-camera', onReq)
+    return () => window.removeEventListener('anima:request-camera', onReq)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handsOn])
   const [recOn, setRecOn] = useState(false)
   const [fps, setFps] = useState(0)
   const [toast, setToast] = useState<{ msg: string; err?: boolean } | null>(null)
