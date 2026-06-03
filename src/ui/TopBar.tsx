@@ -104,6 +104,14 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
     setLightOn(true)
   }
 
+  const toggleAR = async () => {
+    // Entering AR auto-starts the camera (and pose), because without webcam the mirror is just black.
+    if (!mirrorMode && !handsOn) {
+      await toggleHands()
+    }
+    onToggleMirror()
+  }
+
   const toggleXR = async () => {
     const canvas = canvasGetter()
     if (!canvas) return
@@ -181,7 +189,7 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
         <button onClick={toggleMIDI} className={midiOn ? 'primary' : ''} title="Activer un contrôleur MIDI (WebMIDI)">
           <Music size={14} /> {midiOn ? 'MIDI ON' : 'MIDI'}
         </button>
-        <button onClick={onToggleMirror} className={mirrorMode ? 'primary' : ''} title="Mode Miroir AR — webcam en fond, organismes par-dessus">
+        <button onClick={toggleAR} className={mirrorMode ? 'primary' : ''} title="Mode Miroir AR — webcam en fond + tracking corps, organismes par-dessus">
           <ScanFace size={14} /> {mirrorMode ? 'AR ON' : 'AR'}
         </button>
         {xrSupported && (
