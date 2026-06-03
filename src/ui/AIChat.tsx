@@ -163,8 +163,8 @@ export function AIChat({ open }: { open: boolean }) {
   }
 
   return (
-    <div className="ai-chat" style={{ position: 'absolute', right: 12, top: 12, bottom: 12, width: 340, background: 'rgba(7,8,13,0.92)', backdropFilter: 'blur(12px)', border: '1px solid var(--line)', borderRadius: 'var(--radius)', zIndex: 20 }}>
-      <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 8 }}>
+    <div className="ai-chat ai-chat--dock">
+      <div className="ai-chat-header">
         <Sparkles size={14} style={{ color: 'var(--accent)' }} />
         <strong style={{ fontSize: 13, flex: 1 }}>Compagnon IA</strong>
         <button

@@ -147,7 +147,7 @@ export function App() {
   }
 
   return (
-    <div className={`app ${outputMode ? 'app--output' : ''}`}>
+    <div className={`app ${outputMode ? 'app--output' : ''} ${aiOpen && !outputMode ? 'app--ai' : ''}`}>
       <TopBar
         videoRef={videoRef}
         fpsRef={fpsRef}
@@ -174,7 +174,7 @@ export function App() {
             {!outputMode && <SenseMonitor />}
             {!outputMode && <MappingOverlay stageRef={stageRef} />}
             {!outputMode && <ObstaclesOverlay stageRef={stageRef} editing={true} selectedId={selectedObstacle} onSelect={setSelectedObstacle} />}
-            {!outputMode && <AIChat open={aiOpen} />}
+            {/* AIChat now renders OUTSIDE the stage as a docked side panel */}
             {mirrorMode && !outputMode && !pickingForObstacle && (
               <div className="tap-hint">
                 🪞 Miroir AR · <kbd>Alt</kbd> + clic sur l'image pour poser un attracteur
@@ -210,6 +210,7 @@ export function App() {
         )}
       </div>
       <ParamPanel />
+      {!outputMode && aiOpen && <AIChat open={aiOpen} />}
       {/*
         Tracking video : kept "displayed" (1×1 px off-screen, opacity 0) instead of display:none.
         Some browsers stall the MediaStream pipeline on display:none, which prevents the visible

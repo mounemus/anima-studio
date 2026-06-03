@@ -53,16 +53,23 @@ export function SceneList() {
     <div className="left-panel">
       <h3>Scènes</h3>
       <div className="scene-list">
-        {scenes.map((s) => (
-          <div
-            key={s.id}
-            className={`scene-item ${s.id === currentId ? 'active' : ''}`}
-            onClick={() => select(s.id)}
-          >
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-            <span className="kind">{s.organism.kind}</span>
-          </div>
-        ))}
+        {scenes.map((s) => {
+          const p = s.visual?.palette
+          const gradient = p
+            ? `linear-gradient(135deg, ${p.primary} 0%, ${p.secondary} 50%, ${p.glow} 100%)`
+            : 'linear-gradient(135deg, var(--accent), var(--accent-3))'
+          return (
+            <div
+              key={s.id}
+              className={`scene-item ${s.id === currentId ? 'active' : ''}`}
+              onClick={() => select(s.id)}
+            >
+              <span className="scene-color-swatch" style={{ background: gradient }} />
+              <span className="scene-name">{s.name}</span>
+              <span className="kind">{s.organism.kind}</span>
+            </div>
+          )
+        })}
       </div>
       <div className="scene-actions">
         <button onClick={createNew} title="Nouvelle scène"><Plus size={14} /> Nouvelle</button>

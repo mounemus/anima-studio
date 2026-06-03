@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX, Wand2, Bone, Pipette, Wind, Navigation } from 'lucide-react'
+import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX, Wand2, Bone, Pipette, Wind, Navigation, Bug, Palette, Activity, Map as MapIcon, StickyNote } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
 import type { OrganismKind, TestPattern, ObstacleInteraction, Waveform, SoundConfig } from '../types/scene'
 import { LiveImg2Img } from '../lib/liveImg2Img'
@@ -80,12 +80,24 @@ export function ParamPanel() {
       </div>
 
       <div className="tabs">
-        <button className={`tab ${tab === 'organism' ? 'active' : ''}`} onClick={() => setTab('organism')}>Organisme</button>
-        <button className={`tab ${tab === 'visual' ? 'active' : ''}`} onClick={() => setTab('visual')}>Visuel</button>
-        <button className={`tab ${tab === 'senses' ? 'active' : ''}`} onClick={() => setTab('senses')}>Sens</button>
-        <button className={`tab ${tab === 'obstacles' ? 'active' : ''}`} onClick={() => setTab('obstacles')}>Obstacles</button>
-        <button className={`tab ${tab === 'mapping' ? 'active' : ''}`} onClick={() => setTab('mapping')}>Map</button>
-        <button className={`tab ${tab === 'notes' ? 'active' : ''}`} onClick={() => setTab('notes')}>Notes</button>
+        <button className={`tab ${tab === 'organism' ? 'active' : ''}`} onClick={() => setTab('organism')} title="Organisme">
+          <Bug size={13} /> <span className="tab-label">Vie</span>
+        </button>
+        <button className={`tab ${tab === 'visual' ? 'active' : ''}`} onClick={() => setTab('visual')} title="Visuel">
+          <Palette size={13} /> <span className="tab-label">Visuel</span>
+        </button>
+        <button className={`tab ${tab === 'senses' ? 'active' : ''}`} onClick={() => setTab('senses')} title="Sens & Flux">
+          <Activity size={13} /> <span className="tab-label">Sens</span>
+        </button>
+        <button className={`tab ${tab === 'obstacles' ? 'active' : ''}`} onClick={() => setTab('obstacles')} title="Obstacles physiques">
+          <Shapes size={13} /> <span className="tab-label">Obs.</span>
+        </button>
+        <button className={`tab ${tab === 'mapping' ? 'active' : ''}`} onClick={() => setTab('mapping')} title="Projection mapping">
+          <MapIcon size={13} /> <span className="tab-label">Map</span>
+        </button>
+        <button className={`tab ${tab === 'notes' ? 'active' : ''}`} onClick={() => setTab('notes')} title="Notes">
+          <StickyNote size={13} /> <span className="tab-label">Notes</span>
+        </button>
       </div>
 
       <div className="tab-content">

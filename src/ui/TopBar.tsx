@@ -177,26 +177,31 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
           ANIMA STUDIO
         </div>
 
-        <button onClick={toggleHands} className={handsOn ? 'primary' : ''} title="Activer webcam + tracking main">
-          <Camera size={14} /> {handsOn ? 'Caméra ON' : 'Caméra'}
-        </button>
-        <button onClick={toggleAudio} className={audioOn ? 'primary' : ''} title="Activer microphone">
-          <Mic size={14} /> {audioOn ? 'Micro ON' : 'Micro'}
-        </button>
-        <button onClick={toggleLight} className={lightOn ? 'primary' : ''} title="Lumière ambiante (nécessite caméra)">
-          <Sun size={14} /> {lightOn ? 'Lumière ON' : 'Lumière'}
-        </button>
-        <button onClick={toggleMIDI} className={midiOn ? 'primary' : ''} title="Activer un contrôleur MIDI (WebMIDI)">
-          <Music size={14} /> {midiOn ? 'MIDI ON' : 'MIDI'}
-        </button>
-        <button onClick={toggleAR} className={mirrorMode ? 'primary' : ''} title="Mode Miroir AR — webcam en fond + tracking corps, organismes par-dessus">
-          <ScanFace size={14} /> {mirrorMode ? 'AR ON' : 'AR'}
-        </button>
-        {xrSupported && (
-          <button onClick={toggleXR} className={xrOn ? 'primary' : ''} title="Entrer en réalité augmentée (WebXR — mobile compatible)">
-            <Glasses size={14} /> XR
+        <div className="topbar-group">
+          <button onClick={toggleHands} className={handsOn ? 'primary' : ''} title="Webcam + tracking main + corps">
+            <Camera size={14} /> Caméra
           </button>
-        )}
+          <button onClick={toggleAudio} className={audioOn ? 'primary' : ''} title="Microphone (FFT)">
+            <Mic size={14} /> Micro
+          </button>
+          <button onClick={toggleLight} className={lightOn ? 'primary' : ''} title="Lumière ambiante (nécessite caméra)">
+            <Sun size={14} /> Lumière
+          </button>
+          <button onClick={toggleMIDI} className={midiOn ? 'primary' : ''} title="Contrôleur MIDI (WebMIDI)">
+            <Music size={14} /> MIDI
+          </button>
+        </div>
+        <div className="topbar-sep" />
+        <div className="topbar-group">
+          <button onClick={toggleAR} className={mirrorMode ? 'primary' : ''} title="Mode Miroir AR — webcam en fond, organismes par-dessus">
+            <ScanFace size={14} /> AR
+          </button>
+          {xrSupported && (
+            <button onClick={toggleXR} className={xrOn ? 'primary' : ''} title="WebXR — vraie réalité augmentée (mobile compatible)">
+              <Glasses size={14} /> XR
+            </button>
+          )}
+        </div>
 
         <div className="spacer" />
 
