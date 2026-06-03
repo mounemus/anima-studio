@@ -27,6 +27,7 @@ export function App() {
   const [mirrorMode, setMirrorMode] = useState(false)
   const [selectedObstacle, setSelectedObstacle] = useState<string | null>(null)
   const [pickingForObstacle, setPickingForObstacle] = useState<string | null>(null)
+  const [pickFlash, setPickFlash] = useState<{ x: number; y: number; color: string } | null>(null)
   const addObstacle = useSceneStore((s) => s.addObstacle)
   const updateObstacle = useSceneStore((s) => s.updateObstacle)
   const currentSceneId = useSceneStore((s) => s.currentId)
@@ -109,8 +110,7 @@ export function App() {
 
     // Color picker active?
     if (pickingForObstacle) {
-      const vid = videoRef.current
-      const hsv = vid ? pickColorAt(vid, x, y) : null
+      const hsv = pickColorAt(videoRef.current, x, y)
       if (hsv) {
         const scene = useSceneStore.getState().scenes.find((s) => s.id === currentSceneId)
         const obs = scene?.obstacles?.find((o) => o.id === pickingForObstacle)
@@ -118,7 +118,12 @@ export function App() {
           updateObstacle(pickingForObstacle, {
             tracker: { ...obs.tracker, h: hsv.h, s: hsv.s, v: hsv.v },
           })
+          // Visual feedback : flash a ring at the sampled position for 600ms
+          setPickFlash({ x, y, color: `hsl(${Math.round(hsv.h * 360)} ${Math.round(hsv.s * 100)}% ${Math.round(hsv.v * 100)}%)` })
+          setTimeout(() => setPickFlash(null), 700)
         }
+      } else {
+        console.warn('pickColorAt returned null — camera not ready?')
       }
       setPickingForObstacle(null)
       return
@@ -156,6 +161,7 @@ export function App() {
         className={`stage ${mirrorMode ? 'stage--mirror' : ''}`}
         ref={stageRef}
         onPointerDown={onStageClick}
+        style={pickingForObstacle ? { cursor: 'crosshair' } : undefined}
       >
         {ready ? (
           <>
@@ -175,6 +181,17 @@ export function App() {
               <div className="tap-hint" style={{ background: 'rgba(0,212,255,0.18)', borderColor: 'var(--accent-2)', color: 'var(--accent-2)' }}>
                 <Pipette size={12} style={{ verticalAlign: 'middle' }} /> Pipette active — clique sur l'objet à tracker · <kbd onClick={() => setPickingForObstacle(null)} style={{ cursor: 'pointer' }}>Esc</kbd>
               </div>
+            )}
+            {pickFlash && (
+              <div
+                className="pick-flash"
+                style={{
+                  left: `${pickFlash.x * 100}%`,
+                  top: `${pickFlash.y * 100}%`,
+                  borderColor: pickFlash.color,
+                  boxShadow: `0 0 20px ${pickFlash.color}`,
+                }}
+              />
             )}
             {outputMode && (
               <div className="output-hint" onClick={() => setOutputMode(false)}>

@@ -70,8 +70,11 @@ export function ObstaclesOverlay({ stageRef, editing, selectedId, onSelect }: {
   }
 
   return (
-    <div className="obstacles-overlay" style={{ position: 'absolute', inset: 0, pointerEvents: editing ? 'auto' : 'none' }}>
-      <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+    // Container ALWAYS pointer-events:none so empty SVG areas don't absorb clicks
+    // (would otherwise block tap-to-place + color pipette). Individual <g> shapes
+    // and HTML handles re-enable pointer-events themselves for interaction.
+    <div className="obstacles-overlay" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+      <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
         {current.obstacles.map((o) => {
           if (!o.visible) return null
           const isSel = o.id === selectedId

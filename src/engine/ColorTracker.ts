@@ -120,23 +120,35 @@ function loop() {
   timer = window.setTimeout(loop, 80)  // ~12 Hz
 }
 
-/** Sample a single pixel color from a video element at normalized coords (0..1).
- * Returns the HSV components. Used by the UI color picker.
+/** Sample a single pixel color from a video element at normalized stage coords (0..1, top-left origin).
+ *  Returns the HSV components. Used by the UI color picker.
+ *  Tries the visible mirror video first (most reliable), falls back to the hidden tracking video.
  */
-export function pickColorAt(videoEl: HTMLVideoElement, nx: number, ny: number): { h: number; s: number; v: number } | null {
-  if (videoEl.readyState < 2 || !videoEl.videoWidth) return null
+export function pickColorAt(videoEl: HTMLVideoElement | null, nx: number, ny: number): { h: number; s: number; v: number } | null {
+  // Prefer the visible mirror video — guaranteed to be pumping frames
+  const candidates: HTMLVideoElement[] = []
+  const mirror = document.querySelector('video.mirror-bg') as HTMLVideoElement | null
+  if (mirror && mirror.readyState >= 2 && mirror.videoWidth > 0) candidates.push(mirror)
+  if (videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0) candidates.push(videoEl)
+  if (candidates.length === 0) return null
+  const v = candidates[0]
   const tmp = document.createElement('canvas')
   tmp.width = SAMPLE_W; tmp.height = SAMPLE_H
   const tc = tmp.getContext('2d')
   if (!tc) return null
-  tc.drawImage(videoEl, 0, 0, SAMPLE_W, SAMPLE_H)
-  // mirror X to align with the displayed mirror
-  const px = Math.floor((1 - nx) * SAMPLE_W)
-  const py = Math.floor(ny * SAMPLE_H)
+  tc.drawImage(v, 0, 0, SAMPLE_W, SAMPLE_H)
+  // The mirror video is displayed mirrored (scaleX -1), so a stage click at X=nx
+  // corresponds to the source-video pixel at X=(1-nx).
+  const px = Math.max(0, Math.min(SAMPLE_W - 1, Math.floor((1 - nx) * SAMPLE_W)))
+  const py = Math.max(0, Math.min(SAMPLE_H - 1, Math.floor(ny * SAMPLE_H)))
   // Average a small 5×5 neighborhood for stability
   let sr = 0, sg = 0, sb = 0, n = 0
   const half = 2
-  const img = tc.getImageData(Math.max(0, px - half), Math.max(0, py - half), 2 * half + 1, 2 * half + 1).data
+  const x0 = Math.max(0, px - half)
+  const y0 = Math.max(0, py - half)
+  const w = Math.min(SAMPLE_W - x0, 2 * half + 1)
+  const h = Math.min(SAMPLE_H - y0, 2 * half + 1)
+  const img = tc.getImageData(x0, y0, w, h).data
   for (let i = 0; i < img.length; i += 4) {
     sr += img[i]; sg += img[i + 1]; sb += img[i + 2]; n++
   }

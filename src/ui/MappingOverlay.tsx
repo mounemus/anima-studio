@@ -61,8 +61,8 @@ export function MappingOverlay({ stageRef }: { stageRef: React.RefObject<HTMLDiv
   const selectedIdx = current.mapping.selectedShape ?? 0
 
   return (
-    <div className="mapping-overlay">
-      <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+    <div className="mapping-overlay" style={{ pointerEvents: 'none' }}>
+      <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
         {shapes.map((s, idx) => {
           const points = s.corners.map((c) => `${c.x * W},${c.y * H}`).join(' ')
             + ` ${s.corners[0].x * W},${s.corners[0].y * H}`
