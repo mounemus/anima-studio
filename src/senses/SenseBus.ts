@@ -24,6 +24,17 @@ export interface LightData {
   warmth: number       // 0..1 (red-blue tilt)
 }
 
+export interface MidiData {
+  available: boolean
+  device: string
+  /** 0..1 normalized values for each CC */
+  cc: Float32Array
+  /** 0..1 velocity (0 = off) per note */
+  notes: Float32Array
+  /** mod wheel CC1 mirrored for convenience */
+  mod: number
+}
+
 export const senseBus = {
   hands: {
     detected: false,
@@ -37,6 +48,13 @@ export const senseBus = {
     spectrum: new Float32Array(64),
   } as AudioData,
   light: { brightness: 0.5, warmth: 0.5 } as LightData,
+  midi: {
+    available: false,
+    device: '',
+    cc: new Float32Array(128),
+    notes: new Float32Array(128),
+    mod: 0,
+  } as MidiData,
 }
 
 export type SenseSource = string

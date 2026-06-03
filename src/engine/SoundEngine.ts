@@ -7,6 +7,7 @@
  */
 import type { Obstacle, SoundConfig, Waveform } from '../types/scene'
 import { obstacleCounters } from './Obstacles'
+import { senseBus } from '../senses/SenseBus'
 
 const PENTA = [60, 62, 64, 67, 69, 72, 74, 76, 79, 81, 84]   // C, D, E, G, A
 function noteFreq(midi: number): number { return 440 * Math.pow(2, (midi - 69) / 12) }
@@ -101,12 +102,21 @@ export class SoundEngine {
     if (!this.ctx) return
     const now = this.ctx.currentTime
     const normalizer = Math.max(50, this.totalAgents * 0.15)  // ~15% of agents = max volume
+    const bass = senseBus.audio.bass
+    const high = senseBus.audio.high
     for (const [id, v] of this.voices) {
       const count = obstacleCounters.get(id) ?? 0
       const density = Math.min(1, count / normalizer)
       v.lastDensity = density
-      const target = v.cfg.volume * density
+      // Audio reactivity: bass boosts volume, highs open cutoff
+      const ar = v.cfg.audioReactivity ?? 0
+      const audioBoost = 1 + ar * bass * 1.8
+      const target = v.cfg.volume * density * audioBoost
       v.gain.gain.setTargetAtTime(target, now, 0.08)
+      if (ar > 0) {
+        const liveCutoff = v.cfg.cutoff * (1 + ar * high * 2.5)
+        v.filter.frequency.setTargetAtTime(Math.min(12000, liveCutoff), now, 0.05)
+      }
     }
   }
 

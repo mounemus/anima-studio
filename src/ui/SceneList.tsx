@@ -28,10 +28,13 @@ export function SceneList() {
       visual: {
         palette: { bg: '#06070d', primary: '#00ffa3', secondary: '#00d4ff', glow: '#7c3aed' },
         bloom: 0.5, feedback: 0.92, blendMode: 'add',
+        texture: null,
       },
       senses: { hands: true, audio: true, light: false, bindings: [] },
       evolution: { enabled: false, driftSpeed: 0.05, amplitude: 0.15 },
       mapping: defaultMapping(),
+      obstacles: [],
+      notes: '',
     }
     await add(blank)
   }

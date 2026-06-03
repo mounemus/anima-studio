@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX } from 'lucide-react'
+import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX, Wand2 } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
 import type { OrganismKind, TestPattern, ObstacleInteraction, Waveform, SoundConfig } from '../types/scene'
 import { LiveImg2Img } from '../lib/liveImg2Img'
 import { soundEngine } from '../engine/SoundEngine'
+import { SOUND_PRESETS, applyPreset } from '../lib/soundPresets'
 import { saveCalibration, listCalibrations, deleteCalibration, exportCalibration, type CalibrationProfile } from '../lib/calibrations'
 
 interface SliderProps {
@@ -38,6 +39,8 @@ const ORGANISM_PRESETS: Record<OrganismKind, Record<string, number>> = {
   particles: { count: 3000, speed: 0.6, size: 1.0, spread: 1.0, trail: 0.88, gravity: 0, turbulence: 0.5 },
   tendrils: { count: 30, length: 48, speed: 0.5, twist: 1.5, thickness: 0.01, trail: 0.95 },
   cells: { count: 50, pulse: 1.0, size: 1.2, attraction: 0.5, repulsion: 0.5, trail: 0.85 },
+  worms: { count: 18, segments: 36, speed: 0.7, twist: 1.3, thickness: 0.01, trail: 0.93, segLen: 0.025 },
+  spores: { count: 800, speed: 0.5, size: 0.012, bloomGain: 0.7, bloomDecay: 1.2, reactToObstacles: 1, trail: 0.9 },
 }
 
 export function ParamPanel() {
@@ -90,6 +93,8 @@ export function ParamPanel() {
               <option value="particles">✨ Particules — poussière</option>
               <option value="tendrils">🌿 Tendrils — filaments</option>
               <option value="cells">🧫 Cellules — colonie</option>
+              <option value="worms">🐍 Worms — serpents (rope physics)</option>
+              <option value="spores">🌸 Spores — bloom à l'impact</option>
             </select>
 
             <h3>Paramètres</h3>
@@ -129,6 +134,24 @@ export function ParamPanel() {
                 <Slider label="Taille" value={v.size} min={0.4} max={3} onChange={(x) => patchValues({ size: x })} />
                 <Slider label="Attraction" value={v.attraction} min={0} max={2} onChange={(x) => patchValues({ attraction: x })} />
                 <Slider label="Répulsion" value={v.repulsion} min={0} max={2} onChange={(x) => patchValues({ repulsion: x })} />
+              </>
+            )}
+            {current.organism.kind === 'worms' && (
+              <>
+                <Slider label="Nombre" value={v.count} min={2} max={40} step={1} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Segments" value={v.segments} min={8} max={48} step={1} onChange={(x) => patchValues({ segments: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vitesse" value={v.speed} min={0.1} max={2} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Torsion" value={v.twist} min={0} max={3} onChange={(x) => patchValues({ twist: x })} />
+                <Slider label="Longueur segment" value={v.segLen} min={0.01} max={0.06} step={0.002} onChange={(x) => patchValues({ segLen: x })} format={(x) => x.toFixed(3)} />
+              </>
+            )}
+            {current.organism.kind === 'spores' && (
+              <>
+                <Slider label="Population" value={v.count} min={100} max={2500} step={50} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vitesse" value={v.speed} min={0.1} max={2} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Taille de base" value={v.size} min={0.005} max={0.04} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Force du bloom" value={v.bloomGain} min={0.1} max={1.5} step={0.05} onChange={(x) => patchValues({ bloomGain: x })} />
+                <Slider label="Décrescendo bloom" value={v.bloomDecay} min={0.2} max={3} step={0.05} onChange={(x) => patchValues({ bloomDecay: x })} />
               </>
             )}
           </div>
@@ -444,6 +467,16 @@ function ObstaclesTab() {
   const update = useSceneStore((s) => s.updateObstacle)
   const obs = current.obstacles ?? []
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [presetMenu, setPresetMenu] = useState(false)
+
+  const applyMusicalPreset = (presetId: string) => {
+    const preset = SOUND_PRESETS.find((p) => p.id === presetId)
+    if (!preset) return
+    soundEngine.ensure()
+    const newObstacles = applyPreset(obs, preset)
+    newObstacles.forEach((o) => update(o.id, { sound: o.sound }))
+    setPresetMenu(false)
+  }
   useEffect(() => {
     // expose selection to overlay via a custom event so Stage knows about edit selection
     window.dispatchEvent(new CustomEvent('anima:obstacle-select', { detail: selectedId }))
@@ -465,6 +498,25 @@ function ObstaclesTab() {
         <button onClick={() => add('hand')} style={{ fontSize: 12, justifyContent: 'center' }}><Hand size={12} /> Main</button>
         <button onClick={() => add('silhouette')} style={{ fontSize: 12, justifyContent: 'center' }}><User size={12} /> Silhouette</button>
       </div>
+
+      {obs.length > 0 && (
+        <div style={{ position: 'relative', marginBottom: 12 }}>
+          <button onClick={() => setPresetMenu((x) => !x)} className="primary" style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}>
+            <Wand2 size={12} /> Appliquer un préset musical
+          </button>
+          {presetMenu && (
+            <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, background: 'var(--bg-elev)', border: '1px solid var(--line)', borderRadius: 'var(--radius)', padding: 4, zIndex: 50, maxHeight: 280, overflowY: 'auto' }}>
+              {SOUND_PRESETS.map((p) => (
+                <button key={p.id} onClick={() => applyMusicalPreset(p.id)}
+                  style={{ width: '100%', justifyContent: 'flex-start', textAlign: 'left', flexDirection: 'column', alignItems: 'flex-start', gap: 1, padding: '6px 10px', fontSize: 12, marginBottom: 2, border: '1px solid transparent', background: 'transparent' }}>
+                  <span><span style={{ marginRight: 6 }}>{p.emoji}</span><strong>{p.name}</strong></span>
+                  <span style={{ fontSize: 10, color: 'var(--text-mute)' }}>{p.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
         {obs.length === 0 && (
@@ -665,6 +717,7 @@ function SoundSection({ obstacleId, sound, onChange }: {
           </div>
           <Slider label="Volume" value={s.volume} min={0} max={1} step={0.01} onChange={(v) => onChange({ ...s, volume: v })} format={(v) => `${Math.round(v * 100)}%`} />
           <Slider label="Cutoff filtre" value={s.cutoff} min={200} max={8000} step={50} onChange={(v) => onChange({ ...s, cutoff: v })} format={(v) => `${Math.round(v)}Hz`} />
+          <Slider label="Réactivité au mic" value={s.audioReactivity ?? 0} min={0} max={1} step={0.05} onChange={(v) => onChange({ ...s, audioReactivity: v })} format={(v) => `${Math.round(v * 100)}%`} />
           <div style={{ background: 'var(--bg-elev-2)', height: 4, borderRadius: 2, overflow: 'hidden', marginTop: 8 }}>
             <div style={{ width: `${density * 100}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent), var(--accent-3))', transition: 'width 80ms linear' }} />
           </div>

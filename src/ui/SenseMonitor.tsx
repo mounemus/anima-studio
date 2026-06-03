@@ -11,6 +11,11 @@ export function SenseMonitor() {
   const h = senseBus.hands
   const a = senseBus.audio
   const l = senseBus.light
+  const m = senseBus.midi
+  // count active notes / cc
+  let activeNotes = 0
+  for (let i = 0; i < 128; i++) if (m.notes[i] > 0) activeNotes++
+  const ccMax = Math.max(m.cc[1] ?? 0, m.cc[2] ?? 0, m.cc[7] ?? 0, m.cc[11] ?? 0, m.mod)
 
   return (
     <div className="sense-monitor">
@@ -34,6 +39,12 @@ export function SenseMonitor() {
         <span>Light</span>
         <div className="bar"><div className="bar-fill" style={{ width: `${l.brightness * 100}%` }} /></div>
       </div>
+      {m.available && (
+        <div className="sense-row">
+          <span><span className={`dot ${activeNotes > 0 || ccMax > 0.01 ? 'on' : 'off'}`} />MIDI{activeNotes > 0 ? ` (${activeNotes})` : ''}</span>
+          <div className="bar"><div className="bar-fill" style={{ width: `${ccMax * 100}%` }} /></div>
+        </div>
+      )}
     </div>
   )
 }

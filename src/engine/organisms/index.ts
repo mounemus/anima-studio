@@ -2,6 +2,8 @@ export { BoidsOrganism } from './Boids'
 export { ParticlesOrganism } from './Particles'
 export { TendrilsOrganism } from './Tendrils'
 export { CellsOrganism } from './Cells'
+export { WormsOrganism } from './Worms'
+export { SporesOrganism } from './Spores'
 
 export interface OrganismLike {
   mesh: import('three').Object3D

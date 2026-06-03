@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay } from 'lucide-react'
+import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { listDisplays, openOutputWindow, type DisplayInfo } from '../lib/multiDisplay'
+import { startMIDI, stopMIDI } from '../senses/MIDI'
 import { useSceneStore } from '../store/sceneStore'
 import { startHands, stopHands, createCameraStream } from '../senses/Hands'
 import { startAudio, stopAudio } from '../senses/Audio'
@@ -23,6 +24,7 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
   const [handsOn, setHandsOn] = useState(false)
   const [audioOn, setAudioOn] = useState(false)
   const [lightOn, setLightOn] = useState(false)
+  const [midiOn, setMidiOn] = useState(false)
   const [recOn, setRecOn] = useState(false)
   const [fps, setFps] = useState(0)
   const [toast, setToast] = useState<{ msg: string; err?: boolean } | null>(null)
@@ -92,6 +94,14 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
     setLightOn(true)
   }
 
+  const toggleMIDI = async () => {
+    if (midiOn) { stopMIDI(); setMidiOn(false); return }
+    const r = await startMIDI()
+    if (!r.ok) { showToast(r.error ?? 'MIDI échec', true); return }
+    setMidiOn(true)
+    showToast(r.inputs.length > 0 ? `MIDI : ${r.inputs.join(', ')}` : 'MIDI prêt (aucun appareil connecté)')
+  }
+
   const toggleFs = () => {
     if (stageRef.current) enterFullscreen(stageRef.current)
   }
@@ -145,6 +155,9 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
         </button>
         <button onClick={toggleLight} className={lightOn ? 'primary' : ''} title="Lumière ambiante (nécessite caméra)">
           <Sun size={14} /> {lightOn ? 'Lumière ON' : 'Lumière'}
+        </button>
+        <button onClick={toggleMIDI} className={midiOn ? 'primary' : ''} title="Activer un contrôleur MIDI (WebMIDI)">
+          <Music size={14} /> {midiOn ? 'MIDI ON' : 'MIDI'}
         </button>
 
         <div className="spacer" />

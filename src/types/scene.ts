@@ -1,4 +1,24 @@
-export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells'
+export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores'
+
+export interface WormsParams {
+  count: number
+  segments: number
+  speed: number
+  twist: number
+  thickness: number
+  trail: number
+  segLen: number
+}
+
+export interface SporesParams {
+  count: number
+  speed: number
+  size: number
+  bloomGain: number      // how much they expand when blooming
+  bloomDecay: number     // 0..1 per frame
+  reactToObstacles: boolean
+  trail: number
+}
 
 export interface Vec2 { x: number; y: number }
 
@@ -46,6 +66,8 @@ export type OrganismParams =
   | { kind: 'particles'; values: ParticleParams }
   | { kind: 'tendrils'; values: TendrilsParams }
   | { kind: 'cells'; values: CellsParams }
+  | { kind: 'worms'; values: WormsParams }
+  | { kind: 'spores'; values: SporesParams }
 
 export interface Palette {
   bg: string
@@ -136,6 +158,8 @@ export interface SoundConfig {
   density: boolean
   /** lowpass cutoff Hz (200..8000) */
   cutoff: number
+  /** 0..1 — how much mic FFT (bass→vol, high→cutoff) modulates this voice */
+  audioReactivity?: number
 }
 
 export interface Obstacle {
@@ -200,7 +224,7 @@ export const defaultObstacle = (kind: ObstacleKind, i = 0): Obstacle => {
   ] }
   if (kind === 'hand') base.hand = { source: 'palm', radius: 0.12 }
   if (kind === 'silhouette') base.silhouette = { invert: false }
-  base.sound = { enabled: false, note: 'auto', waveform: 'sine', volume: 0.5, density: true, cutoff: 2000 }
+  base.sound = { enabled: false, note: 'auto', waveform: 'sine', volume: 0.5, density: true, cutoff: 2000, audioReactivity: 0 }
   return base
 }
 

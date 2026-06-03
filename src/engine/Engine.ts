@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { Scene as ArtScene, VisualParams } from '../types/scene'
-import { BoidsOrganism, ParticlesOrganism, TendrilsOrganism, CellsOrganism } from './organisms'
+import { BoidsOrganism, ParticlesOrganism, TendrilsOrganism, CellsOrganism, WormsOrganism, SporesOrganism } from './organisms'
 import type { OrganismLike } from './organisms'
 import { MappingPass } from './MappingPass'
 import { senseBus } from '../senses/SenseBus'
@@ -115,6 +115,8 @@ export class Engine {
       case 'particles': this.organism = new ParticlesOrganism(s.organism.values, s.visual); break
       case 'tendrils': this.organism = new TendrilsOrganism(s.organism.values, s.visual); break
       case 'cells': this.organism = new CellsOrganism(s.organism.values, s.visual); break
+      case 'worms': this.organism = new WormsOrganism(s.organism.values, s.visual); break
+      case 'spores': this.organism = new SporesOrganism(s.organism.values, s.visual); break
     }
     if (this.organism) {
       this.organism.setAspect(aspect)
