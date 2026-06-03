@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings } from 'lucide-react'
+import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useSceneStore } from '../store/sceneStore'
 import { startHands, stopHands, createCameraStream } from '../senses/Hands'
@@ -11,11 +11,13 @@ interface Props {
   videoRef: React.RefObject<HTMLVideoElement>
   fpsRef: React.RefObject<number>
   onToggleAI: () => void
+  onToggleOutput: () => void
+  outputMode: boolean
   canvasGetter: () => HTMLCanvasElement | null
   stageRef: React.RefObject<HTMLDivElement>
 }
 
-export function TopBar({ videoRef, fpsRef, onToggleAI, canvasGetter, stageRef }: Props) {
+export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMode, canvasGetter, stageRef }: Props) {
   const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))
   const [handsOn, setHandsOn] = useState(false)
   const [audioOn, setAudioOn] = useState(false)
@@ -138,6 +140,7 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, canvasGetter, stageRef }:
         <button onClick={toggleRec} className={`ghost icon ${recOn ? 'rec active' : 'rec'}`} title={recOn ? 'Arrêter l\'enregistrement' : 'Enregistrer WebM'}>
           <Video size={16} />
         </button>
+        <button onClick={onToggleOutput} className={`ghost icon ${outputMode ? 'active' : ''}`} title="Mode SORTIE (F) — cache l'UI"><Monitor size={16} /></button>
         <button onClick={toggleFs} className="ghost icon" title="Plein écran"><Maximize2 size={16} /></button>
         <button onClick={onToggleAI} className="ghost icon" title="Compagnon IA"><MessageCircle size={16} /></button>
         <Link to="/admin" title="Administration" style={{ display: 'inline-flex' }}>

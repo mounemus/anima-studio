@@ -1,7 +1,9 @@
-import { useState } from 'react'
-import { Sparkles, X, Loader } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
-import type { OrganismKind } from '../types/scene'
+import type { OrganismKind, TestPattern } from '../types/scene'
+import { LiveImg2Img } from '../lib/liveImg2Img'
+import { saveCalibration, listCalibrations, deleteCalibration, exportCalibration, type CalibrationProfile } from '../lib/calibrations'
 
 interface SliderProps {
   label: string
@@ -265,6 +267,51 @@ function TextureGen() {
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [liveOn, setLiveOn] = useState(false)
+  const [liveStrength, setLiveStrength] = useState(0.55)
+  const [liveStatus, setLiveStatus] = useState<'idle' | 'capturing' | 'pending' | 'error'>('idle')
+  const liveRef = useRef<LiveImg2Img | null>(null)
+
+  // Stop live loop on unmount or when scene changes
+  useEffect(() => {
+    return () => { liveRef.current?.stop(); liveRef.current = null }
+  }, [current?.id])
+
+  const toggleLive = () => {
+    if (liveOn) {
+      liveRef.current?.stop()
+      liveRef.current = null
+      setLiveOn(false)
+      setLiveStatus('idle')
+      return
+    }
+    const video = document.querySelector('video') as HTMLVideoElement | null
+    if (!video || !video.srcObject) {
+      setErr('Active la caméra dans la barre du haut d\'abord.')
+      return
+    }
+    const p = prompt.trim() || 'bioluminescent organism, glowing, dark background, abstract'
+    liveRef.current = new LiveImg2Img({
+      video,
+      prompt: p,
+      strength: liveStrength,
+      intervalMs: 1500,
+      onResult: (url) => setTexture({ url, prompt: p, model: 'img2img-live', generatedAt: Date.now() }),
+      onError: (e) => setErr(e),
+      onStatus: setLiveStatus,
+    })
+    liveRef.current.start()
+    setLiveOn(true)
+    setErr(null)
+  }
+
+  // sync prompt/strength changes to running loop
+  useEffect(() => {
+    if (liveRef.current) {
+      if (prompt.trim()) liveRef.current.setPrompt(prompt.trim())
+      liveRef.current.setStrength(liveStrength)
+    }
+  }, [prompt, liveStrength])
 
   const generate = async (promptOverride?: string) => {
     const finalPrompt = (promptOverride ?? prompt).trim()
@@ -335,15 +382,72 @@ function TextureGen() {
           </button>
         ))}
       </div>
+
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <h3 style={{ margin: 0 }}>🎥 Live img2img webcam</h3>
+          {liveOn && (
+            <span style={{
+              fontSize: 10, padding: '2px 6px', borderRadius: 999,
+              background: liveStatus === 'pending' ? 'rgba(255,181,71,0.2)' : liveStatus === 'error' ? 'rgba(255,90,122,0.2)' : 'rgba(0,255,163,0.2)',
+              color: liveStatus === 'pending' ? 'var(--warn)' : liveStatus === 'error' ? 'var(--danger)' : 'var(--accent)',
+              fontFamily: 'var(--mono)',
+            }}>
+              {liveStatus}
+            </span>
+          )}
+        </div>
+        <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+          Ta webcam devient la matière de l'oeuvre — chaque frame est ré-imaginée par SDXL Lightning (~1s).
+        </p>
+        <button
+          className={liveOn ? 'primary' : ''}
+          onClick={toggleLive}
+          style={{ width: '100%', justifyContent: 'center' }}
+        >
+          {liveOn ? <VideoOff size={12} /> : <Video size={12} />}
+          {liveOn ? 'Arrêter le live img2img' : 'Démarrer le live img2img'}
+        </button>
+        {liveOn && (
+          <div style={{ marginTop: 8 }}>
+            <Slider
+              label="Strength (transformation)"
+              value={liveStrength}
+              min={0.3} max={0.9} step={0.05}
+              onChange={setLiveStrength}
+              format={(x) => x.toFixed(2)}
+            />
+          </div>
+        )}
+      </div>
+
       {err && <div className="form-error" style={{ marginTop: 8 }}>{err}</div>}
     </div>
   )
 }
 
+const PATTERNS: { value: TestPattern; label: string }[] = [
+  { value: 'none', label: 'Aucun' },
+  { value: 'grid', label: 'Grille' },
+  { value: 'white', label: 'Blanc' },
+  { value: 'black', label: 'Noir' },
+  { value: 'colorbars', label: 'Color bars' },
+  { value: 'crosshair', label: 'Mire' },
+  { value: 'gradient', label: 'Gradient' },
+]
+
 function MappingTab() {
   const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
   const update = useSceneStore((s) => s.updateMapping)
+  const addShape = useSceneStore((s) => s.addMappingShape)
+  const removeShape = useSceneStore((s) => s.removeMappingShape)
+  const updateShape = useSceneStore((s) => s.updateMappingShape)
+  const selectShape = useSceneStore((s) => s.selectMappingShape)
+  const setTestPattern = useSceneStore((s) => s.setTestPattern)
   const m = current.mapping
+  const shapes = m.shapes ?? []
+  const selectedIdx = m.selectedShape ?? 0
+  const selectedShape = shapes[selectedIdx]
 
   return (
     <div className="section">
@@ -354,20 +458,175 @@ function MappingTab() {
           checked={m.enabled}
           onChange={(e) => update({ enabled: e.target.checked })}
         />
-        <span>Activer la calibration 4 coins</span>
+        <span>Activer le mapping</span>
       </label>
-      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 12 }}>
-        Active la calibration, puis glisse les 4 coins sur la scène pour ajuster aux contours de la surface projetée.
+
+      <h3 style={{ marginTop: 10 }}>Zones (Kantan-style)</h3>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+        Chaque zone projette une portion du rendu sur un quadrilatère de la sortie.
       </p>
-      <h3>Edge blend (multi-projecteurs)</h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+        {shapes.length === 0 && (
+          <p style={{ fontSize: 11, color: 'var(--text-mute)', fontStyle: 'italic' }}>
+            Aucune zone — comportement par défaut : plein cadre identique.
+          </p>
+        )}
+        {shapes.map((sh, i) => (
+          <div
+            key={sh.id}
+            onClick={() => selectShape(i)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '6px 8px',
+              border: `1px solid ${i === selectedIdx ? 'var(--accent)' : 'var(--line)'}`,
+              borderRadius: 'var(--radius-sm)',
+              cursor: 'pointer',
+              opacity: sh.enabled ? 1 : 0.5,
+              background: i === selectedIdx ? 'var(--bg-elev-2)' : 'transparent',
+            }}
+          >
+            <button
+              className="ghost icon"
+              onClick={(e) => { e.stopPropagation(); updateShape(sh.id, { enabled: !sh.enabled }) }}
+              title={sh.enabled ? 'Masquer' : 'Afficher'}
+              style={{ padding: 2 }}
+            >
+              {sh.enabled ? <Eye size={12} /> : <EyeOff size={12} />}
+            </button>
+            <input
+              value={sh.name}
+              onChange={(e) => updateShape(sh.id, { name: e.target.value })}
+              onClick={(e) => e.stopPropagation()}
+              style={{ flex: 1, background: 'transparent', border: 'none', padding: 2, fontSize: 12 }}
+            />
+            <button
+              className="ghost icon danger"
+              onClick={(e) => { e.stopPropagation(); if (confirm(`Supprimer ${sh.name} ?`)) removeShape(sh.id) }}
+              style={{ padding: 2 }}
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button onClick={addShape} style={{ width: '100%', justifyContent: 'center' }}>
+        <Plus size={12} /> Ajouter une zone
+      </button>
+
+      {selectedShape && (
+        <div style={{ marginTop: 12, padding: 10, background: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
+          <h3 style={{ marginTop: 0 }}><Crop size={11} style={{ verticalAlign: 'middle' }} /> Source de {selectedShape.name}</h3>
+          <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+            Quelle partie du rendu cette zone affiche (en %).
+          </p>
+          <Slider label="X" value={selectedShape.source.x} min={0} max={1} step={0.01} onChange={(x) => updateShape(selectedShape.id, { source: { ...selectedShape.source, x } })} format={(x) => `${Math.round(x * 100)}%`} />
+          <Slider label="Y" value={selectedShape.source.y} min={0} max={1} step={0.01} onChange={(y) => updateShape(selectedShape.id, { source: { ...selectedShape.source, y } })} format={(y) => `${Math.round(y * 100)}%`} />
+          <Slider label="Largeur" value={selectedShape.source.w} min={0.05} max={1} step={0.01} onChange={(w) => updateShape(selectedShape.id, { source: { ...selectedShape.source, w } })} format={(w) => `${Math.round(w * 100)}%`} />
+          <Slider label="Hauteur" value={selectedShape.source.h} min={0.05} max={1} step={0.01} onChange={(h) => updateShape(selectedShape.id, { source: { ...selectedShape.source, h } })} format={(h) => `${Math.round(h * 100)}%`} />
+          <button onClick={() => updateShape(selectedShape.id, { corners: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }] })} style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}>
+            Réinitialiser les coins
+          </button>
+        </div>
+      )}
+
+      <h3 style={{ marginTop: 14 }}>🎯 Test pattern (calibration)</h3>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+        Affiche une mire à la place du rendu — aligne ton projecteur sur la surface.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4 }}>
+        {PATTERNS.map((p) => (
+          <button
+            key={p.value}
+            className={(m.testPattern ?? 'none') === p.value ? 'primary' : ''}
+            onClick={() => setTestPattern(p.value)}
+            style={{ fontSize: 11, padding: '5px 4px', justifyContent: 'center' }}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      <h3 style={{ marginTop: 14 }}>Edge blend (multi-projecteurs)</h3>
       <Slider label="Gauche" value={m.edgeBlend.left} min={0} max={0.4} step={0.01} onChange={(x) => update({ edgeBlend: { ...m.edgeBlend, left: x } })} />
       <Slider label="Droite" value={m.edgeBlend.right} min={0} max={0.4} step={0.01} onChange={(x) => update({ edgeBlend: { ...m.edgeBlend, right: x } })} />
       <Slider label="Haut" value={m.edgeBlend.top} min={0} max={0.4} step={0.01} onChange={(x) => update({ edgeBlend: { ...m.edgeBlend, top: x } })} />
       <Slider label="Bas" value={m.edgeBlend.bottom} min={0} max={0.4} step={0.01} onChange={(x) => update({ edgeBlend: { ...m.edgeBlend, bottom: x } })} />
       <Slider label="Gamma" value={m.edgeBlend.gamma} min={1} max={4} step={0.1} onChange={(x) => update({ edgeBlend: { ...m.edgeBlend, gamma: x } })} />
-      <button onClick={() => update({ corners: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }] })}>
-        Réinitialiser les coins
-      </button>
+
+      <h3 style={{ marginTop: 14 }}>📍 Profils de calibration (sites)</h3>
+      <CalibrationProfiles />
     </div>
+  )
+}
+
+function CalibrationProfiles() {
+  const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
+  const update = useSceneStore((s) => s.updateMapping)
+  const [profiles, setProfiles] = useState<CalibrationProfile[]>([])
+  const [name, setName] = useState('')
+  const [site, setSite] = useState('')
+
+  const refresh = async () => setProfiles(await listCalibrations())
+  useEffect(() => { refresh() }, [])
+
+  const save = async () => {
+    if (!name.trim()) return
+    const id = `cal-${Date.now().toString(36)}`
+    await saveCalibration({
+      id, name: name.trim(), site: site.trim() || undefined,
+      mapping: current.mapping,
+      createdAt: Date.now(), updatedAt: Date.now(),
+    })
+    setName(''); setSite('')
+    await refresh()
+  }
+
+  const apply = (p: CalibrationProfile) => {
+    update({
+      enabled: p.mapping.enabled,
+      corners: p.mapping.corners,
+      shapes: p.mapping.shapes,
+      selectedShape: p.mapping.selectedShape,
+      edgeBlend: p.mapping.edgeBlend,
+    })
+  }
+
+  const remove = async (id: string) => {
+    if (!confirm('Supprimer ce profil ?')) return
+    await deleteCalibration(id)
+    await refresh()
+  }
+
+  return (
+    <>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+        Sauvegarde la calibration courante pour la rappeler sur une autre scène ou un autre jour.
+      </p>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nom du profil" style={{ flex: 1, fontSize: 12 }} />
+        <button className="primary" disabled={!name.trim()} onClick={save}><Save size={12} /></button>
+      </div>
+      <input value={site} onChange={(e) => setSite(e.target.value)} placeholder="Site / lieu (optionnel)" style={{ width: '100%', fontSize: 12, marginBottom: 10 }} />
+      {profiles.length === 0 && <p style={{ fontSize: 11, color: 'var(--text-mute)', fontStyle: 'italic' }}>Aucun profil sauvegardé.</p>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {profiles.map((p) => (
+          <div key={p.id} style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '6px 8px',
+            border: '1px solid var(--line)',
+            borderRadius: 'var(--radius-sm)',
+            background: 'var(--bg)',
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
+              {p.site && <div style={{ fontSize: 10, color: 'var(--text-mute)' }}>{p.site}</div>}
+            </div>
+            <button className="ghost icon" onClick={() => apply(p)} title="Appliquer"><FolderOpen size={12} /></button>
+            <button className="ghost icon" onClick={() => exportCalibration(p)} title="Exporter"><Download size={12} /></button>
+            <button className="ghost icon danger" onClick={() => remove(p.id)} title="Supprimer"><Trash2 size={12} /></button>
+          </div>
+        ))}
+      </div>
+    </>
   )
 }

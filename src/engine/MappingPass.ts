@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import type { MappingConfig } from '../types/scene'
+import type { MappingConfig, MappingShape, TestPattern } from '../types/scene'
 
 const VERT = `
   varying vec2 vUv;
@@ -10,23 +10,22 @@ const FRAG = `
   precision highp float;
   varying vec2 vUv;
   uniform sampler2D uTex;
-  uniform vec2 uC0, uC1, uC2, uC3; // TL TR BR BL in 0..1
-  uniform vec4 uBlend;  // left, right, top, bottom
+  uniform vec2 uC0, uC1, uC2, uC3;     // TL TR BR BL in 0..1 (canvas coords)
+  uniform vec4 uSourceRect;            // x, y, w, h on source texture
+  uniform vec4 uBlend;                 // left, right, top, bottom
   uniform float uGamma;
-  uniform float uFeedback;
+  uniform int uPattern;                // 0=none 1=grid 2=white 3=black 4=colorbars 5=crosshair 6=gradient
+  uniform vec3 uTint;                  // overall tint multiplier
 
-  // bilinear inverse mapping of quad (TL,TR,BR,BL) into unit square
   vec2 invQuadMap(vec2 p) {
-    // iterative solver
     vec2 uv = vec2(0.5);
     for (int i = 0; i < 12; i++) {
-      vec2 mix1 = mix(uC0, uC1, uv.x);
-      vec2 mix2 = mix(uC3, uC2, uv.x);
-      vec2 cur = mix(mix1, mix2, uv.y);
+      vec2 m1 = mix(uC0, uC1, uv.x);
+      vec2 m2 = mix(uC3, uC2, uv.x);
+      vec2 cur = mix(m1, m2, uv.y);
       vec2 d = p - cur;
-      // approx jacobian
       vec2 dU = mix(uC1 - uC0, uC2 - uC3, uv.y);
-      vec2 dV = mix2 - mix1;
+      vec2 dV = m2 - m1;
       float det = dU.x * dV.y - dU.y * dV.x;
       if (abs(det) < 1e-6) break;
       uv += vec2(d.x * dV.y - d.y * dV.x, d.y * dU.x - d.x * dU.y) / det;
@@ -35,14 +34,65 @@ const FRAG = `
     return uv;
   }
 
+  vec3 patternColor(vec2 uv) {
+    if (uPattern == 1) {
+      // grid: 10x10 cells + center cross
+      vec2 g = abs(fract(uv * 10.0) - 0.5);
+      float line = step(0.48, max(g.x, g.y));
+      vec2 c = abs(uv - 0.5);
+      float cross = step(0.498, 1.0 - max(c.x, c.y) * 2.0);
+      return mix(vec3(0.05), vec3(0.0, 1.0, 0.6), max(line, cross));
+    }
+    if (uPattern == 2) return vec3(1.0);
+    if (uPattern == 3) return vec3(0.0);
+    if (uPattern == 4) {
+      // SMPTE-ish color bars (7 vertical stripes)
+      float i = floor(uv.x * 7.0);
+      vec3 bars[7];
+      bars[0] = vec3(0.75); bars[1] = vec3(0.75, 0.75, 0.0);
+      bars[2] = vec3(0.0, 0.75, 0.75); bars[3] = vec3(0.0, 0.75, 0.0);
+      bars[4] = vec3(0.75, 0.0, 0.75); bars[5] = vec3(0.75, 0.0, 0.0);
+      bars[6] = vec3(0.0, 0.0, 0.75);
+      int idx = int(i);
+      vec3 col = bars[0];
+      if (idx == 1) col = bars[1]; else if (idx == 2) col = bars[2];
+      else if (idx == 3) col = bars[3]; else if (idx == 4) col = bars[4];
+      else if (idx == 5) col = bars[5]; else if (idx == 6) col = bars[6];
+      return col;
+    }
+    if (uPattern == 5) {
+      vec2 d = abs(uv - 0.5);
+      float dist = length(d - vec2(0.0));
+      float ring1 = smoothstep(0.005, 0.0, abs(dist - 0.1));
+      float ring2 = smoothstep(0.005, 0.0, abs(dist - 0.25));
+      float ring3 = smoothstep(0.005, 0.0, abs(dist - 0.4));
+      float cross = step(0.498, 1.0 - max(d.x, d.y) * 2.0);
+      return vec3(0.0, 1.0, 0.6) * max(max(ring1, ring2), max(ring3, cross));
+    }
+    if (uPattern == 6) {
+      return vec3(uv.x, uv.y, 0.5);
+    }
+    return vec3(0.0);
+  }
+
   void main() {
     vec2 uv = invQuadMap(vUv);
-    // outside the quad -> black
     if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
       gl_FragColor = vec4(0.0);
       return;
     }
-    vec3 col = texture2D(uTex, vec2(uv.x, 1.0 - uv.y)).rgb;
+    vec3 col;
+    if (uPattern > 0) {
+      col = patternColor(uv);
+    } else {
+      // sample sub-rect of source
+      vec2 srcUv = vec2(
+        uSourceRect.x + uv.x * uSourceRect.z,
+        1.0 - (uSourceRect.y + uv.y * uSourceRect.w)
+      );
+      col = texture2D(uTex, srcUv).rgb;
+    }
+    col *= uTint;
     // edge blend
     float bl = 1.0;
     if (uBlend.x > 0.0) bl *= pow(smoothstep(0.0, uBlend.x, uv.x), uGamma);
@@ -53,51 +103,120 @@ const FRAG = `
   }
 `
 
+interface ShapeMesh {
+  shape: MappingShape
+  mesh: THREE.Mesh
+  uniforms: Record<string, THREE.IUniform>
+}
+
+const PATTERN_INDEX: Record<TestPattern, number> = {
+  none: 0, grid: 1, white: 2, black: 3, colorbars: 4, crosshair: 5, gradient: 6,
+}
+
 export class MappingPass {
   scene = new THREE.Scene()
   camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
-  uniforms: Record<string, THREE.IUniform>
-  mesh: THREE.Mesh
-  mat: THREE.ShaderMaterial
+  private shapes: ShapeMesh[] = []
+  private sourceTex: THREE.Texture | null = null
 
-  constructor() {
-    this.uniforms = {
-      uTex: { value: null },
-      uC0: { value: new THREE.Vector2(0, 0) },
-      uC1: { value: new THREE.Vector2(1, 0) },
-      uC2: { value: new THREE.Vector2(1, 1) },
-      uC3: { value: new THREE.Vector2(0, 1) },
+  constructor() {}
+
+  private makeShape(shape: MappingShape, cfg: MappingConfig): ShapeMesh {
+    const uniforms: Record<string, THREE.IUniform> = {
+      uTex: { value: this.sourceTex },
+      uC0: { value: new THREE.Vector2() },
+      uC1: { value: new THREE.Vector2() },
+      uC2: { value: new THREE.Vector2() },
+      uC3: { value: new THREE.Vector2() },
+      uSourceRect: { value: new THREE.Vector4(0, 0, 1, 1) },
       uBlend: { value: new THREE.Vector4(0, 0, 0, 0) },
       uGamma: { value: 2.2 },
-      uFeedback: { value: 0 },
+      uPattern: { value: 0 },
+      uTint: { value: new THREE.Vector3(1, 1, 1) },
     }
-    this.mat = new THREE.ShaderMaterial({
-      uniforms: this.uniforms,
+    const mat = new THREE.ShaderMaterial({
+      uniforms,
       vertexShader: VERT,
       fragmentShader: FRAG,
+      transparent: false,
+      depthTest: false,
+      depthWrite: false,
     })
     const geo = new THREE.PlaneGeometry(2, 2)
-    this.mesh = new THREE.Mesh(geo, this.mat)
-    this.scene.add(this.mesh)
+    const mesh = new THREE.Mesh(geo, mat)
+    const sm: ShapeMesh = { shape, mesh, uniforms }
+    this.applyToShape(sm, cfg)
+    return sm
+  }
+
+  private applyToShape(sm: ShapeMesh, cfg: MappingConfig) {
+    const c = sm.shape.corners
+    ;(sm.uniforms.uC0.value as THREE.Vector2).set(c[0].x, 1 - c[0].y)
+    ;(sm.uniforms.uC1.value as THREE.Vector2).set(c[1].x, 1 - c[1].y)
+    ;(sm.uniforms.uC2.value as THREE.Vector2).set(c[2].x, 1 - c[2].y)
+    ;(sm.uniforms.uC3.value as THREE.Vector2).set(c[3].x, 1 - c[3].y)
+    const sr = sm.shape.source
+    ;(sm.uniforms.uSourceRect.value as THREE.Vector4).set(sr.x, sr.y, sr.w, sr.h)
+    const b = cfg.edgeBlend
+    ;(sm.uniforms.uBlend.value as THREE.Vector4).set(b.left, b.right, b.top, b.bottom)
+    sm.uniforms.uGamma.value = b.gamma
+    sm.uniforms.uPattern.value = PATTERN_INDEX[cfg.testPattern ?? 'none']
+    sm.uniforms.uTex.value = this.sourceTex
+    sm.mesh.visible = sm.shape.enabled
   }
 
   apply(cfg: MappingConfig) {
-    const c = cfg.corners
-    ;(this.uniforms.uC0.value as THREE.Vector2).set(c[0].x, 1 - c[0].y)
-    ;(this.uniforms.uC1.value as THREE.Vector2).set(c[1].x, 1 - c[1].y)
-    ;(this.uniforms.uC2.value as THREE.Vector2).set(c[2].x, 1 - c[2].y)
-    ;(this.uniforms.uC3.value as THREE.Vector2).set(c[3].x, 1 - c[3].y)
-    const b = cfg.edgeBlend
-    ;(this.uniforms.uBlend.value as THREE.Vector4).set(b.left, b.right, b.top, b.bottom)
-    this.uniforms.uGamma.value = b.gamma
+    // Build the effective shape list:
+    // - If mapping disabled OR no shapes: 1 full-screen identity quad
+    // - Else: each shape becomes a mesh
+    const targetShapes: MappingShape[] = (() => {
+      if (!cfg.enabled) {
+        return [{
+          id: 'identity', name: 'Identity', enabled: true,
+          corners: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }],
+          source: { x: 0, y: 0, w: 1, h: 1 },
+        }]
+      }
+      if (cfg.shapes && cfg.shapes.length > 0) return cfg.shapes
+      // legacy fallback to single-quad corners
+      return [{
+        id: 'legacy', name: 'Legacy', enabled: true,
+        corners: cfg.corners,
+        source: { x: 0, y: 0, w: 1, h: 1 },
+      }]
+    })()
+
+    // Diff: rebuild if shape count changed; otherwise update in place
+    if (this.shapes.length !== targetShapes.length) {
+      for (const sm of this.shapes) {
+        this.scene.remove(sm.mesh)
+        sm.mesh.geometry.dispose()
+        ;(sm.mesh.material as THREE.Material).dispose()
+      }
+      this.shapes = targetShapes.map((s) => {
+        const sm = this.makeShape(s, cfg)
+        this.scene.add(sm.mesh)
+        return sm
+      })
+    } else {
+      this.shapes.forEach((sm, i) => {
+        sm.shape = targetShapes[i]
+        this.applyToShape(sm, cfg)
+      })
+    }
   }
 
   setSource(tex: THREE.Texture) {
-    this.uniforms.uTex.value = tex
+    this.sourceTex = tex
+    for (const sm of this.shapes) sm.uniforms.uTex.value = tex
   }
 
   dispose() {
-    this.mat.dispose()
-    this.mesh.geometry.dispose()
+    for (const sm of this.shapes) {
+      this.scene.remove(sm.mesh)
+      sm.mesh.geometry.dispose()
+      ;(sm.mesh.material as THREE.Material).dispose()
+    }
+    this.shapes = []
   }
 }

@@ -464,3 +464,47 @@ input[type="range"]::-webkit-slider-thumb {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+/* === Output mode (clean fullscreen for projection) === */
+.app.app--output {
+  grid-template-columns: 0 1fr 0;
+  grid-template-rows: 0 1fr;
+}
+.app.app--output .topbar,
+.app.app--output .left-panel,
+.app.app--output .right-panel {
+  display: none;
+}
+.app.app--output .stage {
+  border: none;
+}
+.output-hint {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(7, 8, 13, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 0.3s;
+  z-index: 100;
+}
+.output-hint:hover { opacity: 1; }
+.output-hint kbd {
+  font-family: var(--mono); font-size: 10px;
+  padding: 1px 5px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 3px;
+}
+
+button.ghost.active {
+  background: var(--bg-elev-2);
+  color: var(--accent);
+  border-color: var(--accent);
+}

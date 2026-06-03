@@ -33,7 +33,7 @@ export function Stage({ onEngineReady }: Props) {
     if (current && engineRef.current) {
       engineRef.current.updateOrganismParams(current.organism.values)
       engineRef.current.applyVisual(current.visual)
-      engineRef.current.updateMapping()
+      engineRef.current.updateMapping(current.mapping)
     }
   }, [current?.organism, current?.visual, current?.mapping])
 

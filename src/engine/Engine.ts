@@ -136,6 +136,7 @@ export class Engine {
   }
 
   applyVisual(v: VisualParams) {
+    if (this.currentScene) this.currentScene = { ...this.currentScene, visual: v }
     this.bg.set(v.palette.bg)
     if (this.organism) this.organism.applyVisual(v)
     this.feedbackQuadMat.uniforms.uFade.value = v.feedback
@@ -156,8 +157,13 @@ export class Engine {
   }
 
 
-  updateMapping() {
-    if (this.currentScene) this.mapping.apply(this.currentScene.mapping)
+  updateMapping(cfg?: import('../types/scene').MappingConfig) {
+    if (cfg) {
+      if (this.currentScene) this.currentScene = { ...this.currentScene, mapping: cfg }
+      this.mapping.apply(cfg)
+    } else if (this.currentScene) {
+      this.mapping.apply(this.currentScene.mapping)
+    }
   }
 
   loop = () => {

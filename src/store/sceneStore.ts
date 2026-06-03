@@ -1,6 +1,7 @@
 import { create } from 'zustand'
-import type { Scene, OrganismParams, VisualParams, MappingConfig, AITexture, Evolution } from '../types/scene'
+import type { Scene, OrganismParams, VisualParams, MappingConfig, AITexture, Evolution, MappingShape, TestPattern } from '../types/scene'
 import { defaultScenes } from '../lib/defaultScenes'
+import { defaultShape } from '../types/scene'
 import { saveScene, loadAllScenes, deleteScene as dbDelete } from '../lib/persistence'
 
 interface SceneStoreState {
@@ -19,6 +20,11 @@ interface SceneStoreState {
   updateVisual: (v: Partial<VisualParams>) => void
   updatePalette: (p: Partial<VisualParams['palette']>) => void
   updateMapping: (m: Partial<MappingConfig>) => void
+  addMappingShape: () => void
+  removeMappingShape: (id: string) => void
+  updateMappingShape: (id: string, patch: Partial<MappingShape>) => void
+  selectMappingShape: (idx: number) => void
+  setTestPattern: (p: TestPattern) => void
   setTexture: (tex: AITexture | null) => void
   setTextureIntensity: (v: number) => void
   updateEvolution: (e: Partial<Evolution>) => void
@@ -127,6 +133,57 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
       return { scenes: next }
     })
     debouncePersist(() => get().persistCurrent())
+  },
+
+  addMappingShape: () => {
+    set((st) => {
+      const next = st.scenes.map((s) => {
+        if (s.id !== st.currentId) return s
+        const shapes = [...(s.mapping.shapes ?? []), defaultShape(s.mapping.shapes?.length ?? 0)]
+        return { ...s, mapping: { ...s.mapping, shapes, selectedShape: shapes.length - 1, enabled: true }, updatedAt: Date.now() }
+      })
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  removeMappingShape: (id) => {
+    set((st) => {
+      const next = st.scenes.map((s) => {
+        if (s.id !== st.currentId) return s
+        const shapes = (s.mapping.shapes ?? []).filter((sh) => sh.id !== id)
+        const sel = Math.max(0, Math.min((s.mapping.selectedShape ?? 0), shapes.length - 1))
+        return { ...s, mapping: { ...s.mapping, shapes, selectedShape: sel }, updatedAt: Date.now() }
+      })
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  updateMappingShape: (id, patch) => {
+    set((st) => {
+      const next = st.scenes.map((s) => {
+        if (s.id !== st.currentId) return s
+        const shapes = (s.mapping.shapes ?? []).map((sh) => sh.id === id ? { ...sh, ...patch } : sh)
+        return { ...s, mapping: { ...s.mapping, shapes }, updatedAt: Date.now() }
+      })
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  selectMappingShape: (idx) => {
+    set((st) => {
+      const next = st.scenes.map((s) => s.id === st.currentId ? { ...s, mapping: { ...s.mapping, selectedShape: idx } } : s)
+      return { scenes: next }
+    })
+  },
+
+  setTestPattern: (p) => {
+    set((st) => {
+      const next = st.scenes.map((s) => s.id === st.currentId ? { ...s, mapping: { ...s.mapping, testPattern: p } } : s)
+      return { scenes: next }
+    })
   },
 
   setTexture: (tex) => {
