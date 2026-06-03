@@ -39,7 +39,11 @@ const FRAG = `
     return uv;
   }
 
-  // Fast point-in-quad test using signed edge cross products.
+  // Fast point-in-convex-quad test using signed edge cross products.
+  // For ALL crosses ≥ 0 → CCW inside.  For ALL crosses ≤ 0 → CW inside.
+  // For OUTSIDE points → at least one cross has the opposite sign → both mn<-eps and mx>eps.
+  // The OR correctly handles either winding (CW/CCW) and rejects outside points cleanly,
+  // because outside points produce a wide range of crosses (mn very negative AND mx very positive).
   bool insideQuad(vec2 p) {
     float c0 = (uC1.x - uC0.x) * (p.y - uC0.y) - (uC1.y - uC0.y) * (p.x - uC0.x);
     float c1 = (uC2.x - uC1.x) * (p.y - uC1.y) - (uC2.y - uC1.y) * (p.x - uC1.x);
@@ -47,7 +51,7 @@ const FRAG = `
     float c3 = (uC0.x - uC3.x) * (p.y - uC3.y) - (uC0.y - uC3.y) * (p.x - uC3.x);
     float mn = min(min(c0, c1), min(c2, c3));
     float mx = max(max(c0, c1), max(c2, c3));
-    return mn >= -1e-4 || mx <= 1e-4;   // tolerate either winding
+    return mn >= -1e-4 || mx <= 1e-4;
   }
 
   vec3 patternColor(vec2 uv) {

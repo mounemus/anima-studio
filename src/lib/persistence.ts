@@ -1,11 +1,47 @@
 import type { Scene } from '../types/scene'
+import { defaultMapping, defaultFlow } from '../types/scene'
 import { getItem, setItem, removeItem, listKeys } from './storage'
 
 const KEY = (id: string) => `scene:${id}`
 const PREFIX = 'scene:'
 
+/**
+ * Strip values that don't survive a reload (blob: URLs from local uploads)
+ * and replace them with `undefined` while keeping `label` as a breadcrumb so
+ * the user can re-pick the file. Also runs lightweight forward migrations for
+ * older saved scenes that pre-date newer fields.
+ */
+function sanitizeForSave(s: Scene): Scene {
+  const next: Scene = JSON.parse(JSON.stringify(s))
+  const shapes = next.mapping?.shapes ?? []
+  for (const sh of shapes) {
+    if (sh.content?.src?.startsWith('blob:')) {
+      // can't survive a reload — strip but keep the filename hint
+      sh.content.src = undefined
+    }
+  }
+  return next
+}
+
+/** Forward-migrate older saved scenes (add missing fields with sane defaults). */
+function migrateScene(s: any): Scene {
+  return {
+    ...s,
+    mapping: { ...defaultMapping(), ...(s.mapping ?? {}) },
+    obstacles: Array.isArray(s.obstacles) ? s.obstacles : [],
+    flow: s.flow ?? defaultFlow(),
+    visual: {
+      palette: { bg: '#000000', primary: '#00ffa3', secondary: '#00d4ff', glow: '#7c3aed' },
+      bloom: 0.5, feedback: 0.92, blendMode: 'add' as const, texture: null, textureIntensity: 0,
+      ...(s.visual ?? {}),
+    },
+    evolution: s.evolution ?? { enabled: false, driftSpeed: 0.1, amplitude: 0.2 },
+    senses: s.senses ?? { hands: true, audio: false, light: false, bindings: [] },
+  } as Scene
+}
+
 export async function saveScene(s: Scene) {
-  setItem(KEY(s.id), { ...s, updatedAt: Date.now() })
+  setItem(KEY(s.id), { ...sanitizeForSave(s), updatedAt: Date.now() })
 }
 
 export async function loadAllScenes(): Promise<Scene[]> {
@@ -13,7 +49,7 @@ export async function loadAllScenes(): Promise<Scene[]> {
   const out: Scene[] = []
   for (const k of keys) {
     const s = getItem<Scene>(k)
-    if (s && s.id && s.organism) out.push(s)
+    if (s && s.id && s.organism) out.push(migrateScene(s))
   }
   return out
 }

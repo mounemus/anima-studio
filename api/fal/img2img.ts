@@ -1,7 +1,12 @@
 import { getSetting } from '../_lib/settings'
 import { jsonResponse } from '../_lib/auth'
+import { guard, readJsonCapped } from '../_lib/guard'
 
 export const config = { runtime: 'edge' }
+
+// Cap data URLs at ~6 MB base64 (~4.5 MB original). Anything bigger is almost
+// certainly a misuse and would needlessly spend egress + fal credits.
+const MAX_IMG2IMG_BYTES = 6 * 1024 * 1024
 
 /**
  * POST /api/fal/img2img
@@ -12,17 +17,21 @@ export const config = { runtime: 'edge' }
  */
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonResponse({ error: 'method' }, { status: 405 })
+  const gate = await guard(req, { bucket: 'fal-img2img', perMin: 6 })
+  if (gate instanceof Response) return gate
 
   const apiKey = await getSetting('FAL_KEY')
   if (!apiKey) return jsonResponse({ error: 'Clé fal.ai non configurée.' }, { status: 500 })
 
-  let body: { prompt?: string; image?: string; strength?: number; size?: string }
-  try { body = await req.json() } catch { return jsonResponse({ error: 'bad json' }, { status: 400 }) }
+  const parsed = await readJsonCapped<{ prompt?: string; image?: string; strength?: number; size?: string }>(req, MAX_IMG2IMG_BYTES)
+  if (parsed instanceof Response) return parsed
+  const body = parsed
 
   const prompt = body.prompt?.toString().slice(0, 800).trim()
   const image = body.image?.toString()
   if (!prompt) return jsonResponse({ error: 'prompt manquant' }, { status: 400 })
   if (!image || !image.startsWith('data:image/')) return jsonResponse({ error: 'image (dataURL) manquante' }, { status: 400 })
+  if (image.length > MAX_IMG2IMG_BYTES) return jsonResponse({ error: 'image trop volumineuse (max 6 MB)' }, { status: 413 })
   const strength = Math.max(0.1, Math.min(0.95, body.strength ?? 0.65))
 
   const model = 'fal-ai/fast-lightning-sdxl'
@@ -47,13 +56,15 @@ export default async function handler(req: Request): Promise<Response> {
     })
     if (!r.ok) {
       const txt = await r.text()
-      return jsonResponse({ error: `fal ${r.status}: ${txt.slice(0, 200)}` }, { status: 502 })
+      console.error('[api/fal/img2img]', r.status, txt.slice(0, 500))
+      return jsonResponse({ error: `fal.ai indisponible (${r.status})` }, { status: 502 })
     }
     const data = await r.json() as { images?: { url: string; width?: number; height?: number }[] }
     const img = data.images?.[0]
     if (!img?.url) return jsonResponse({ error: 'no image' }, { status: 502 })
     return jsonResponse({ url: img.url, width: img.width ?? size.width, height: img.height ?? size.height, model, prompt })
   } catch (e: any) {
-    return jsonResponse({ error: e?.message ?? 'erreur' }, { status: 500 })
+    console.error('[api/fal/img2img]', e)
+    return jsonResponse({ error: 'erreur côté fal.ai' }, { status: 500 })
   }
 }

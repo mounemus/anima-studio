@@ -1,4 +1,5 @@
 import { getSetting } from '../_lib/settings'
+import { guard, readJsonCapped } from '../_lib/guard'
 
 export const config = { runtime: 'edge' }
 
@@ -9,11 +10,14 @@ export const config = { runtime: 'edge' }
  */
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return new Response('method', { status: 405 })
+  const gate = await guard(req, { bucket: 'tts', perMin: 20 })
+  if (gate instanceof Response) return gate
   const apiKey = await getSetting('OPENAI_API_KEY')
   if (!apiKey) return new Response(JSON.stringify({ error: 'Clé OpenAI non configurée.' }), { status: 500, headers: { 'content-type': 'application/json' } })
 
-  let body: { text?: string; voice?: string; speed?: number }
-  try { body = await req.json() } catch { return new Response('bad json', { status: 400 }) }
+  const parsed = await readJsonCapped<{ text?: string; voice?: string; speed?: number }>(req, 16 * 1024)
+  if (parsed instanceof Response) return parsed
+  const body = parsed
   const text = body.text?.toString().slice(0, 2000).trim()
   if (!text) return new Response('text manquant', { status: 400 })
   const voice = body.voice || 'nova'

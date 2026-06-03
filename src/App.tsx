@@ -114,7 +114,11 @@ export function App() {
     const target = e.target as HTMLElement
     const onCanvas = target.tagName === 'CANVAS' || target === stageRef.current ||
       target.classList.contains('mirror-bg') || target.classList.contains('canvas-wrap')
-    if (!onCanvas) return
+    // Allow Alt+click even when the target is an overlay SVG/element — the user clearly
+    // wants to PLACE an obstacle, not select an existing one. Without this, tap-to-place
+    // was silently dead anywhere the overlays covered (i.e., almost everywhere).
+    const isAltPlace = e.altKey && stageRef.current.contains(target)
+    if (!onCanvas && !isAltPlace) return
     const r = stageRef.current.getBoundingClientRect()
     const x = (e.clientX - r.left) / r.width
     const y = (e.clientY - r.top) / r.height
@@ -144,17 +148,12 @@ export function App() {
     }
 
     if (!e.altKey) return                       // require Alt to place
-    addObstacle('circle')
-    setTimeout(() => {
-      const scene = useSceneStore.getState().scenes.find((s) => s.id === currentSceneId)
-      const last = scene?.obstacles?.[scene.obstacles.length - 1]
-      if (last) updateObstacle(last.id, {
-        circle: { cx: x, cy: y, r: 0.08 },
-        interaction: 'attract',
-        margin: 0.12,
-        strength: 1.2,
-      })
-    }, 50)
+    addObstacle('circle', {
+      circle: { cx: x, cy: y, r: 0.08 },
+      interaction: 'attract',
+      margin: 0.12,
+      strength: 1.2,
+    })
   }
 
   return (

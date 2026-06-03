@@ -4,6 +4,7 @@ import { useSceneStore } from '../store/sceneStore'
 import type { Scene, FlowField } from '../types/scene'
 import { defaultMapping } from '../types/scene'
 import { startRecording, stopRecording, transcribeViaWhisper, recognizeLive, hasBrowserSTT, speak, stopSpeaking } from '../lib/voiceIO'
+import { validateActions } from '../lib/aiActions'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -59,47 +60,38 @@ export function AIChat({ open }: { open: boolean }) {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erreur API')
+      // CRITICAL: validate every field BEFORE dispatching — Claude (or a prompt
+      // injection through the user's input) could otherwise drop 10k particles
+      // or a 1000-point polygon and freeze the UI / lock localStorage.
+      const actions = validateActions(data.actions)
       let action = ''
-      if (data.actions?.organismValues) {
-        patchValues(data.actions.organismValues)
+      if (actions.organismValues) {
+        patchValues(actions.organismValues)
         action = `🧬 Paramètres mis à jour`
       }
-      if (data.actions?.organism) {
-        updateOrganism(data.actions.organism)
-        action = `🧬 Organisme changé en ${data.actions.organism.kind}`
+      if (actions.organism) {
+        updateOrganism(actions.organism)
+        action = `🧬 Organisme changé en ${actions.organism.kind}`
       }
-      if (data.actions?.palette) {
-        updatePalette(data.actions.palette)
+      if (actions.palette) {
+        updatePalette(actions.palette)
         action = `🎨 Palette modifiée`
       }
-      if (data.actions?.visual) {
-        updateVisual(data.actions.visual)
+      if (actions.visual) {
+        updateVisual(actions.visual)
         action = `✨ Rendu ajusté`
       }
-      if (data.actions?.flow) {
-        updateFlow(data.actions.flow as Partial<FlowField>)
+      if (actions.flow) {
+        updateFlow(actions.flow as Partial<FlowField>)
         action = `🌬️ Flux directionnel modifié`
       }
-      if (Array.isArray(data.actions?.mappingShapes) && data.actions.mappingShapes.length > 0) {
-        // Normalise each shape to a valid MappingShape
-        const builtShapes = data.actions.mappingShapes.map((sh: any, i: number) => ({
-          id: `ai-${Date.now().toString(36)}-${i}`,
-          name: sh.name ?? `Zone IA ${i + 1}`,
-          kind: sh.kind === 'quad' ? 'quad' : 'polygon',
-          corners: sh.corners ?? [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }],
-          points: sh.points,
-          smooth: sh.smooth,
-          rotation: sh.rotation,
-          source: sh.source ?? { x: 0, y: 0, w: 1, h: 1 },
-          enabled: true,
-          content: { type: 'organism' as const, opacity: sh.opacity ?? 1 },
-        }))
-        addShapes(builtShapes)
-        action = `🗺️ ${builtShapes.length} zone(s) de mapping créée(s)`
+      if (actions.mappingShapes && actions.mappingShapes.length > 0) {
+        addShapes(actions.mappingShapes)
+        action = `🗺️ ${actions.mappingShapes.length} zone(s) de mapping créée(s)`
       }
-      if (data.actions?.newScene) {
+      if (actions.newScene) {
         // Normalise the AI's returned scene — Claude may return a partial shape (no senses/mapping/evolution).
-        const ai = data.actions.newScene as Partial<Scene> & { palette?: any }
+        const ai = actions.newScene as Partial<Scene> & { palette?: any }
         const visual = (ai.visual ?? {}) as any
         const palette = ai.palette ?? visual.palette ?? current?.visual.palette ?? { bg: '#06070d', primary: '#00ffa3', secondary: '#00d4ff', glow: '#7c3aed' }
         const s: Scene = {

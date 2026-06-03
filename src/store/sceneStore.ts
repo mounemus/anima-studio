@@ -29,7 +29,7 @@ interface SceneStoreState {
   updateMappingShape: (id: string, patch: Partial<MappingShape>) => void
   selectMappingShape: (idx: number) => void
   setTestPattern: (p: TestPattern) => void
-  addObstacle: (kind: ObstacleKind) => void
+  addObstacle: (kind: ObstacleKind, patch?: Partial<Obstacle>) => string | null
   removeObstacle: (id: string) => void
   updateObstacle: (id: string, patch: Partial<Obstacle>) => void
   updateFlow: (patch: Partial<FlowField>) => void
@@ -227,16 +227,21 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
     })
   },
 
-  addObstacle: (kind) => {
+  addObstacle: (kind, patch) => {
+    // Build the obstacle synchronously so we can return its ID for the caller
+    // to chain updates without race-prone setTimeout hacks.
+    const cur = get().current()
+    if (!cur) return null
+    const fresh = { ...defaultObstacle(kind, (cur.obstacles ?? []).length), ...(patch ?? {}) }
     set((st) => {
       const next = st.scenes.map((s) => {
         if (s.id !== st.currentId) return s
-        const obs = [...(s.obstacles ?? []), defaultObstacle(kind, (s.obstacles ?? []).length)]
-        return { ...s, obstacles: obs, updatedAt: Date.now() }
+        return { ...s, obstacles: [...(s.obstacles ?? []), fresh], updatedAt: Date.now() }
       })
       return { scenes: next }
     })
     debouncePersist(() => get().persistCurrent())
+    return fresh.id
   },
 
   removeObstacle: (id) => {
@@ -310,3 +315,25 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
     if (s) await saveScene(s)
   },
 }))
+
+// Multi-tab synchronization: when another tab writes a scene to localStorage,
+// hydrate it into this tab's store so both stay consistent (last-write-wins).
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (!e.key || !e.key.startsWith('scene:') || !e.newValue) return
+    try {
+      const updated = JSON.parse(e.newValue) as Scene
+      if (!updated.id) return
+      const st = useSceneStore.getState()
+      const local = st.scenes.find((s) => s.id === updated.id)
+      // Only accept if remote is newer (avoid stomping in-flight local edits)
+      if (local && updated.updatedAt > local.updatedAt) {
+        useSceneStore.setState({
+          scenes: st.scenes.map((s) => (s.id === updated.id ? updated : s)),
+        })
+      } else if (!local) {
+        useSceneStore.setState({ scenes: [...st.scenes, updated] })
+      }
+    } catch { /* ignore parse errors */ }
+  })
+}

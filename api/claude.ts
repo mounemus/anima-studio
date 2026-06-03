@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { getSetting } from './_lib/settings'
+import { guard, readJsonCapped } from './_lib/guard'
 
 export const config = { runtime: 'edge' }
 
@@ -58,8 +59,11 @@ interface ScenePayload { [key: string]: unknown }
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 })
-  let body: { message?: string; scene?: ScenePayload }
-  try { body = await req.json() } catch { return json({ error: 'Bad JSON' }, 400) }
+  const gate = await guard(req, { bucket: 'claude', perMin: 20 })
+  if (gate instanceof Response) return gate
+  const parsed = await readJsonCapped<{ message?: string; scene?: ScenePayload }>(req, 256 * 1024)
+  if (parsed instanceof Response) return parsed
+  const body = parsed
   const message = body.message?.toString().slice(0, 2000)
   if (!message) return json({ error: 'Missing message' }, 400)
   const apiKey = await getSetting('ANTHROPIC_API_KEY')
@@ -95,7 +99,8 @@ export default async function handler(req: Request): Promise<Response> {
     if (!parsed) return json({ reply: text, actions: {} })
     return json({ reply: parsed.reply ?? 'Modifié.', actions: parsed.actions ?? {} })
   } catch (e: any) {
-    return json({ error: e?.message ?? 'Erreur Anthropic' }, 500)
+    console.error('[api/claude]', e)
+    return json({ error: 'Erreur côté Anthropic — réessaie' }, 500)
   }
 }
 

@@ -104,13 +104,17 @@ export function resolveShapeTexture(shapeId: string, content: ShapeContent | und
     if (content.type === 'video' && existing.kind === 'video' && existing.src === content.src) return existing.texture
     if (content.type === 'image' && existing.kind === 'image' && existing.src === content.src) return existing.texture
     if (content.type === 'webcam' && existing.kind === 'webcam' && existing.texture) {
-      // For webcam, always re-resolve in case the mask flag toggled
-      const fresh = bindWebcam(useMaskedBody)
-      if (fresh.texture && fresh.texture !== existing.texture) {
-        disposeEntry(existing); cache.delete(cacheKey(shapeId))
-      } else {
+      // For webcam, check whether the underlying <video> changed (mask flag toggled,
+      // new MediaStream attached, etc.) WITHOUT creating a throw-away VideoTexture
+      // — that was a use-after-dispose bug. Compare the source DOM element instead.
+      const cam = document.querySelector('video.mirror-bg') as HTMLVideoElement | null
+      const wantedSource = useMaskedBody ? null : (cam ?? (document.querySelector('video') as HTMLVideoElement | null))
+      const existingSrc = (existing.texture as any).image as HTMLVideoElement | undefined
+      // useMaskedBody = true uses a shared CanvasTexture; we leave it bound until the flag flips
+      if (!useMaskedBody && existingSrc === wantedSource && wantedSource?.srcObject) {
         return existing.texture
       }
+      disposeEntry(existing); cache.delete(cacheKey(shapeId))
     } else {
       disposeEntry(existing); cache.delete(cacheKey(shapeId))
     }

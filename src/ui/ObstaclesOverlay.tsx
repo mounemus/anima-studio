@@ -30,13 +30,16 @@ export function ObstaclesOverlay({ stageRef, editing, selectedId, onSelect }: {
     return () => ro.disconnect()
   }, [stageRef])
 
-  // Repaint tracker visuals at ~30fps so trail/crosshair stays live
+  // Repaint tracker visuals at ~30fps ONLY when at least one tracker obstacle is enabled,
+  // otherwise we'd waste a render every 33ms forever (huge battery drain on laptops).
+  const hasActiveTracker = !!current?.obstacles?.some((o) => o.kind === 'tracker' && o.enabled)
   useEffect(() => {
+    if (!hasActiveTracker) return
     let id = 0
     const tick = () => { force((x) => x + 1); id = window.setTimeout(tick, 33) }
     tick()
     return () => clearTimeout(id)
-  }, [])
+  }, [hasActiveTracker])
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -97,7 +100,7 @@ export function ObstaclesOverlay({ stageRef, editing, selectedId, onSelect }: {
             const cy = o.circle.cy * H
             const rPx = o.circle.r * Math.max(W, H)
             return (
-              <g key={o.id} onClick={() => editing && onSelect(o.id)} style={{ pointerEvents: editing ? 'auto' : 'none', cursor: editing ? 'pointer' : 'default' }}>
+              <g key={o.id} onClick={(e) => { if (e.altKey) return; if (editing) onSelect(o.id) }} style={{ pointerEvents: editing ? 'auto' : 'none', cursor: editing ? 'pointer' : 'default' }}>
                 <circle cx={cx} cy={cy} r={rPx} fill={stroke.replace('0.9', '0.10')} stroke={stroke} strokeWidth={sw} strokeDasharray={o.enabled ? '0' : '5 5'} />
                 <text x={cx + rPx + 6} y={cy + 4} fill={stroke} fontSize="11" fontFamily="var(--mono)">{o.name}</text>
               </g>

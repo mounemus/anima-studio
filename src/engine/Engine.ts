@@ -226,9 +226,12 @@ export class Engine {
         })
       }
     }
-    // Dispose removed
+    // Dispose removed — IMPORTANT: clear the mapping's per-shape texture reference
+    // BEFORE disposing the RT, otherwise the GPU texture is freed while MappingPass
+    // still holds a stale reference and the next sample reads undefined memory.
     for (const [id, entry] of this.zoneOrganisms) {
       if (!wanted.has(id) || wanted.get(id)!.kind !== entry.kind) {
+        this.mapping.setShapeTexture(id, null)
         entry.scene.remove(entry.organism.mesh)
         entry.organism.dispose()
         entry.rt.dispose()
@@ -298,11 +301,14 @@ export class Engine {
     }
 
     if (this.organism) this.organism.update(dt)
-    // Update + render per-zone organisms FIRST so their RTs are fresh for the mapping pass
+    // Update + render per-zone organisms FIRST so their RTs are fresh for the mapping pass.
+    // Clear with TRANSPARENT (alpha=0) instead of the scene bg color — otherwise the bg color
+    // is baked into the zone texture and the mapping shader can't blend cleanly in AR mode.
+    const zoneClear = new THREE.Color(0x000000)
     for (const entry of this.zoneOrganisms.values()) {
       entry.organism.update(dt)
       this.renderer.setRenderTarget(entry.rt)
-      this.renderer.setClearColor(this.bg, 1)
+      this.renderer.setClearColor(zoneClear, 0)
       this.renderer.clear()
       this.renderer.render(entry.scene, this.camera)
     }
