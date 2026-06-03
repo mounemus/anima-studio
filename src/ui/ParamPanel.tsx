@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX, Wand2, Bone, Pipette, Wind, Navigation, Bug, Palette, Activity, Map as MapIcon, StickyNote } from 'lucide-react'
+import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX, Wand2, Bone, Pipette, Wind, Navigation, Bug, Palette, Activity, Map as MapIcon, StickyNote, Film, Image as ImageIcon, Camera as CameraIcon } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
 import type { OrganismKind, TestPattern, ObstacleInteraction, Waveform, SoundConfig } from '../types/scene'
 import { LiveImg2Img } from '../lib/liveImg2Img'
@@ -1003,10 +1003,8 @@ function MappingTab() {
 
       {selectedShape && (
         <div style={{ marginTop: 12, padding: 10, background: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
-          <h3 style={{ marginTop: 0 }}><Crop size={11} style={{ verticalAlign: 'middle' }} /> Source de {selectedShape.name}</h3>
-          <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-            Quelle partie du rendu cette zone affiche (en %).
-          </p>
+          <ShapeContentEditor shape={selectedShape} update={(p) => updateShape(selectedShape.id, p)} />
+          <h3 style={{ marginTop: 14 }}><Crop size={11} style={{ verticalAlign: 'middle' }} /> Source (% du rendu)</h3>
           <Slider label="X" value={selectedShape.source.x} min={0} max={1} step={0.01} onChange={(x) => updateShape(selectedShape.id, { source: { ...selectedShape.source, x } })} format={(x) => `${Math.round(x * 100)}%`} />
           <Slider label="Y" value={selectedShape.source.y} min={0} max={1} step={0.01} onChange={(y) => updateShape(selectedShape.id, { source: { ...selectedShape.source, y } })} format={(y) => `${Math.round(y * 100)}%`} />
           <Slider label="Largeur" value={selectedShape.source.w} min={0.05} max={1} step={0.01} onChange={(w) => updateShape(selectedShape.id, { source: { ...selectedShape.source, w } })} format={(w) => `${Math.round(w * 100)}%`} />
@@ -1044,6 +1042,76 @@ function MappingTab() {
       <h3 style={{ marginTop: 14 }}>📍 Profils de calibration (sites)</h3>
       <CalibrationProfiles />
     </div>
+  )
+}
+
+function ShapeContentEditor({ shape, update }: { shape: import('../types/scene').MappingShape; update: (p: Partial<import('../types/scene').MappingShape>) => void }) {
+  const content = shape.content ?? { type: 'organism' as const, opacity: 1 }
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const setType = (type: 'organism' | 'video' | 'image' | 'webcam') => {
+    if (type === 'organism' || type === 'webcam') {
+      update({ content: { type, opacity: content.opacity ?? 1 } })
+    } else {
+      update({ content: { type, src: content.type === type ? content.src : undefined, label: content.label, opacity: content.opacity ?? 1 } })
+    }
+  }
+
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    const url = URL.createObjectURL(f)
+    update({ content: { ...content, src: url, label: f.name } })
+    e.target.value = ''
+  }
+
+  return (
+    <>
+      <h3 style={{ marginTop: 0 }}>📺 Contenu de {shape.name}</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 8 }}>
+        <button className={content.type === 'organism' ? 'primary' : ''} onClick={() => setType('organism')} style={{ fontSize: 11, justifyContent: 'center' }}>
+          <Bug size={11} /> Organisme
+        </button>
+        <button className={content.type === 'video' ? 'primary' : ''} onClick={() => setType('video')} style={{ fontSize: 11, justifyContent: 'center' }}>
+          <Film size={11} /> Vidéo
+        </button>
+        <button className={content.type === 'image' ? 'primary' : ''} onClick={() => setType('image')} style={{ fontSize: 11, justifyContent: 'center' }}>
+          <ImageIcon size={11} /> Image
+        </button>
+        <button className={content.type === 'webcam' ? 'primary' : ''} onClick={() => setType('webcam')} style={{ fontSize: 11, justifyContent: 'center' }}>
+          <CameraIcon size={11} /> Webcam
+        </button>
+      </div>
+      {(content.type === 'video' || content.type === 'image') && (
+        <div style={{ marginBottom: 8 }}>
+          <button onClick={() => fileRef.current?.click()} style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}>
+            <FolderOpen size={12} /> {content.label ?? `Choisir un ${content.type === 'video' ? 'fichier vidéo' : 'image'}…`}
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept={content.type === 'video' ? 'video/*' : 'image/*'}
+            style={{ display: 'none' }}
+            onChange={onFile}
+          />
+          <p style={{ fontSize: 10, color: 'var(--text-mute)', marginTop: 4 }}>
+            ⚠ Le fichier est conservé tant que tu ne recharges pas la page (blob: URL local).
+          </p>
+        </div>
+      )}
+      {content.type === 'webcam' && (
+        <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+          Utilise le flux de la caméra (active <strong>Caméra</strong> ou <strong>AR</strong>).
+        </p>
+      )}
+      <Slider
+        label="Opacité"
+        value={content.opacity ?? 1}
+        min={0} max={1} step={0.05}
+        onChange={(v) => update({ content: { ...content, opacity: v } })}
+        format={(v) => `${Math.round(v * 100)}%`}
+      />
+    </>
   )
 }
 

@@ -17,6 +17,7 @@ const FRAG = `
   uniform int uPattern;                // 0=none 1=grid 2=white 3=black 4=colorbars 5=crosshair 6=gradient
   uniform vec3 uTint;                  // overall tint multiplier
   uniform float uTransparent;          // 0 = opaque (normal), 1 = content-based alpha (AR mirror)
+  uniform float uOpacity;              // per-shape opacity 0..1
 
   // Newton iteration WITHOUT clamping (else outside-quad detection is dead code).
   vec2 invQuadMap(vec2 p) {
@@ -121,10 +122,8 @@ const FRAG = `
     if (uBlend.z > 0.0) bl *= pow(smoothstep(0.0, uBlend.z, uv.y), uGamma);
     if (uBlend.w > 0.0) bl *= pow(smoothstep(0.0, uBlend.w, 1.0 - uv.y), uGamma);
     vec3 outCol = col * bl;
-    // In AR/mirror mode (uTransparent=1) → alpha is the luminance, so dark areas show the webcam behind.
-    // Otherwise alpha=1 for opaque studio rendering.
     float a = mix(1.0, max(max(outCol.r, outCol.g), outCol.b), uTransparent);
-    gl_FragColor = vec4(outCol, a);
+    gl_FragColor = vec4(outCol * uOpacity, a * uOpacity);
   }
 `
 
@@ -144,6 +143,8 @@ export class MappingPass {
   private shapes: ShapeMesh[] = []
   private sourceTex: THREE.Texture | null = null
   private transparent = 0
+  /** Per-shape texture override. If absent, the shape uses the default sourceTex. */
+  private perShapeTex = new Map<string, THREE.Texture | null>()
 
   constructor() {}
 
@@ -161,6 +162,7 @@ export class MappingPass {
       uTint: { value: new THREE.Vector3(1, 1, 1) },
       uTransparent: { value: this.transparent },
     }
+    uniforms.uOpacity = { value: 1.0 }
     const mat = new THREE.ShaderMaterial({
       uniforms,
       vertexShader: VERT,
@@ -189,8 +191,19 @@ export class MappingPass {
     sm.uniforms.uGamma.value = b.gamma
     sm.uniforms.uPattern.value = PATTERN_INDEX[cfg.testPattern ?? 'none']
     sm.uniforms.uTransparent.value = this.transparent
-    sm.uniforms.uTex.value = this.sourceTex
+    sm.uniforms.uOpacity.value = sm.shape.content?.opacity ?? 1.0
+    const custom = this.perShapeTex.get(sm.shape.id)
+    sm.uniforms.uTex.value = custom ?? this.sourceTex
     sm.mesh.visible = sm.shape.enabled
+  }
+
+  /** Override the source texture for a specific shape (null = use the default). */
+  setShapeTexture(shapeId: string, tex: THREE.Texture | null) {
+    if (tex) this.perShapeTex.set(shapeId, tex)
+    else this.perShapeTex.delete(shapeId)
+    // Re-apply uniforms for the matching shape
+    const sm = this.shapes.find((s) => s.shape.id === shapeId)
+    if (sm) sm.uniforms.uTex.value = tex ?? this.sourceTex
   }
 
   setTransparent(t: boolean) {
@@ -241,7 +254,10 @@ export class MappingPass {
 
   setSource(tex: THREE.Texture) {
     this.sourceTex = tex
-    for (const sm of this.shapes) sm.uniforms.uTex.value = tex
+    for (const sm of this.shapes) {
+      const custom = this.perShapeTex.get(sm.shape.id)
+      sm.uniforms.uTex.value = custom ?? tex
+    }
   }
 
   dispose() {

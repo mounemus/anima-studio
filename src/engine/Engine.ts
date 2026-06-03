@@ -10,6 +10,7 @@ import { resetCounters } from './Obstacles'
 import { soundEngine } from './SoundEngine'
 import { setFlow } from './Flow'
 import { setTrackers } from './ColorTracker'
+import { resolveShapeTexture, pruneShapeTextures } from './ContentSources'
 
 export class Engine {
   private renderer: THREE.WebGLRenderer
@@ -189,6 +190,16 @@ export class Engine {
     } else if (this.currentScene) {
       this.mapping.apply(this.currentScene.mapping)
     }
+    // Sync per-shape content textures
+    const c = cfg ?? this.currentScene?.mapping
+    const shapes = c?.shapes ?? []
+    const ids = new Set<string>()
+    for (const s of shapes) {
+      ids.add(s.id)
+      const tex = resolveShapeTexture(s.id, s.content)
+      this.mapping.setShapeTexture(s.id, tex)
+    }
+    pruneShapeTextures(ids)
   }
 
   loop = () => {

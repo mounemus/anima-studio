@@ -118,14 +118,26 @@ export type TestPattern = 'none' | 'grid' | 'white' | 'black' | 'colorbars' | 'c
 /** Source rectangle on the input texture (uv 0..1). Lets a shape sample only a portion of the rendered scene. */
 export interface SourceRect { x: number; y: number; w: number; h: number }
 
+export type ContentType = 'organism' | 'video' | 'image' | 'webcam'
+
+export interface ShapeContent {
+  type: ContentType
+  /** URL for video/image (blob: or http:). Ignored for organism/webcam. */
+  src?: string
+  /** Display name (filename for uploads) */
+  label?: string
+  /** Opacity 0..1 within this zone */
+  opacity?: number
+}
+
 export interface MappingShape {
   id: string
   name: string
-  /** TL, TR, BR, BL in canvas 0..1 — where on the projector it lands */
   corners: [Vec2, Vec2, Vec2, Vec2]
-  /** Which portion of the source texture this shape samples */
   source: SourceRect
   enabled: boolean
+  /** What this zone displays. Defaults to the scene's organism. */
+  content?: ShapeContent
 }
 
 export interface MappingConfig {
@@ -260,4 +272,5 @@ export const defaultShape = (i = 0): MappingShape => ({
   ],
   source: { x: 0, y: 0, w: 1, h: 1 },
   enabled: true,
+  content: { type: 'organism', opacity: 1 },
 })
