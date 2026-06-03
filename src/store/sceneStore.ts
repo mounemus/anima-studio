@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import type { Scene, OrganismParams, VisualParams, MappingConfig, AITexture, Evolution, MappingShape, TestPattern, Obstacle, ObstacleKind } from '../types/scene'
 import { defaultScenes } from '../lib/defaultScenes'
 import { defaultShape, defaultObstacle } from '../types/scene'
-import { saveScene, loadAllScenes, deleteScene as dbDelete } from '../lib/persistence'
+import { saveScene, loadAllScenes, deleteScene as dbDelete, migrateFromIndexedDB } from '../lib/persistence'
+import { hasStorage } from '../lib/storage'
 
 interface SceneStoreState {
   scenes: Scene[]
@@ -57,26 +58,32 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
   },
 
   load: async () => {
-    try {
-      let existing = await loadAllScenes()
-      if (existing.length === 0) {
-        // seed with defaults
-        for (const s of defaultScenes) {
-          try { await saveScene(s) } catch (e) { console.warn('seed save failed', e) }
-        }
-        existing = [...defaultScenes]
-      }
-      set({ scenes: existing, currentId: existing[0]?.id ?? null, dbStatus: 'ok', dbError: null })
-    } catch (e: any) {
-      // DB unavailable (locked, blocked, version mismatch) — fall back to in-memory defaults
-      console.error('IndexedDB load failed, using in-memory defaults', e)
+    if (!hasStorage()) {
+      // Private browsing in Safari can disable localStorage. Use in-memory defaults.
+      console.warn('localStorage unavailable — in-memory only')
       set({
         scenes: [...defaultScenes],
         currentId: defaultScenes[0]?.id ?? null,
         dbStatus: 'fallback',
-        dbError: e?.message ?? 'IndexedDB unavailable',
+        dbError: 'localStorage indisponible (mode privé ?)',
       })
+      return
     }
+    let existing = await loadAllScenes()
+    if (existing.length === 0) {
+      // Try one-shot migration from a pre-existing IndexedDB (legacy users).
+      const migrated = await migrateFromIndexedDB()
+      if (migrated > 0) {
+        console.info(`Migrated ${migrated} scenes from IndexedDB → localStorage`)
+        existing = await loadAllScenes()
+      }
+    }
+    if (existing.length === 0) {
+      // seed with defaults
+      for (const s of defaultScenes) await saveScene(s)
+      existing = [...defaultScenes]
+    }
+    set({ scenes: existing, currentId: existing[0]?.id ?? null, dbStatus: 'ok', dbError: null })
   },
 
   select: (id) => set({ currentId: id }),

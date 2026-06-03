@@ -1,6 +1,9 @@
 /** Calibration profiles : sauvegarde de configurations mapping nommées (un par site/installation). */
-import { db, CALIBRATIONS } from './db'
 import type { MappingConfig } from '../types/scene'
+import { getItem, setItem, removeItem, listKeys } from './storage'
+
+const KEY = (id: string) => `cal:${id}`
+const PREFIX = 'cal:'
 
 export interface CalibrationProfile {
   id: string
@@ -13,23 +16,25 @@ export interface CalibrationProfile {
 }
 
 export async function saveCalibration(p: CalibrationProfile) {
-  const d = await db()
-  await d.put(CALIBRATIONS, { ...p, updatedAt: Date.now() })
+  setItem(KEY(p.id), { ...p, updatedAt: Date.now() })
 }
 
 export async function listCalibrations(): Promise<CalibrationProfile[]> {
-  const d = await db()
-  return ((await d.getAll(CALIBRATIONS)) as CalibrationProfile[]).sort((a, b) => b.updatedAt - a.updatedAt)
+  const keys = listKeys(PREFIX)
+  const out: CalibrationProfile[] = []
+  for (const k of keys) {
+    const c = getItem<CalibrationProfile>(k)
+    if (c && c.id) out.push(c)
+  }
+  return out.sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
 export async function deleteCalibration(id: string) {
-  const d = await db()
-  await d.delete(CALIBRATIONS, id)
+  removeItem(KEY(id))
 }
 
 export async function getCalibration(id: string): Promise<CalibrationProfile | undefined> {
-  const d = await db()
-  return (await d.get(CALIBRATIONS, id)) as CalibrationProfile | undefined
+  return getItem<CalibrationProfile>(KEY(id)) ?? undefined
 }
 
 export function exportCalibration(p: CalibrationProfile) {

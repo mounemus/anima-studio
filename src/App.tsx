@@ -9,10 +9,9 @@ import { ObstaclesOverlay } from './ui/ObstaclesOverlay'
 import { AIChat } from './ui/AIChat'
 import { useSceneStore } from './store/sceneStore'
 import type { Engine } from './engine/Engine'
-import { Eye, AlertTriangle, RefreshCw, Trash2 } from 'lucide-react'
+import { Eye, AlertTriangle } from 'lucide-react'
 import { enterFullscreen } from './lib/recorder'
 import { isOutputWindow } from './lib/multiDisplay'
-import { resetDb, destroyDb } from './lib/db'
 
 export function App() {
   const load = useSceneStore((s) => s.load)
@@ -108,36 +107,10 @@ export function App() {
         <div className="db-warning">
           <AlertTriangle size={14} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <strong>Mode hors-ligne</strong> — IndexedDB inaccessible. Tes modifications ne seront pas sauvegardées.
+            <strong>Stockage indisponible</strong> — tes modifications ne seront pas sauvegardées.
             <div style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 2 }}>
-              {dbError}
+              {dbError ?? 'localStorage indisponible (mode privé ?)'}
             </div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <button
-              onClick={() => { resetDb(); load() }}
-              className="primary"
-              style={{ fontSize: 11, padding: '4px 8px' }}
-              title="Réessayer d'ouvrir la base"
-            >
-              <RefreshCw size={11} /> Réessayer
-            </button>
-            <button
-              onClick={async () => {
-                if (!confirm('Effacer toute la base locale ? Les scènes par défaut seront recréées.')) return
-                try {
-                  await destroyDb()
-                } catch (e) {
-                  console.warn('destroy failed (will reload anyway)', e)
-                }
-                window.location.reload()
-              }}
-              className="danger"
-              style={{ fontSize: 11, padding: '4px 8px', color: 'var(--danger)', borderColor: 'var(--danger)' }}
-              title="Solution radicale — supprime la DB et recharge"
-            >
-              <Trash2 size={11} /> Effacer la DB
-            </button>
           </div>
         </div>
       )}
