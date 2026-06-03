@@ -25,7 +25,7 @@ export interface SafeActions {
   newScene?: any  // kept loose; caller (AIChat) re-runs through this validator before commit
 }
 
-const ORG_KINDS: OrganismKind[] = ['boids', 'particles', 'tendrils', 'cells', 'worms', 'spores']
+const ORG_KINDS: OrganismKind[] = ['boids', 'particles', 'tendrils', 'cells', 'worms', 'spores', 'psychedelic', 'mandala', 'fractal']
 const SHAPE_KINDS: ShapeKind[] = ['quad', 'polygon']
 const BLEND_MODES = ['add', 'normal', 'screen'] as const
 
@@ -81,6 +81,17 @@ function safeOrganismValues(kind: OrganismKind, raw: any): Record<string, number
     spores: {
       count: [50, 4000], speed: [0.05, 3], size: [0.002, 0.05], bloomGain: [0, 2], bloomDecay: [0.1, 5],
       reactToObstacles: [0, 1], trail: [0.5, 0.999],
+    },
+    psychedelic: {
+      count: [400, 6400], speed: [0.1, 3], freq: [1, 10], scale: [0.3, 2.5], trail: [0.5, 0.999], size: [0.5, 8],
+    },
+    mandala: {
+      arms: [3, 24], pointsPerArm: [8, 128], outerRadius: [0.1, 1.4], innerRadius: [0, 0.6],
+      waves: [0, 8], freq: [0.05, 4], rotation: [-3, 3], thickness: [0.001, 0.03],
+    },
+    fractal: {
+      iterations: [16, 256], zoom: [0.1, 8], cx: [-1.5, 1.5], cy: [-1.5, 1.5],
+      followHand: [0, 1], bailout: [2, 30], brightness: [0.2, 3],
     },
   }
   const r = ranges[kind]

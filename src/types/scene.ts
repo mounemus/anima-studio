@@ -1,4 +1,8 @@
-export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores'
+export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores' | 'psychedelic' | 'mandala' | 'fractal'
+
+export interface PsychedelicParams { count: number; speed: number; freq: number; scale: number; trail: number; size: number }
+export interface MandalaParams { arms: number; pointsPerArm: number; outerRadius: number; innerRadius: number; waves: number; freq: number; rotation: number; thickness: number }
+export interface FractalParams { iterations: number; zoom: number; cx: number; cy: number; followHand: number; bailout: number; brightness: number }
 
 export interface WormsParams {
   count: number
@@ -68,6 +72,9 @@ export type OrganismParams =
   | { kind: 'cells'; values: CellsParams }
   | { kind: 'worms'; values: WormsParams }
   | { kind: 'spores'; values: SporesParams }
+  | { kind: 'psychedelic'; values: PsychedelicParams }
+  | { kind: 'mandala'; values: MandalaParams }
+  | { kind: 'fractal'; values: FractalParams }
 
 export interface Palette {
   bg: string

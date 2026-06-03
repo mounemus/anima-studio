@@ -52,6 +52,9 @@ const ORGANISM_PRESETS: Record<OrganismKind, Record<string, number>> = {
   cells: { count: 50, pulse: 1.0, size: 1.2, attraction: 0.5, repulsion: 0.5, trail: 0.85 },
   worms: { count: 18, segments: 36, speed: 0.7, twist: 1.3, thickness: 0.01, trail: 0.93, segLen: 0.025 },
   spores: { count: 800, speed: 0.5, size: 0.012, bloomGain: 0.7, bloomDecay: 1.2, reactToObstacles: 1, trail: 0.9 },
+  psychedelic: { count: 4000, speed: 1.0, freq: 5.0, scale: 1.0, trail: 0.94, size: 2.5 },
+  mandala: { arms: 8, pointsPerArm: 64, outerRadius: 0.85, innerRadius: 0.05, waves: 3, freq: 1.0, rotation: 0.3, thickness: 0.008 },
+  fractal: { iterations: 120, zoom: 1.0, cx: -0.7, cy: 0.27, followHand: 0.6, bailout: 4, brightness: 1.0 },
 }
 
 export function ParamPanel() {
@@ -118,6 +121,9 @@ export function ParamPanel() {
               <option value="cells">🧫 Cellules — colonie</option>
               <option value="worms">🐍 Worms — serpents (rope physics)</option>
               <option value="spores">🌸 Spores — bloom à l'impact</option>
+              <option value="psychedelic">🌀 Psychédélique — galaxie 3D-feel</option>
+              <option value="mandala">🪷 Mandala — symétrie radiale</option>
+              <option value="fractal">🌌 Fractale — Julia set GPU</option>
             </select>
 
             <h3>Paramètres</h3>
@@ -175,6 +181,47 @@ export function ParamPanel() {
                 <Slider label="Taille de base" value={v.size} min={0.005} max={0.04} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
                 <Slider label="Force du bloom" value={v.bloomGain} min={0.1} max={1.5} step={0.05} onChange={(x) => patchValues({ bloomGain: x })} />
                 <Slider label="Décrescendo bloom" value={v.bloomDecay} min={0.2} max={3} step={0.05} onChange={(x) => patchValues({ bloomDecay: x })} />
+              </>
+            )}
+            {current.organism.kind === 'psychedelic' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Galaxie swirling 3D-feel — la main décale le centre, le pinch accélère, les graves pulsent, les aigus vibrent.
+                </p>
+                <Slider label="Points (grille²)" value={v.count} min={400} max={6400} step={100} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => `${Math.round(Math.sqrt(x))}²`} />
+                <Slider label="Vitesse rotation" value={v.speed} min={0.1} max={3} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Fréquence interne" value={v.freq} min={1} max={10} step={0.1} onChange={(x) => patchValues({ freq: x })} />
+                <Slider label="Échelle" value={v.scale} min={0.3} max={2} step={0.05} onChange={(x) => patchValues({ scale: x })} />
+                <Slider label="Taille points" value={v.size} min={0.5} max={6} step={0.1} onChange={(x) => patchValues({ size: x })} />
+              </>
+            )}
+            {current.organism.kind === 'mandala' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Kaléidoscope radial — la main x contrôle les bras (3-16), pinch ouvre le centre, audio bass = respiration.
+                </p>
+                <Slider label="Bras" value={v.arms} min={3} max={24} step={1} onChange={(x) => patchValues({ arms: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Points par bras" value={v.pointsPerArm} min={16} max={128} step={4} onChange={(x) => patchValues({ pointsPerArm: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Rayon extérieur" value={v.outerRadius} min={0.2} max={1.2} step={0.02} onChange={(x) => patchValues({ outerRadius: x })} />
+                <Slider label="Rayon intérieur" value={v.innerRadius} min={0} max={0.5} step={0.01} onChange={(x) => patchValues({ innerRadius: x })} />
+                <Slider label="Ondulations" value={v.waves} min={0} max={8} step={0.1} onChange={(x) => patchValues({ waves: x })} />
+                <Slider label="Vitesse ondulation" value={v.freq} min={0.1} max={3} step={0.05} onChange={(x) => patchValues({ freq: x })} />
+                <Slider label="Rotation" value={v.rotation} min={-2} max={2} step={0.05} onChange={(x) => patchValues({ rotation: x })} />
+                <Slider label="Épaisseur points" value={v.thickness} min={0.001} max={0.02} step={0.0005} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(4)} />
+              </>
+            )}
+            {current.organism.kind === 'fractal' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Julia set GPU — la main pilote le paramètre c en live (morphe la forme), pinch zoome, audio bass pulse la luminosité.
+                </p>
+                <Slider label="Itérations (précision)" value={v.iterations} min={32} max={256} step={4} onChange={(x) => patchValues({ iterations: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Zoom" value={v.zoom} min={0.3} max={5} step={0.05} onChange={(x) => patchValues({ zoom: x })} />
+                <Slider label="c réel (cx)" value={v.cx} min={-1} max={1} step={0.005} onChange={(x) => patchValues({ cx: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="c imaginaire (cy)" value={v.cy} min={-1} max={1} step={0.005} onChange={(x) => patchValues({ cy: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Suivi main" value={v.followHand} min={0} max={1} step={0.05} onChange={(x) => patchValues({ followHand: x })} format={(x) => `${Math.round(x * 100)}%`} />
+                <Slider label="Rayon échappement" value={v.bailout} min={2} max={20} step={0.5} onChange={(x) => patchValues({ bailout: x })} />
+                <Slider label="Luminosité" value={v.brightness} min={0.3} max={2.5} step={0.05} onChange={(x) => patchValues({ brightness: x })} />
               </>
             )}
           </div>

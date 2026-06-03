@@ -80,4 +80,58 @@ export const defaultScenes: Scene[] = [
     mapping: defaultMapping(),
     notes: 'Colonie de cellules qui pulsent au rythme des basses.',
   },
+  {
+    id: 'galaxy-trip',
+    name: '🌀 Galaxie psychédélique',
+    createdAt: now(),
+    updatedAt: now(),
+    organism: {
+      kind: 'psychedelic',
+      values: { count: 4900, speed: 1.2, freq: 5, scale: 1, trail: 0.95, size: 2.5 },
+    },
+    visual: {
+      palette: { bg: '#020207', primary: '#7c3aed', secondary: '#ff6ba6', glow: '#ffd54f' },
+      bloom: 0.7, feedback: 0.95, blendMode: 'add',
+    },
+    senses: { hands: true, audio: true, light: false, bindings: [] },
+    evolution: { enabled: false, driftSpeed: 0.02, amplitude: 0.1 },
+    mapping: defaultMapping(),
+    notes: 'Tunnel psychédélique — basé sur l\'équation paramétrique p5.js classique. La main décale le centre, le pinch accélère, les graves pulsent. Active le micro et mets de la musique : c\'est hypnotique.',
+  },
+  {
+    id: 'mandala-vivant',
+    name: '🪷 Mandala vivant',
+    createdAt: now(),
+    updatedAt: now(),
+    organism: {
+      kind: 'mandala',
+      values: { arms: 12, pointsPerArm: 80, outerRadius: 0.9, innerRadius: 0.08, waves: 4, freq: 0.8, rotation: 0.25, thickness: 0.01 },
+    },
+    visual: {
+      palette: { bg: '#070314', primary: '#00d4ff', secondary: '#ffd54f', glow: '#ff6ba6' },
+      bloom: 0.6, feedback: 0.92, blendMode: 'add',
+    },
+    senses: { hands: true, audio: true, light: false, bindings: [] },
+    evolution: { enabled: false, driftSpeed: 0.02, amplitude: 0.1 },
+    mapping: defaultMapping(),
+    notes: 'Kaléidoscope sacré — bouge la main horizontalement pour changer le nombre de bras (3-16). Pinch ouvre le centre. Méditatif.',
+  },
+  {
+    id: 'julia-explorer',
+    name: '🌌 Julia infinie',
+    createdAt: now(),
+    updatedAt: now(),
+    organism: {
+      kind: 'fractal',
+      values: { iterations: 140, zoom: 1, cx: -0.7269, cy: 0.1889, followHand: 0.7, bailout: 4, brightness: 1.0 },
+    },
+    visual: {
+      palette: { bg: '#000000', primary: '#7c3aed', secondary: '#00ffa3', glow: '#ffd54f' },
+      bloom: 0.5, feedback: 0.9, blendMode: 'add',
+    },
+    senses: { hands: true, audio: true, light: false, bindings: [] },
+    evolution: { enabled: false, driftSpeed: 0.02, amplitude: 0.1 },
+    mapping: defaultMapping(),
+    notes: 'Julia set GPU plein écran. La main pilote en live le paramètre c — morphe la forme fractale en temps réel. Pinch zoome. Explore l\'infini.',
+  },
 ]

@@ -34,13 +34,16 @@ Zones de mapping (mappingShapes) :
 - Pour créer des zones visuelles autour de l'écran : place les points dans [0..1] x [0..1].
 - Exemples : "3 cercles en triangle" → 3 polygones de 24 sommets répartis.
 
-Organismes disponibles (6 espèces) :
+Organismes disponibles (9 espèces) :
 - boids.values: count(100-5000), cohesion(0-2), separation(0-2), alignment(0-2), speed(0.1-3), vision(0.1-1), size(0.005-0.05)
 - particles.values: count(500-8000), speed(0.1-3), size(0.3-3), spread(0.2-2), gravity(-1..1), turbulence(0-2)
 - tendrils.values: count(4-80), length(8-64), speed(0.1-2), twist(0-4)
 - cells.values: count(4-200), pulse(0-3), size(0.4-3), attraction(0-2), repulsion(0-2)
 - worms.values: count(2-40), segments(8-48), speed(0.1-2), twist(0-3), segLen(0.01-0.06)
 - spores.values: count(100-2500), speed(0.1-2), size(0.005-0.04), bloomGain(0.1-1.5), bloomDecay(0.2-3), reactToObstacles(0|1)
+- psychedelic.values: count(400-6400), speed(0.1-3), freq(1-10), scale(0.3-2), size(0.5-6). Galaxie/tunnel swirling 3D-feel via équation paramétrique sin/cos — main décale le centre, pinch accélère le temps, bass pulse radial. Idéal pour "trippy", "psychédélique", "vortex", "galaxie".
+- mandala.values: arms(3-24), pointsPerArm(16-128), outerRadius(0.2-1.2), innerRadius(0-0.5), waves(0-8), freq(0.1-3), rotation(-2..2), thickness(0.001-0.02). Kaléidoscope radial symétrique — la main x contrôle le nombre de bras en live (3-16), pinch ouvre le centre. Idéal pour "sacré", "méditatif", "kaléidoscope", "spiritual".
+- fractal.values: iterations(32-256), zoom(0.3-5), cx(-1..1), cy(-1..1), followHand(0-1), bailout(2-20), brightness(0.3-2.5). Julia set GPU plein écran — main pilote le paramètre c (morphe la forme), pinch zoome. Idéal pour "abstrait", "infini", "Mandelbrot", "explorer".
 
 Flux directionnel (vent / courant) :
 - angle en RADIANS (0 = droite, π/2 ≈ 1.57 = bas, π ≈ 3.14 = gauche, -π/2 ≈ -1.57 = haut)

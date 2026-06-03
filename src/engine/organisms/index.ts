@@ -4,6 +4,9 @@ export { TendrilsOrganism } from './Tendrils'
 export { CellsOrganism } from './Cells'
 export { WormsOrganism } from './Worms'
 export { SporesOrganism } from './Spores'
+export { PsychedelicOrganism } from './Psychedelic'
+export { MandalaOrganism } from './Mandala'
+export { FractalOrganism } from './Fractal'
 
 export interface OrganismLike {
   mesh: import('three').Object3D
