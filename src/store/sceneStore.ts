@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Scene, OrganismParams, VisualParams, MappingConfig, AITexture, Evolution, MappingShape, TestPattern, Obstacle, ObstacleKind, FlowField } from '../types/scene'
+import type { Scene, OrganismParams, VisualParams, MappingConfig, AITexture, Evolution, MappingShape, TestPattern, Obstacle, ObstacleKind, FlowField, TimelineConfig } from '../types/scene'
 import { defaultScenes } from '../lib/defaultScenes'
 import { defaultShape, defaultObstacle, defaultFlow } from '../types/scene'
 import { saveScene, loadAllScenes, deleteScene as dbDelete, migrateFromIndexedDB } from '../lib/persistence'
@@ -33,6 +33,10 @@ interface SceneStoreState {
   removeObstacle: (id: string) => void
   updateObstacle: (id: string, patch: Partial<Obstacle>) => void
   updateFlow: (patch: Partial<FlowField>) => void
+  updateTimeline: (patch: Partial<TimelineConfig>) => void
+  addModifier: (kind: 'vortex' | 'gravityWell' | 'colorCycle' | 'pulseGate' | 'magneticBands') => void
+  removeModifier: (id: string) => void
+  updateModifier: (id: string, patch: any) => void
   setTexture: (tex: AITexture | null) => void
   setTextureIntensity: (v: number) => void
   updateEvolution: (e: Partial<Evolution>) => void
@@ -271,6 +275,60 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
         const base = s.flow ?? defaultFlow()
         return { ...s, flow: { ...base, ...patch }, updatedAt: Date.now() }
       })
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  updateTimeline: (patch) => {
+    set((st) => {
+      const next = st.scenes.map((s) => {
+        if (s.id !== st.currentId) return s
+        const base: TimelineConfig = s.timeline ?? { duration: 60, loop: true, tracks: [] }
+        return { ...s, timeline: { ...base, ...patch }, updatedAt: Date.now() }
+      })
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  addModifier: (kind) => {
+    // Dynamic import-free: replicate the small default factory locally to avoid
+    // pulling engine code into the store bundle.
+    const id = `mod-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+    const presets: Record<string, any> = {
+      vortex: { id, enabled: true, kind, center: 'hand', omega: 2, radius: 0.5, pull: 0.3 },
+      gravityWell: { id, enabled: true, kind, wells: [{ x: 0.5, y: 0.5, strength: 1, radius: 0.4 }] },
+      colorCycle: { id, enabled: true, kind, speedHz: 0.1, amount: 0.5 },
+      pulseGate: { id, enabled: true, kind, bpm: 1, intensity: 1.5, width: 0.15 },
+      magneticBands: { id, enabled: true, kind, bands: 4, strength: 0.3 },
+    }
+    set((st) => {
+      const next = st.scenes.map((s) => {
+        if (s.id !== st.currentId) return s
+        const mods = [...(s.modifiers ?? []), presets[kind]]
+        return { ...s, modifiers: mods, updatedAt: Date.now() }
+      })
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  removeModifier: (id) => {
+    set((st) => {
+      const next = st.scenes.map((s) => s.id === st.currentId
+        ? { ...s, modifiers: (s.modifiers ?? []).filter((m) => m.id !== id), updatedAt: Date.now() }
+        : s)
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  updateModifier: (id, patch) => {
+    set((st) => {
+      const next = st.scenes.map((s) => s.id === st.currentId
+        ? { ...s, modifiers: (s.modifiers ?? []).map((m) => m.id === id ? { ...m, ...patch } : m), updatedAt: Date.now() }
+        : s)
       return { scenes: next }
     })
     debouncePersist(() => get().persistCurrent())

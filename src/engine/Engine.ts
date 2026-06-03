@@ -12,6 +12,8 @@ import { setTrackers, stopColorTracking } from './ColorTracker'
 import { resolveShapeTexture, pruneShapeTextures, setUseMaskedBody, disposeAllContentSources } from './ContentSources'
 import { startMaskedWebcam, stopMaskedWebcam } from './MaskedWebcam'
 import { createOrganism, ORGANISM_DEFAULTS } from './OrganismFactory'
+import { tick as timelineTick, loadTimeline } from './Timeline'
+import { applyModifiers, type Modifier } from './Modifiers'
 
 export class Engine {
   private renderer: THREE.WebGLRenderer
@@ -131,6 +133,8 @@ export class Engine {
     // snapshot base values for evolution drift
     this.baseValues = { ...(s.organism.values as unknown as Record<string, number>) }
     this.evolutionT = 0
+    // Load the scene's timeline (or default empty one) into the runtime
+    loadTimeline(s.timeline as any)
     this.applyVisual(s.visual)
     this.mapping.apply(s.mapping)
     // clear feedback
@@ -283,6 +287,12 @@ export class Engine {
     resetCounters()
     soundEngine.totalAgents = (this.currentScene.organism.values as any).count ?? 0
 
+    // Timeline tick: sample every track at the current playhead time and route the
+    // resulting patches to the right subsystem WITHOUT going through the React store
+    // (which would persist them to localStorage — we only want the visual effect).
+    const tPatches = timelineTick()
+    if (tPatches.length > 0) this.applyTimelinePatches(tPatches)
+
     // Evolution: organic drift of organism params via low-freq noise (in-engine, no React loop)
     if (this.currentScene.evolution.enabled && this.organism) {
       this.evolutionT += dt * this.currentScene.evolution.driftSpeed
@@ -300,7 +310,26 @@ export class Engine {
       this.organism.updateParams(evolved)
     }
 
-    if (this.organism) this.organism.update(dt)
+    if (this.organism) {
+      this.organism.update(dt)
+      // Layer behavior modifiers on top of the base organism update.
+      // The organism owns its position/velocity Float32Arrays; we expose them via
+      // duck-typed access so modifiers can mutate in place without knowing the
+      // specific organism class. Modifiers no-op if the arrays aren't present.
+      const mods = (this.currentScene.modifiers ?? []) as Modifier[]
+      if (mods.length > 0) {
+        const o = this.organism as any
+        const positions: Float32Array | undefined = o.positions ?? o.heads?.array
+        const velocities: Float32Array | null = o.velocities ?? null
+        const count: number = o.count ?? (positions ? positions.length / 3 : 0)
+        if (positions && count > 0) {
+          applyModifiers(positions, velocities, count, dt, this.width / this.height, mods)
+          // Mark the GPU geometry dirty so the next draw picks up modifier-written positions
+          const geom = (this.organism.mesh as any).geometry
+          if (geom?.attributes?.position) geom.attributes.position.needsUpdate = true
+        }
+      }
+    }
     // Update + render per-zone organisms FIRST so their RTs are fresh for the mapping pass.
     // Clear with TRANSPARENT (alpha=0) instead of the scene bg color — otherwise the bg color
     // is baked into the zone texture and the mapping shader can't blend cleanly in AR mode.
@@ -340,6 +369,40 @@ export class Engine {
   }
 
   getStats() { return { fps: this.stats.fps, sense: { ...senseBus.hands } } }
+
+  /** Apply timeline-driven patches to the live engine subsystems. Routes by path prefix
+   *  so we don't waste cycles re-running expensive pipelines for unrelated keyframes. */
+  private applyTimelinePatches(patches: { path: string; value: number | string }[]) {
+    if (!this.currentScene || !this.organism) return
+    let visualDirty = false
+    let flowDirty = false
+    const orgPatch: Record<string, number> = {}
+    for (const p of patches) {
+      const parts = p.path.split('.')
+      if (parts[0] === 'organism' && parts[1] === 'values' && parts[2] && typeof p.value === 'number') {
+        orgPatch[parts[2]] = p.value
+      } else if (parts[0] === 'visual') {
+        // Mutate scene.visual in place (visual is small + applyVisual rebuilds all the right state)
+        const v: any = this.currentScene.visual
+        if (parts[1] === 'palette' && parts[2]) {
+          v.palette = { ...v.palette, [parts[2]]: p.value }
+        } else if (parts[1]) {
+          v[parts[1]] = p.value
+        }
+        visualDirty = true
+      } else if (parts[0] === 'flow') {
+        const f: any = this.currentScene.flow ?? { enabled: true, angle: 0, strength: 0, turbulence: 0 }
+        if (parts[1]) f[parts[1]] = p.value
+        this.currentScene.flow = f
+        flowDirty = true
+      }
+    }
+    if (Object.keys(orgPatch).length > 0) {
+      this.organism.updateParams({ ...(this.currentScene.organism.values as any), ...orgPatch })
+    }
+    if (visualDirty) this.applyVisual(this.currentScene.visual)
+    if (flowDirty && this.currentScene.flow) setFlow(this.currentScene.flow)
+  }
 
   /** Switch between opaque rendering (with bg color) and transparent (for AR mirror overlay). */
   setTransparent(transparent: boolean) {

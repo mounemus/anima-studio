@@ -300,6 +300,90 @@ function SensesTab() {
       <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 6, lineHeight: 1.5 }}>
         Les paramètres dérivent en continu par bruit Perlin. L'organisme paraît vivant et respire de lui-même.
       </p>
+
+      <BehaviorModifiers />
+    </div>
+  )
+}
+
+function BehaviorModifiers() {
+  const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
+  const add = useSceneStore((s) => s.addModifier)
+  const remove = useSceneStore((s) => s.removeModifier)
+  const update = useSceneStore((s) => s.updateModifier)
+  const mods = current.modifiers ?? []
+  const LABELS: Record<string, { name: string; emoji: string; help: string }> = {
+    vortex: { name: 'Vortex', emoji: '🌀', help: 'Tourbillon autour d\'un point (ou la main).' },
+    gravityWell: { name: 'Puits gravitationnel', emoji: '🕳️', help: 'Attire/repousse vers des points.' },
+    colorCycle: { name: 'Cycle de couleurs', emoji: '🌈', help: 'Décale la teinte de la palette.' },
+    pulseGate: { name: 'Battement', emoji: '💓', help: 'Pulse rythmique sur la vitesse.' },
+    magneticBands: { name: 'Bandes magnétiques', emoji: '〰️', help: 'Aligne les agents en bandes horizontales.' },
+  }
+  return (
+    <div style={{ marginTop: 20 }}>
+      <h3>🎚️ Comportements (modificateurs)</h3>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+        Effets orthogonaux superposables à l'organisme principal — combine-les librement.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 8 }}>
+        {(Object.keys(LABELS) as (keyof typeof LABELS)[]).map((k) => (
+          <button key={k} onClick={() => add(k as any)} style={{ fontSize: 11, justifyContent: 'center', padding: '4px 6px' }} title={LABELS[k].help}>
+            <span>{LABELS[k].emoji}</span> {LABELS[k].name}
+          </button>
+        ))}
+      </div>
+      {mods.length === 0 && (
+        <p style={{ fontSize: 11, color: 'var(--text-mute)', fontStyle: 'italic', textAlign: 'center', padding: '8px 0' }}>
+          Aucun modificateur — ajoute-en un ci-dessus.
+        </p>
+      )}
+      {mods.map((m) => {
+        const meta = LABELS[m.kind] ?? { name: m.kind, emoji: '?' }
+        return (
+          <div key={m.id} style={{ padding: 8, marginBottom: 6, background: 'var(--bg-elev-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              <input type="checkbox" checked={m.enabled} onChange={(e) => update(m.id, { enabled: e.target.checked })} />
+              <span style={{ flex: 1, fontSize: 12, fontWeight: 500 }}>{meta.emoji} {meta.name}</span>
+              <button className="ghost icon danger" onClick={() => remove(m.id)} title="Supprimer"><Trash2 size={11} /></button>
+            </div>
+            {m.kind === 'vortex' && (
+              <>
+                <Slider label="Vitesse rotation (ω)" value={m.omega} min={-6} max={6} step={0.1} onChange={(v) => update(m.id, { omega: v })} format={(v) => v.toFixed(1)} />
+                <Slider label="Rayon" value={m.radius} min={0.05} max={1.5} step={0.05} onChange={(v) => update(m.id, { radius: v })} format={(v) => v.toFixed(2)} />
+                <Slider label="Aspiration" value={m.pull} min={-1} max={1} step={0.05} onChange={(v) => update(m.id, { pull: v })} format={(v) => v.toFixed(2)} />
+                <label style={{ display: 'flex', gap: 6, fontSize: 11, marginTop: 4, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={m.center === 'hand'} onChange={(e) => update(m.id, { center: e.target.checked ? 'hand' : { x: 0.5, y: 0.5 } })} />
+                  Centrer sur la main
+                </label>
+              </>
+            )}
+            {m.kind === 'colorCycle' && (
+              <>
+                <Slider label="Vitesse (Hz)" value={m.speedHz} min={0.01} max={2} step={0.01} onChange={(v) => update(m.id, { speedHz: v })} format={(v) => v.toFixed(2)} />
+                <Slider label="Amplitude" value={m.amount} min={0} max={1} step={0.05} onChange={(v) => update(m.id, { amount: v })} format={(v) => v.toFixed(2)} />
+              </>
+            )}
+            {m.kind === 'pulseGate' && (
+              <>
+                <Slider label="BPM (Hz)" value={m.bpm} min={0.1} max={5} step={0.05} onChange={(v) => update(m.id, { bpm: v })} format={(v) => v.toFixed(2)} />
+                <Slider label="Intensité" value={m.intensity} min={1} max={4} step={0.1} onChange={(v) => update(m.id, { intensity: v })} format={(v) => `×${v.toFixed(1)}`} />
+                <Slider label="Largeur" value={m.width} min={0.03} max={0.5} step={0.01} onChange={(v) => update(m.id, { width: v })} format={(v) => v.toFixed(2)} />
+              </>
+            )}
+            {m.kind === 'magneticBands' && (
+              <>
+                <Slider label="Nombre de bandes" value={m.bands} min={2} max={12} step={1} onChange={(v) => update(m.id, { bands: Math.round(v) })} format={(v) => String(Math.round(v))} />
+                <Slider label="Force" value={m.strength} min={-2} max={2} step={0.05} onChange={(v) => update(m.id, { strength: v })} format={(v) => v.toFixed(2)} />
+              </>
+            )}
+            {m.kind === 'gravityWell' && (
+              <p style={{ fontSize: 10, color: 'var(--text-mute)' }}>
+                {m.wells.length} puits — édite via JSON pour l'instant (UI à venir).
+              </p>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

@@ -8,6 +8,7 @@ import { MappingOverlay } from './ui/MappingOverlay'
 import { ObstaclesOverlay } from './ui/ObstaclesOverlay'
 import { AIChat } from './ui/AIChat'
 import { MirrorView } from './ui/MirrorView'
+import { TimelinePanel } from './ui/TimelinePanel'
 
 function MirrorVisibility({ mirrorMode, videoRef }: { mirrorMode: boolean; videoRef: React.RefObject<HTMLVideoElement> }) {
   // Hide the full-screen mirror background when mapping wants to clip AR to zones
@@ -33,6 +34,7 @@ export function App() {
   const dbStatus = useSceneStore((s) => s.dbStatus)
   const dbError = useSceneStore((s) => s.dbError)
   const [aiOpen, setAiOpen] = useState(false)
+  const [timelineOpen, setTimelineOpen] = useState(false)
   const isOutput = useMemo(() => isOutputWindow(), [])
   const [outputMode, setOutputMode] = useState(isOutput)
   const [mirrorMode, setMirrorMode] = useState(false)
@@ -166,6 +168,8 @@ export function App() {
         outputMode={outputMode}
         onToggleMirror={() => setMirrorMode((x) => !x)}
         mirrorMode={mirrorMode}
+        onToggleTimeline={() => setTimelineOpen((x) => !x)}
+        timelineOpen={timelineOpen}
         canvasGetter={() => engineRef.current?.getCanvas() ?? null}
         stageRef={stageRef}
       />
@@ -223,6 +227,7 @@ export function App() {
       </div>
       <ParamPanel />
       {!outputMode && aiOpen && <AIChat open={aiOpen} />}
+      {!outputMode && <TimelinePanel open={timelineOpen} onClose={() => setTimelineOpen(false)} />}
       {/*
         Tracking video : kept "displayed" (1×1 px off-screen, opacity 0) instead of display:none.
         Some browsers stall the MediaStream pipeline on display:none, which prevents the visible

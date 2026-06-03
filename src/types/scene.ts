@@ -233,6 +233,23 @@ export const defaultFlow = (): FlowField => ({
   enabled: false, angle: 0, strength: 0.6, turbulence: 0.2,
 })
 
+/** Inline reference to keep this file the single source of truth without circular imports. */
+export interface TimelineKeyframe { t: number; v: number | string; easing?: 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'spring' | 'step' }
+export interface TimelineTrack {
+  id: string; path: string; label: string; color: string
+  easing: 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'spring' | 'step'
+  keyframes: TimelineKeyframe[]
+}
+export interface TimelineConfig { duration: number; loop: boolean; tracks: TimelineTrack[] }
+
+/** Behavior modifier — loose-typed here to avoid circular deps with engine/Modifiers.ts */
+export interface SceneModifier {
+  id: string
+  enabled: boolean
+  kind: 'vortex' | 'gravityWell' | 'colorCycle' | 'pulseGate' | 'magneticBands'
+  [k: string]: any
+}
+
 export interface Scene {
   id: string
   name: string
@@ -245,6 +262,8 @@ export interface Scene {
   mapping: MappingConfig
   obstacles?: Obstacle[]
   flow?: FlowField
+  timeline?: TimelineConfig
+  modifiers?: SceneModifier[]
   notes?: string
 }
 

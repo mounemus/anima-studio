@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music, ScanFace, Glasses } from 'lucide-react'
+import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music, ScanFace, Glasses, Clock, Sparkles } from 'lucide-react'
+import { startMood, stopMood, isMoodActive, triggerMoodReflect } from '../engine/MoodEngine'
 import { Link } from 'react-router-dom'
 import { listDisplays, openOutputWindow, type DisplayInfo } from '../lib/multiDisplay'
 import { startMIDI, stopMIDI } from '../senses/MIDI'
@@ -20,11 +21,13 @@ interface Props {
   outputMode: boolean
   onToggleMirror: () => void
   mirrorMode: boolean
+  onToggleTimeline: () => void
+  timelineOpen: boolean
   canvasGetter: () => HTMLCanvasElement | null
   stageRef: React.RefObject<HTMLDivElement>
 }
 
-export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMode, onToggleMirror, mirrorMode, canvasGetter, stageRef }: Props) {
+export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMode, onToggleMirror, mirrorMode, onToggleTimeline, timelineOpen, canvasGetter, stageRef }: Props) {
   const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))
   const [handsOn, setHandsOn] = useState(false)
   const [audioOn, setAudioOn] = useState(false)
@@ -55,6 +58,7 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handsOn])
   const [recOn, setRecOn] = useState(false)
+  const [moodOn, setMoodOn] = useState(isMoodActive())
   const [fps, setFps] = useState(0)
   const [toast, setToast] = useState<{ msg: string; err?: boolean } | null>(null)
   const [displays, setDisplays] = useState<DisplayInfo[] | null>(null)
@@ -79,7 +83,12 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
   }
 
   useEffect(() => {
-    const id = setInterval(() => setFps(fpsRef.current ?? 0), 400)
+    const id = setInterval(() => {
+      const v = fpsRef.current ?? 0
+      setFps(v)
+      // Expose for MoodEngine sampler (no React subscription overhead)
+      ;(window as any).__animaFps = v
+    }, 400)
     return () => clearInterval(id)
   }, [fpsRef])
 
@@ -158,6 +167,16 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
     const ok = await startXR(r, () => setXrOn(false))
     if (ok) { setXrOn(true); showToast('Session AR démarrée') }
     else showToast('Impossible d\'entrer en AR sur ce navigateur', true)
+  }
+
+  const toggleMood = () => {
+    if (moodOn) {
+      stopMood(); setMoodOn(false); showToast('Mood Engine arrêté')
+    } else {
+      startMood((reply) => showToast('✨ ' + reply))
+      setMoodOn(true)
+      showToast('✨ Mood Engine activé — l\'IA observera la scène toutes les 30s')
+    }
   }
 
   const toggleMIDI = async () => {
@@ -250,6 +269,13 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
         </span>
 
         <MasterSound />
+        <button
+          onClick={toggleMood}
+          onDoubleClick={() => triggerMoodReflect()}
+          className={`ghost icon ${moodOn ? 'active' : ''}`}
+          title="Mood Engine — l'IA fait évoluer la scène en live (double-clic : réfléchir maintenant)"
+        ><Sparkles size={16} /></button>
+        <button onClick={onToggleTimeline} className={`ghost icon ${timelineOpen ? 'active' : ''}`} title="Timeline / Keyframes"><Clock size={16} /></button>
         <button onClick={shot} className="ghost icon" title="Capture PNG"><ImageDown size={16} /></button>
         <button onClick={toggleRec} className={`ghost icon ${recOn ? 'rec active' : 'rec'}`} title={recOn ? 'Arrêter l\'enregistrement' : 'Enregistrer WebM'}>
           <Video size={16} />
