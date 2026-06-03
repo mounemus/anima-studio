@@ -1,4 +1,5 @@
-import { supa, supaConfigured } from '../_lib/supabase'
+import { kv, kvConfigured } from '../_lib/kv'
+import { K } from '../_lib/kv'
 import { jsonResponse } from '../_lib/auth'
 
 export const config = { runtime: 'edge' }
@@ -6,16 +7,16 @@ export const config = { runtime: 'edge' }
 export default async function handler(_req: Request): Promise<Response> {
   const env = (globalThis as any).process?.env ?? {}
   const ok = {
-    supabase: supaConfigured(),
+    kv: kvConfigured(),
     encryptKey: !!env.ENCRYPT_KEY && env.ENCRYPT_KEY.length >= 32,
     jwtSecret: !!env.JWT_SECRET && env.JWT_SECRET.length >= 16,
     setupComplete: false as boolean,
   }
-  if (ok.supabase) {
+  if (ok.kv) {
     try {
-      const { count } = await supa().from('admin_users').select('id', { count: 'exact', head: true })
-      ok.setupComplete = (count ?? 0) > 0
-    } catch { /* table missing or other */ }
+      const admin = await kv().exists(K.admin)
+      ok.setupComplete = admin === 1
+    } catch { /* ignore */ }
   }
   return jsonResponse(ok)
 }

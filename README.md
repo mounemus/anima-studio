@@ -24,45 +24,44 @@ npm run dev
 
 Ouvre `http://localhost:5173`. Active la caméra et le micro dans la barre du haut, puis joue.
 
-## Configuration (Supabase + clés API)
+## Configuration (Vercel KV + clés API)
 
-Anima Studio embarque une page **`/admin`** qui te permet de gérer toutes tes clés API (Anthropic, fal.ai, OpenAI, Replicate, ElevenLabs, Stability) **sans redéployer**. Les clés sont chiffrées AES-256-GCM avant d'être stockées dans Supabase.
+Anima Studio embarque une page **`/admin`** qui te permet de gérer toutes tes clés API (Anthropic, fal.ai, OpenAI, Replicate, ElevenLabs, Stability) **sans redéployer**. Les clés sont chiffrées AES-256-GCM avant d'être stockées dans Vercel KV (Upstash Redis).
 
 ### Étapes (une seule fois)
 
-1. **Crée un projet Supabase gratuit** → https://supabase.com/dashboard
-2. **Lance la migration** : Project → SQL Editor → colle le contenu de `supabase/migrations/0001_init.sql` → Run
-3. **Récupère 2 clés** (Project Settings → API) :
-   - `Project URL` → `SUPABASE_URL`
-   - `service_role` key (secrète, ne JAMAIS exposer côté client) → `SUPABASE_SERVICE_ROLE_KEY`
-4. **Génère 2 secrets** localement :
+1. **Provisionne une base KV** : Vercel Dashboard → ton projet → **Storage** → **Create Database** → **KV**. Vercel injecte automatiquement `KV_REST_API_URL` et `KV_REST_API_TOKEN` dans les env vars du projet.
+2. **Ajoute 2 secrets** :
    ```bash
-   # ENCRYPT_KEY : 32+ caractères pour chiffrer les clés API
-   openssl rand -hex 32
-   # JWT_SECRET : 16+ caractères pour signer les sessions admin
-   openssl rand -hex 32
-   ```
-5. **Ajoute les 4 variables sur Vercel** :
-   ```bash
-   vercel env add SUPABASE_URL production
-   vercel env add SUPABASE_SERVICE_ROLE_KEY production
+   # Génère localement
+   openssl rand -hex 32   # ENCRYPT_KEY  (chiffrement des clés API)
+   openssl rand -hex 32   # JWT_SECRET   (signature des sessions)
+
+   # Ajoute sur Vercel
    vercel env add ENCRYPT_KEY production
    vercel env add JWT_SECRET production
    vercel deploy --prod
    ```
-6. **Ouvre `/admin`** : tu seras invité à créer ton compte admin (premier lancement), puis tu pourras coller toutes tes clés API dans la dashboard.
+3. **Ouvre `/admin`** : tu seras invité à créer ton compte admin (premier lancement), puis tu pourras coller toutes tes clés API dans la dashboard.
 
 ### Variables d'environnement résumées
 
-| Variable | Obligatoire | Description |
-|---|---|---|
-| `SUPABASE_URL` | oui | URL du projet Supabase |
-| `SUPABASE_SERVICE_ROLE_KEY` | oui | Clé service_role (serveur uniquement) |
-| `ENCRYPT_KEY` | oui | 32+ caractères pour chiffrer les clés API |
-| `JWT_SECRET` | oui | 16+ caractères pour signer les sessions |
-| `ANTHROPIC_API_KEY` | non | Fallback si pas configurée via /admin |
+| Variable | Obligatoire | Origine | Description |
+|---|---|---|---|
+| `KV_REST_API_URL` | oui | auto (Vercel KV) | URL REST Upstash |
+| `KV_REST_API_TOKEN` | oui | auto (Vercel KV) | Token serveur |
+| `ENCRYPT_KEY` | oui | manuel | 32+ caractères pour chiffrer les clés API |
+| `JWT_SECRET` | oui | manuel | 16+ caractères pour signer les sessions |
+| `ANTHROPIC_API_KEY` | non | fallback | Si configurée ici, prime sur l'admin si KV inaccessible |
 
 Les clés API spécifiques aux providers (`ANTHROPIC_API_KEY`, `FAL_KEY`, …) **n'ont plus besoin d'être en env var** : tu les gères depuis `/admin`.
+
+### Pourquoi Vercel KV (Upstash) et pas Supabase ?
+
+- **Zéro service externe à créer** : 1 clic dans le dashboard Vercel.
+- **Edge-natif** : REST API consommée directement depuis les Edge Functions, latence <30 ms.
+- **Adapté au scope** : 1 admin + 6 clés API = 7 entrées. Pas besoin de SQL.
+- **Free tier confortable** pour cet usage (lectures/écritures occasionnelles).
 
 ## Stack
 
@@ -87,15 +86,13 @@ src/
 └── admin/            # AdminPage, AdminLogin, AdminSetup, AdminDashboard
 
 api/
-├── claude.ts                # Compagnon IA (lit la clé depuis Supabase)
-├── _lib/                    # supabase client, crypto AES-GCM, auth JWT, settings
+├── claude.ts                # Compagnon IA (lit la clé depuis Vercel KV)
+├── _lib/                    # kv (Upstash), crypto AES-GCM, auth PBKDF2 + JWT, settings
 └── admin/
     ├── status.ts            # Health check (env vars + setup state)
     ├── setup.ts             # Création du compte admin (1er lancement)
     ├── login.ts | logout.ts | me.ts
     └── settings.ts          # GET/PUT des clés API chiffrées
-
-supabase/migrations/0001_init.sql   # Schéma SQL initial
 ```
 
 ## Concept

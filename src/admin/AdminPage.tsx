@@ -6,7 +6,7 @@ import { AdminDashboard } from './AdminDashboard'
 import { ArrowLeft } from 'lucide-react'
 
 interface Status {
-  supabase: boolean
+  kv: boolean
   encryptKey: boolean
   jwtSecret: boolean
   setupComplete: boolean
@@ -21,13 +21,13 @@ export function AdminPage() {
   const nav = useNavigate()
 
   useEffect(() => {
-    fetch('/api/admin/status').then((r) => r.json()).then(setStatus).catch(() => setStatus({ supabase: false, encryptKey: false, jwtSecret: false, setupComplete: false }))
+    fetch('/api/admin/status').then((r) => r.json()).then(setStatus).catch(() => setStatus({ kv: false, encryptKey: false, jwtSecret: false, setupComplete: false }))
     fetch('/api/admin/me').then((r) => r.json()).then(setMe).catch(() => setMe({ authenticated: false }))
   }, [refreshTick])
 
   if (!status || !me) return <div className="admin-shell"><div className="admin-card"><div className="admin-title">Anima · Admin</div><p>Chargement...</p></div></div>
 
-  const allReady = status.supabase && status.encryptKey && status.jwtSecret
+  const allReady = status.kv && status.encryptKey && status.jwtSecret
   if (!allReady) return (
     <div className="admin-shell">
       <button className="ghost" onClick={() => nav('/')} style={{ position: 'absolute', top: 16, left: 16 }}>
@@ -39,13 +39,13 @@ export function AdminPage() {
           Pour activer l'admin, configure ces variables d'environnement sur Vercel puis redéploie :
         </p>
         <ul className="env-checklist">
-          <li className={status.supabase ? 'ok' : 'ko'}>
-            <code>SUPABASE_URL</code> + <code>SUPABASE_SERVICE_ROLE_KEY</code>
-            <small>Crée un projet sur supabase.com (gratuit) et lance la migration <code>supabase/migrations/0001_init.sql</code>.</small>
+          <li className={status.kv ? 'ok' : 'ko'}>
+            <code>KV_REST_API_URL</code> + <code>KV_REST_API_TOKEN</code>
+            <small>Vercel Dashboard → Storage → Create Database → KV. Les env vars sont injectées automatiquement.</small>
           </li>
           <li className={status.encryptKey ? 'ok' : 'ko'}>
             <code>ENCRYPT_KEY</code>
-            <small>32 caractères aléatoires (sert à chiffrer les clés API stockées). Ex : <code>openssl rand -hex 32</code></small>
+            <small>32+ caractères pour chiffrer les clés API. Ex : <code>openssl rand -hex 32</code></small>
           </li>
           <li className={status.jwtSecret ? 'ok' : 'ko'}>
             <code>JWT_SECRET</code>

@@ -1,4 +1,4 @@
-import { supa, supaConfigured } from './supabase'
+import { kv, kvConfigured, K } from './kv'
 import { decryptString, encryptString, hint } from './crypto'
 
 export const KNOWN_KEYS = [
@@ -12,15 +12,22 @@ export const KNOWN_KEYS = [
 
 export type SettingKey = typeof KNOWN_KEYS[number]['key']
 
+interface StoredSetting {
+  value: string  // encrypted
+  hint: string
+  updated_at: string
+  updated_by?: string
+}
+
 export async function getSetting(key: string): Promise<string | null> {
-  // Prefer DB, fallback to env var (so the legacy ANTHROPIC_API_KEY env still works)
-  if (supaConfigured()) {
+  // Prefer KV, fallback to raw env var (so legacy ANTHROPIC_API_KEY env still works)
+  if (kvConfigured()) {
     try {
-      const { data } = await supa().from('app_settings').select('value').eq('key', key).maybeSingle()
-      if (data?.value) {
-        try { return await decryptString(data.value) } catch { /* corrupt — fallthrough */ }
+      const row = await kv().get<StoredSetting>(K.setting(key))
+      if (row?.value) {
+        try { return await decryptString(row.value) } catch { /* corrupt */ }
       }
-    } catch { /* DB error — fallthrough */ }
+    } catch { /* KV error */ }
   }
   return (globalThis as any).process?.env?.[key] ?? null
 }
@@ -28,39 +35,43 @@ export async function getSetting(key: string): Promise<string | null> {
 export async function listSettings(): Promise<{ key: string; hint: string; configured: boolean }[]> {
   const env = (globalThis as any).process?.env ?? {}
   const out: { key: string; hint: string; configured: boolean }[] = []
-  let dbRows: { key: string; value: string; hint: string | null }[] = []
-  if (supaConfigured()) {
+  let rows: Record<string, StoredSetting | null> = {}
+  if (kvConfigured()) {
     try {
-      const { data } = await supa().from('app_settings').select('key, value, hint')
-      dbRows = data ?? []
+      const keys = KNOWN_KEYS.map((k) => K.setting(k.key))
+      const values = await kv().mget<(StoredSetting | null)[]>(...keys)
+      KNOWN_KEYS.forEach((k, i) => { rows[k.key] = values[i] })
     } catch { /* ignore */ }
   }
   for (const k of KNOWN_KEYS) {
-    const row = dbRows.find((r) => r.key === k.key)
-    const hasDb = !!row?.value
+    const row = rows[k.key]
+    const hasKv = !!row?.value
     const hasEnv = !!env[k.key]
     out.push({
       key: k.key,
       hint: row?.hint ?? (hasEnv ? '(env)' : ''),
-      configured: hasDb || hasEnv,
+      configured: hasKv || hasEnv,
     })
   }
   return out
 }
 
 export async function setSetting(key: string, value: string, updatedBy?: string) {
-  if (!supaConfigured()) throw new Error('Supabase non configurée — impossible de sauvegarder.')
+  if (!kvConfigured()) throw new Error('Vercel KV non configurée — impossible de sauvegarder.')
   const trimmed = value.trim()
   const enc = await encryptString(trimmed)
-  const h = hint(trimmed)
-  const { error } = await supa()
-    .from('app_settings')
-    .upsert({ key, value: enc, hint: h, updated_by: updatedBy ?? null, updated_at: new Date().toISOString() })
-  if (error) throw new Error(error.message)
+  const stored: StoredSetting = {
+    value: enc,
+    hint: hint(trimmed),
+    updated_at: new Date().toISOString(),
+    updated_by: updatedBy,
+  }
+  await kv().set(K.setting(key), stored)
+  await kv().sadd(K.settingsIndex, key)
 }
 
 export async function deleteSetting(key: string) {
-  if (!supaConfigured()) throw new Error('Supabase non configurée.')
-  const { error } = await supa().from('app_settings').delete().eq('key', key)
-  if (error) throw new Error(error.message)
+  if (!kvConfigured()) throw new Error('Vercel KV non configurée.')
+  await kv().del(K.setting(key))
+  await kv().srem(K.settingsIndex, key)
 }
