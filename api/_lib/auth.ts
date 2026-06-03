@@ -1,5 +1,50 @@
 import { SignJWT, jwtVerify } from 'jose'
-import bcrypt from 'bcryptjs'
+
+// PBKDF2-SHA256 password hashing (edge-compatible via WebCrypto)
+const PBKDF2_ITERS = 200_000
+const PBKDF2_KEYLEN = 32
+const SALT_LEN = 16
+
+function bytesToB64(b: Uint8Array): string {
+  let s = ''
+  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i])
+  return btoa(s)
+}
+function b64ToBytes(s: string): Uint8Array {
+  const bin = atob(s)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
+async function pbkdf2(password: string, salt: Uint8Array): Promise<Uint8Array> {
+  const enc = new TextEncoder()
+  const baseKey = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits'])
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: salt as BufferSource, iterations: PBKDF2_ITERS, hash: 'SHA-256' },
+    baseKey,
+    PBKDF2_KEYLEN * 8,
+  )
+  return new Uint8Array(bits)
+}
+
+export async function hashPassword(plain: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN))
+  const hash = await pbkdf2(plain, salt)
+  return `pbkdf2$${PBKDF2_ITERS}$${bytesToB64(salt)}$${bytesToB64(hash)}`
+}
+
+export async function comparePassword(plain: string, stored: string): Promise<boolean> {
+  const parts = stored.split('$')
+  if (parts.length !== 4 || parts[0] !== 'pbkdf2') return false
+  const salt = b64ToBytes(parts[2])
+  const expected = b64ToBytes(parts[3])
+  const actual = await pbkdf2(plain, salt)
+  if (actual.length !== expected.length) return false
+  let diff = 0
+  for (let i = 0; i < actual.length; i++) diff |= actual[i] ^ expected[i]
+  return diff === 0
+}
 
 const COOKIE = 'anima_admin'
 const ALG = 'HS256'
@@ -49,14 +94,6 @@ export async function requireAdmin(req: Request): Promise<AdminSession | Respons
   const sess = await verifySession(tok)
   if (!sess) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'content-type': 'application/json' } })
   return sess
-}
-
-export async function hashPassword(plain: string): Promise<string> {
-  return bcrypt.hash(plain, 10)
-}
-
-export async function comparePassword(plain: string, hash: string): Promise<boolean> {
-  return bcrypt.compare(plain, hash)
 }
 
 export function jsonResponse(data: unknown, init?: ResponseInit): Response {
