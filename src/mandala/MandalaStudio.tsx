@@ -57,17 +57,23 @@ export function MandalaStudio() {
   const [skeleton, setSkeleton] = useState(true)
   const [interconnect, setInterconnect] = useState(true)
   const [audioReact, setAudioReact] = useState(true)
+  const [crystal, setCrystal] = useState(true)
+  const [volumetric, setVolumetric] = useState(true)
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
   // The render loop reads parameters through a ref so slider changes apply live
   // without re-subscribing the rAF closure.
-  const paramsRef = useRef({ style, segments, size, fade, skeleton, interconnect, audioReact })
-  paramsRef.current = { style, segments, size, fade, skeleton, interconnect, audioReact }
+  const paramsRef = useRef({ style, segments, size, fade, skeleton, interconnect, audioReact, crystal, volumetric })
+  paramsRef.current = { style, segments, size, fade, skeleton, interconnect, audioReact, crystal, volumetric }
 
   const pathsRef = useRef<MandalaElement[]>([])
   const lastPosRef = useRef<Record<number, { x: number; y: number }>>({})
   const clearRef = useRef(false)
+  // Smoothed pseudo-3D state (volumetric effect): depth 0..1 (far→near),
+  // tilt -1..1 (hand horizontal position → pivot angle).
+  const depthRef = useRef(0)
+  const tiltRef = useRef(0)
 
   useEffect(() => {
     const video = videoRef.current!
@@ -83,22 +89,6 @@ export function MandalaStudio() {
     const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight }
     resize()
     window.addEventListener('resize', resize)
-
-    const drawSkeleton = (lm: { x: number; y: number }[]) => {
-      ctx.save()
-      ctx.strokeStyle = 'rgba(0, 240, 255, 0.4)'
-      ctx.lineWidth = 2
-      for (const chain of FINGER_CHAINS) {
-        ctx.beginPath()
-        chain.forEach((idx, i) => {
-          const x = (1 - lm[idx].x) * canvas.width
-          const y = lm[idx].y * canvas.height
-          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
-        })
-        ctx.stroke()
-      }
-      ctx.restore()
-    }
 
     const renderElement = (el: MandalaElement, segCount: number) => {
       const cx = canvas.width / 2, cy = canvas.height / 2
@@ -136,6 +126,40 @@ export function MandalaStudio() {
       ctx.restore()
     }
 
+    // CRYSTAL : draw a kaleidoscoped web connecting the five fingertips + palm.
+    // Triggered when the fingers close together (shadow-puppet gesture). The
+    // crystal is rendered live every frame (not accumulated) so it follows the
+    // hand, and is mirrored N-fold like the rest of the mandala.
+    const renderCrystal = (pts: { x: number; y: number }[], palm: { x: number; y: number }, segCount: number, hue: number, intensity: number) => {
+      const cx = canvas.width / 2, cy = canvas.height / 2
+      const nodes = [...pts, palm]
+      // Edge list : every pair of nodes (complete graph) → dense crystalline lattice.
+      const edges: [number, number][] = []
+      for (let a = 0; a < nodes.length; a++) for (let b = a + 1; b < nodes.length; b++) edges.push([a, b])
+      ctx.save()
+      ctx.translate(cx, cy)
+      ctx.lineCap = 'round'
+      for (let s = 0; s < segCount; s++) {
+        const off = (s * Math.PI * 2) / segCount
+        for (const [ia, ib] of edges) {
+          const A = nodes[ia], B = nodes[ib]
+          const rA = Math.hypot(A.x - cx, A.y - cy), aA = Math.atan2(A.y - cy, A.x - cx) + off
+          const rB = Math.hypot(B.x - cx, B.y - cy), aB = Math.atan2(B.y - cy, B.x - cx) + off
+          ctx.strokeStyle = `hsla(${hue}, 100%, ${55 + intensity * 25}%, ${0.25 + intensity * 0.55})`
+          ctx.lineWidth = 1 + intensity * 2
+          ctx.shadowBlur = 6 + intensity * 18
+          ctx.shadowColor = ctx.strokeStyle
+          ctx.beginPath()
+          ctx.moveTo(Math.cos(aA) * rA, Math.sin(aA) * rA)
+          ctx.lineTo(Math.cos(aB) * rB, Math.sin(aB) * rB)
+          ctx.stroke()
+        }
+      }
+      ctx.restore()
+    }
+
+    type ScreenJob = { kind: 'skeleton'; lm: { x: number; y: number }[] } | { kind: 'link'; a: { x: number; y: number }; b: { x: number; y: number } }
+
     const loop = () => {
       if (!running) return
       const p = paramsRef.current
@@ -155,52 +179,103 @@ export function MandalaStudio() {
       const bass = p.audioReact ? (senseBus.audio.bass ?? 0) : 0
       hueBase = (hueBase + 0.3 + bass * 2) % 360
 
-      for (const el of pathsRef.current) renderElement(el, p.segments)
+      // ---- DETECTION (gather everything, defer the screen-space overlays) ----
+      const crystalJobs: { pts: { x: number; y: number }[]; palm: { x: number; y: number }; hue: number; intensity: number }[] = []
+      const screenJobs: ScreenJob[] = []
+      const tips: { x: number; y: number }[] = []
 
       if (video.readyState >= 2 && video.currentTime !== lastVideoTime && landmarker) {
         lastVideoTime = video.currentTime
         const res = landmarker.detectForVideo(video, performance.now())
         const hands = res.landmarks ?? []
-        const tips: { x: number; y: number; hue: number }[] = []
         if (hands.length > 0) {
           hands.forEach((lm, handIdx) => {
-            if (p.skeleton) drawSkeleton(lm)
+            const toScreen = (i: number) => ({ x: (1 - lm[i].x) * canvas.width, y: lm[i].y * canvas.height })
             const idxTip = lm[TIP_INDEX]
             const thumbTip = lm[TIP_THUMB]
             const x = (1 - idxTip.x) * canvas.width
             const y = idxTip.y * canvas.height
             const hue = (hueBase + handIdx * 130) % 360
-            tips.push({ x, y, hue })
+            tips.push({ x, y })
 
+            // ---- VOLUMETRIC z-depth : hand scale (palm size) → near/far ----
+            // landmark 0 = wrist, 9 = middle-finger base. A bigger gap = hand
+            // closer to the camera. The smoothed value drives a pseudo-3D pivot.
+            const handScale = Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y)
+            const depthNorm = Math.max(0, Math.min(1, (handScale - 0.08) / 0.22))
+            const tiltRaw = ((1 - lm[9].x) - 0.5) * 2   // hand horizontal position → pivot
+            if (handIdx === 0) {
+              depthRef.current += (depthNorm - depthRef.current) * 0.12
+              tiltRef.current += (tiltRaw - tiltRef.current) * 0.12
+            }
+
+            // ---- CRYSTAL : finger closeness (shadow-puppet) ----
+            const fingerTips = [TIP_INDEX, 12, 16, 20].map(toScreen)
+            const cxc = fingerTips.reduce((s, t) => s + t.x, 0) / fingerTips.length
+            const cyc = fingerTips.reduce((s, t) => s + t.y, 0) / fingerTips.length
+            const spreadPx = fingerTips.reduce((s, t) => s + Math.hypot(t.x - cxc, t.y - cyc), 0) / fingerTips.length
+            const handScalePx = handScale * canvas.width
+            const spreadNorm = handScalePx > 1 ? spreadPx / handScalePx : 1
+            const closeness = Math.max(0, Math.min(1, (0.95 - spreadNorm) / 0.55))   // 0 = wide, 1 = fingers together
+            if (p.crystal && closeness > 0.18) {
+              const allTips = [TIP_THUMB, TIP_INDEX, 12, 16, 20].map(toScreen)
+              crystalJobs.push({ pts: allTips, palm: toScreen(9), hue, intensity: closeness })
+            }
+
+            // ---- normal index stroke (thickness lifts with depth + bass) ----
             const pinchDist = Math.hypot(idxTip.x - thumbTip.x, idxTip.y - thumbTip.y)
             const isPinching = pinchDist < 0.06
-            let strokeSize = p.size * (1 + bass * 1.5)
+            let strokeSize = p.size * (1 + bass * 1.5 + depthRef.current * 0.8)
             if (isPinching) strokeSize *= 2.5
 
             if (p.style === 'lines' && lastPosRef.current[handIdx]) {
-              pathsRef.current.push({
-                type: 'lines',
-                x1: lastPosRef.current[handIdx].x, y1: lastPosRef.current[handIdx].y,
-                x2: x, y2: y, size: strokeSize, hue, alpha: 1, isPinching,
-              })
+              pathsRef.current.push({ type: 'lines', x1: lastPosRef.current[handIdx].x, y1: lastPosRef.current[handIdx].y, x2: x, y2: y, size: strokeSize, hue, alpha: 1, isPinching })
             } else {
               pathsRef.current.push({ type: p.style, x1: x, y1: y, size: strokeSize, hue, alpha: 1, isPinching })
             }
             lastPosRef.current[handIdx] = { x, y }
+            if (p.skeleton) screenJobs.push({ kind: 'skeleton', lm: lm.map((_, i) => toScreen(i)) })
           })
-
-          if (p.interconnect && tips.length >= 2) {
-            ctx.save()
-            ctx.strokeStyle = 'rgba(255,255,255,0.25)'
-            ctx.lineWidth = 1
-            ctx.setLineDash([5, 10])
-            ctx.beginPath(); ctx.moveTo(tips[0].x, tips[0].y); ctx.lineTo(tips[1].x, tips[1].y); ctx.stroke()
-            ctx.restore()
-          }
+          if (p.interconnect && tips.length >= 2) screenJobs.push({ kind: 'link', a: tips[0], b: tips[1] })
         } else {
           lastPosRef.current = {}
+          // Ease depth/tilt back to neutral when no hand is present.
+          depthRef.current *= 0.95
+          tiltRef.current *= 0.95
         }
       }
+
+      // ---- RENDER mandala (paths + crystal) inside the pseudo-3D pivot ----
+      const depth = p.volumetric ? depthRef.current : 0
+      const tilt = p.volumetric ? tiltRef.current : 0
+      ctx.save()
+      if (p.volumetric && (depth !== 0 || tilt !== 0)) {
+        const cx = canvas.width / 2, cy = canvas.height / 2
+        ctx.translate(cx + tilt * depth * 70, cy)   // depth shifts the calc center
+        ctx.rotate(tilt * 0.4)                        // hand L/R pivots the structure
+        ctx.scale(0.85 + depth * 0.5, (0.85 + depth * 0.5) * (1 - 0.32 * Math.abs(tilt)))  // near = bigger; pivot foreshortens Y
+        ctx.translate(-cx, -cy)
+      }
+      for (const el of pathsRef.current) renderElement(el, p.segments)
+      for (const job of crystalJobs) renderCrystal(job.pts, job.palm, p.segments, job.hue, job.intensity)
+      ctx.restore()
+
+      // ---- SCREEN-SPACE overlays on top (track the real hand, no 3D) ----
+      for (const job of screenJobs) {
+        if (job.kind === 'skeleton') {
+          ctx.save(); ctx.strokeStyle = 'rgba(0,240,255,0.4)'; ctx.lineWidth = 2
+          for (const chain of FINGER_CHAINS) {
+            ctx.beginPath()
+            chain.forEach((idx, i) => { const pt = job.lm[idx]; if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y) })
+            ctx.stroke()
+          }
+          ctx.restore()
+        } else {
+          ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1; ctx.setLineDash([5, 10])
+          ctx.beginPath(); ctx.moveTo(job.a.x, job.a.y); ctx.lineTo(job.b.x, job.b.y); ctx.stroke(); ctx.restore()
+        }
+      }
+
       // Hard cap the path buffer so an "infini" session can't grow without bound.
       if (pathsRef.current.length > 6000) pathsRef.current.splice(0, pathsRef.current.length - 6000)
       rafId = requestAnimationFrame(loop)
@@ -303,6 +378,14 @@ export function MandalaStudio() {
           <input type="checkbox" checked={interconnect} onChange={(e) => setInterconnect(e.target.checked)} style={{ accentColor: '#00f0ff' }} />
           Lien d'énergie inter-mains
         </label>
+        <label style={chkRow} title="Rapproche tes doigts (ombre chinoise) → armature cristalline mirroir">
+          <input type="checkbox" checked={crystal} onChange={(e) => setCrystal(e.target.checked)} style={{ accentColor: '#00f0ff' }} />
+          ✦ Armature cristalline (doigts serrés)
+        </label>
+        <label style={chkRow} title="Avance/recule la main près de la caméra → la profondeur z fait pivoter le mandala en 3D">
+          <input type="checkbox" checked={volumetric} onChange={(e) => setVolumetric(e.target.checked)} style={{ accentColor: '#00f0ff' }} />
+          ◈ Volumétrique 3D (profondeur z)
+        </label>
         <label style={chkRow}>
           <input type="checkbox" checked={audioReact} onChange={(e) => setAudioReact(e.target.checked)} style={{ accentColor: '#00f0ff' }} />
           Réactif au son (micro) <button onClick={enableAudio} style={miniBtn} title="Activer le micro">🎤</button>
@@ -322,7 +405,7 @@ export function MandalaStudio() {
       }}>
         <div style={{ color: '#00f0ff', fontSize: 16, textTransform: 'uppercase', letterSpacing: 1 }}>Mandala Studio AR</div>
         <div style={{ color: error ? '#ff6b6b' : '#aaa', fontSize: 12 }}>{error ?? status}</div>
-        {!error && <div style={{ color: '#888', fontSize: 11 }}>Pince pouce + index pour intensifier — 2 mains pour le lien d'énergie</div>}
+        {!error && <div style={{ color: '#888', fontSize: 11 }}>Pince pour intensifier · serre les doigts pour le cristal ✦ · avance/recule la main pour la 3D ◈</div>}
       </div>
     </div>
   )
