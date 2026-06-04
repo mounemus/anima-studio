@@ -96,14 +96,54 @@ export type SenseSource = string
 
 export function readSense(path: SenseSource): number {
   switch (path) {
-    case 'hand.index': return senseBus.hands.indexTip.y
-    case 'hand.palm': return senseBus.hands.palm.y
+    case 'hand.index':
+    case 'hand.index.y': return senseBus.hands.indexTip.y
+    case 'hand.index.x': return senseBus.hands.indexTip.x
+    case 'hand.palm':
+    case 'hand.palm.y': return senseBus.hands.palm.y
+    case 'hand.palm.x': return senseBus.hands.palm.x
     case 'hand.pinch': return senseBus.hands.pinch
+    case 'hand.openness': return senseBus.hands.openness
     case 'audio.level': return senseBus.audio.level
     case 'audio.bass': return senseBus.audio.bass
     case 'audio.mid': return senseBus.audio.mid
     case 'audio.high': return senseBus.audio.high
     case 'light': return senseBus.light.brightness
-    default: return 0
+    case 'midi.mod': return senseBus.midi.mod
+    case 'midi.notes.any': {
+      let m = 0
+      for (let i = 0; i < 128; i++) if (senseBus.midi.notes[i] > m) m = senseBus.midi.notes[i]
+      return m
+    }
+    default: {
+      // midi.cc<N>  /  midi.note<N>
+      const cc = /^midi\.cc(\d{1,3})$/.exec(path)
+      if (cc) {
+        const n = parseInt(cc[1], 10)
+        return n >= 0 && n < 128 ? senseBus.midi.cc[n] : 0
+      }
+      const note = /^midi\.note(\d{1,3})$/.exec(path)
+      if (note) {
+        const n = parseInt(note[1], 10)
+        return n >= 0 && n < 128 ? senseBus.midi.notes[n] : 0
+      }
+      return 0
+    }
   }
+}
+
+/** Pick a numeric value out of a deep object via dotted path. Returns undefined if missing. */
+export function getDeepPath(obj: any, path: string): any {
+  return path.split('.').reduce((acc, k) => (acc == null ? undefined : acc[k]), obj)
+}
+
+/** Set a value at a dotted path, creating intermediate objects as needed. Mutates in place. */
+export function setDeepPath(obj: any, path: string, value: any): void {
+  const parts = path.split('.')
+  let cur = obj
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (cur[parts[i]] == null || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {}
+    cur = cur[parts[i]]
+  }
+  cur[parts[parts.length - 1]] = value
 }

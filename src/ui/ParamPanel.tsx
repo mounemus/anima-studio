@@ -9,6 +9,7 @@ import { JOINT_LABELS } from '../senses/SenseBus'
 import { importSVG } from '../lib/svgImport'
 import { defaultShape } from '../types/scene'
 import { SHAPE_TEMPLATES } from '../lib/shapeTemplates'
+import { MidiMonitor } from './MidiMonitor'
 
 function hsvToCss(h: number, s: number, v: number): string {
   // HSV → HSL: l = v - vs/2, s_hsl = (v - l) / min(l, 1 - l)
@@ -331,8 +332,8 @@ function SensesTab() {
   const setScenes = useSceneStore((s) => s.persistCurrent)
   const updateEvolution = useSceneStore((s) => s.updateEvolution)
 
-  const toggle = (key: 'hands' | 'audio' | 'light') => {
-    current.senses[key] = !current.senses[key]
+  const toggle = (key: 'hands' | 'audio' | 'light' | 'midi') => {
+    (current.senses as any)[key] = !(current.senses as any)[key]
     setScenes()
     // trigger react
     useSceneStore.setState({ scenes: [...useSceneStore.getState().scenes] })
@@ -354,11 +355,20 @@ function SensesTab() {
           <input type="checkbox" checked={current.senses.light} onChange={() => toggle('light')} />
           <span>💡 Lumière ambiante</span>
         </label>
+        <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+          <input type="checkbox" checked={(current.senses as any).midi ?? false} onChange={() => toggle('midi')} />
+          <span>🎹 MIDI (contrôleur externe)</span>
+        </label>
       </div>
-      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 16, lineHeight: 1.5 }}>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 12, lineHeight: 1.5 }}>
         La main attire les organismes ; le pinch intensifie l'effet ;
         les graves font respirer la taille ; médiums/aigus modulent vitesse.
       </p>
+
+      <h3 style={{ marginTop: 18 }}>📡 Moniteur MIDI</h3>
+      <MidiMonitor />
+
+      <BindingsManager />
 
       <FlowControl />
 
@@ -390,6 +400,118 @@ function SensesTab() {
       </p>
 
       <BehaviorModifiers />
+    </div>
+  )
+}
+
+function BindingsManager() {
+  const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
+  const updateBindings = useSceneStore((s) => s.updateBindings)
+  const bindings = current.senses?.bindings ?? []
+
+  const SOURCES: { value: string; label: string }[] = [
+    { value: 'hand.index.y', label: 'Main — index y' },
+    { value: 'hand.index.x', label: 'Main — index x' },
+    { value: 'hand.pinch', label: 'Main — pinch (pincement)' },
+    { value: 'hand.openness', label: 'Main — ouverture' },
+    { value: 'audio.bass', label: 'Audio — basses' },
+    { value: 'audio.mid', label: 'Audio — médiums' },
+    { value: 'audio.high', label: 'Audio — aigus' },
+    { value: 'audio.level', label: 'Audio — niveau RMS' },
+    { value: 'light', label: 'Lumière ambiante' },
+    { value: 'midi.mod', label: 'MIDI — Mod wheel (CC1)' },
+    { value: 'midi.cc7', label: 'MIDI — Volume (CC7)' },
+    { value: 'midi.cc11', label: 'MIDI — Expression (CC11)' },
+    { value: 'midi.cc74', label: 'MIDI — Filtre (CC74)' },
+    { value: 'midi.notes.any', label: 'MIDI — Vélocité max notes actives' },
+    { value: 'midi.note60', label: 'MIDI — Note C4 (60)' },
+  ]
+
+  const TARGETS: { value: string; label: string }[] = [
+    { value: 'organism.values.speed', label: 'Organisme — vitesse' },
+    { value: 'organism.values.count', label: 'Organisme — densité' },
+    { value: 'organism.values.size', label: 'Organisme — taille' },
+    { value: 'organism.values.trail', label: 'Organisme — traînée' },
+    { value: 'organism.values.cohesion', label: 'Boids — cohésion' },
+    { value: 'organism.values.separation', label: 'Boids — séparation' },
+    { value: 'organism.values.alignment', label: 'Boids — alignement' },
+    { value: 'organism.values.pulse', label: 'Cells — pulsation' },
+    { value: 'organism.values.arms', label: 'Mandala — bras' },
+    { value: 'organism.values.cx', label: 'Fractal — cx' },
+    { value: 'organism.values.cy', label: 'Fractal — cy' },
+    { value: 'organism.values.a', label: 'MathCurve — a' },
+    { value: 'organism.values.b', label: 'MathCurve — b' },
+    { value: 'visual.feedback', label: 'Visuel — feedback' },
+    { value: 'visual.bloom', label: 'Visuel — bloom' },
+    { value: 'flow.angle', label: 'Flux — angle' },
+    { value: 'flow.strength', label: 'Flux — force' },
+    { value: 'flow.turbulence', label: 'Flux — turbulence' },
+  ]
+
+  const add = () => {
+    const next = [...bindings, {
+      id: `bind-${Date.now().toString(36)}`,
+      source: 'midi.cc1', target: 'organism.values.speed',
+      range: [0.1, 2.5] as [number, number], invert: false,
+    }]
+    updateBindings(next)
+  }
+  const remove = (i: number) => {
+    const next = bindings.filter((_, j) => j !== i)
+    updateBindings(next)
+  }
+  const patch = (i: number, p: any) => {
+    const next = bindings.map((b, j) => j === i ? { ...b, ...p } : b)
+    updateBindings(next)
+  }
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <h3 style={{ margin: 0 }}>🔗 Bindings (capteur → paramètre)</h3>
+        <button onClick={add} style={{ fontSize: 11, padding: '3px 8px' }} title="Ajouter un binding">+</button>
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', margin: '4px 0 8px', lineHeight: 1.4 }}>
+        Chaque binding lit un capteur (main / audio / MIDI CC / lumière) et écrit le résultat
+        normalisé sur un paramètre via une plage min→max. Mis à jour à chaque frame.
+      </p>
+      {bindings.length === 0 && (
+        <p style={{ fontSize: 11, color: 'var(--text-mute)', fontStyle: 'italic', textAlign: 'center', padding: '8px 0' }}>
+          Aucun binding. Clique <strong>+</strong> pour mapper un CC MIDI ou un capteur à un paramètre.
+        </p>
+      )}
+      {bindings.map((b, i) => (
+        <div key={b.id ?? i} style={{ padding: 6, marginBottom: 6, background: 'var(--bg-elev-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 4 }}>
+            <select value={b.source} onChange={(e) => patch(i, { source: e.target.value })} style={{ fontSize: 11 }}>
+              {SOURCES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+            <select value={b.target} onChange={(e) => patch(i, { target: e.target.value })} style={{ fontSize: 11 }}>
+              {TARGETS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <input
+              type="number" value={b.range?.[0] ?? 0} step={0.01}
+              onChange={(e) => patch(i, { range: [parseFloat(e.target.value), b.range?.[1] ?? 1] })}
+              style={{ width: 60, fontSize: 11 }}
+              title="Min"
+            />
+            <span style={{ fontSize: 10, color: 'var(--text-mute)' }}>→</span>
+            <input
+              type="number" value={b.range?.[1] ?? 1} step={0.01}
+              onChange={(e) => patch(i, { range: [b.range?.[0] ?? 0, parseFloat(e.target.value)] })}
+              style={{ width: 60, fontSize: 11 }}
+              title="Max"
+            />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, marginLeft: 'auto' }}>
+              <input type="checkbox" checked={!!b.invert} onChange={(e) => patch(i, { invert: e.target.checked })} />
+              inverser
+            </label>
+            <button className="ghost icon danger" onClick={() => remove(i)} title="Supprimer"><Trash2 size={11} /></button>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

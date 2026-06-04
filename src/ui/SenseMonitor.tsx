@@ -39,12 +39,13 @@ export function SenseMonitor() {
         <span>Light</span>
         <div className="bar"><div className="bar-fill" style={{ width: `${l.brightness * 100}%` }} /></div>
       </div>
-      {m.available && (
-        <div className="sense-row">
-          <span><span className={`dot ${activeNotes > 0 || ccMax > 0.01 ? 'on' : 'off'}`} />MIDI{activeNotes > 0 ? ` (${activeNotes})` : ''}</span>
-          <div className="bar"><div className="bar-fill" style={{ width: `${ccMax * 100}%` }} /></div>
-        </div>
-      )}
+      <div className="sense-row">
+        <span title={m.available ? `MIDI ${m.device || 'connecté'}` : 'MIDI inactif'}>
+          <span className={`dot ${m.available ? (activeNotes > 0 || ccMax > 0.01 ? 'on' : '') : 'off'}`} style={!m.available ? { opacity: 0.4 } : undefined} />
+          MIDI{m.available && activeNotes > 0 ? ` (${activeNotes})` : ''}
+        </span>
+        <div className="bar"><div className="bar-fill" style={{ width: `${(m.available ? ccMax : 0) * 100}%` }} /></div>
+      </div>
     </div>
   )
 }

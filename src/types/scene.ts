@@ -103,8 +103,18 @@ export interface VisualParams {
   textureIntensity?: number   // 0..1, 0 = pure palette, 1 = pure texture
 }
 
+/** A sense source = a string read by readSense().
+ *  Built-ins:  'hand.index.y' | 'hand.index.x' | 'hand.palm.y' | 'hand.pinch' | 'hand.openness'
+ *              'audio.level' | 'audio.bass' | 'audio.mid' | 'audio.high'
+ *              'light'
+ *              'midi.mod' | 'midi.cc<N>' (e.g. 'midi.cc1') | 'midi.note<N>' (e.g. 'midi.note60')
+ *              'midi.notes.any' (max velocity of all currently-on notes)
+ */
+export type SenseSource = string
+
 export interface SenseBinding {
-  source: 'hand.index' | 'hand.palm' | 'hand.pinch' | 'audio.bass' | 'audio.mid' | 'audio.high' | 'audio.level' | 'light'
+  id?: string            // optional UI key
+  source: SenseSource
   target: string         // dotted path inside organism.values OR visual.*
   range: [number, number]
   invert?: boolean
@@ -114,6 +124,7 @@ export interface SenseConfig {
   hands: boolean
   audio: boolean
   light: boolean
+  midi?: boolean
   bindings: SenseBinding[]
 }
 

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Scene, OrganismParams, VisualParams, MappingConfig, AITexture, Evolution, MappingShape, TestPattern, Obstacle, ObstacleKind, FlowField, TimelineConfig } from '../types/scene'
+import type { Scene, OrganismParams, VisualParams, MappingConfig, AITexture, Evolution, MappingShape, TestPattern, Obstacle, ObstacleKind, FlowField, TimelineConfig, SenseBinding } from '../types/scene'
 import { defaultScenes } from '../lib/defaultScenes'
 import { defaultShape, defaultObstacle, defaultFlow } from '../types/scene'
 import { saveScene, loadAllScenes, deleteScene as dbDelete, migrateFromIndexedDB } from '../lib/persistence'
@@ -33,6 +33,7 @@ interface SceneStoreState {
   removeObstacle: (id: string) => void
   updateObstacle: (id: string, patch: Partial<Obstacle>) => void
   updateFlow: (patch: Partial<FlowField>) => void
+  updateBindings: (bindings: SenseBinding[]) => void
   updateTimeline: (patch: Partial<TimelineConfig>) => void
   addModifier: (kind: 'vortex' | 'gravityWell' | 'colorCycle' | 'pulseGate' | 'magneticBands') => void
   removeModifier: (id: string) => void
@@ -275,6 +276,16 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
         const base = s.flow ?? defaultFlow()
         return { ...s, flow: { ...base, ...patch }, updatedAt: Date.now() }
       })
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  updateBindings: (bindings) => {
+    set((st) => {
+      const next = st.scenes.map((s) => s.id === st.currentId
+        ? { ...s, senses: { ...s.senses, bindings }, updatedAt: Date.now() }
+        : s)
       return { scenes: next }
     })
     debouncePersist(() => get().persistCurrent())

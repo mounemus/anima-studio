@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { Scene as ArtScene, VisualParams, MappingShape, OrganismKind } from '../types/scene'
 import type { OrganismLike } from './organisms'
 import { MappingPass } from './MappingPass'
-import { senseBus } from '../senses/SenseBus'
+import { senseBus, readSense } from '../senses/SenseBus'
 import { loadTexture } from '../lib/textureLoader'
 import type { Obstacle } from '../types/scene'
 import { resetCounters } from './Obstacles'
@@ -292,6 +292,22 @@ export class Engine {
     // (which would persist them to localStorage — we only want the visual effect).
     const tPatches = timelineTick()
     if (tPatches.length > 0) this.applyTimelinePatches(tPatches)
+
+    // Sense bindings: read each binding's source, scale to [min,max], and route as a
+    // patch (same path scheme as the timeline). Same no-persist semantics.
+    const bindings = this.currentScene.senses?.bindings ?? []
+    if (bindings.length > 0) {
+      const patches: { path: string; value: number | string }[] = []
+      for (const b of bindings) {
+        let v = readSense(b.source)
+        if (b.invert) v = 1 - v
+        v = Math.max(0, Math.min(1, v))
+        const min = b.range?.[0] ?? 0
+        const max = b.range?.[1] ?? 1
+        patches.push({ path: b.target, value: min + (max - min) * v })
+      }
+      this.applyTimelinePatches(patches)
+    }
 
     // Evolution: organic drift of organism params via low-freq noise (in-engine, no React loop)
     if (this.currentScene.evolution.enabled && this.organism) {
