@@ -1,0 +1,31 @@
+name: CI
+
+# Runs the type check, lint, unit tests and production build on every push and
+# PR to main. The unit suite locks in the reliability fixes (Modifiers NaN
+# guards, Obstacles physics, persistence migration, storage quota) so they can't
+# silently regress.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true   # lint is advisory for now, don't block on style
+      - name: Unit tests
+        run: npm test
+      - name: Production build
+        run: npm run build
