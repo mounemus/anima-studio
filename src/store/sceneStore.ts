@@ -45,6 +45,7 @@ interface SceneStoreState {
   rename: (name: string) => void
   setNotes: (notes: string) => void
   setWebcamFilter: (patch: Partial<import('../types/scene').WebcamFilterRef> | null) => void
+  setOrganismMask: (patch: Partial<{ mode: 'all' | 'body' | 'background'; feather: number }> | null) => void
 
   persistCurrent: () => Promise<void>
 }
@@ -265,6 +266,23 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
         if (s.id !== st.currentId) return s
         const obs = (s.obstacles ?? []).map((o) => o.id === id ? { ...o, ...patch } : o)
         return { ...s, obstacles: obs, updatedAt: Date.now() }
+      })
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  setOrganismMask: (patch) => {
+    set((st) => {
+      const next = st.scenes.map((s) => {
+        if (s.id !== st.currentId) return s
+        if (patch === null) {
+          const { organismMask: _drop, ...rest } = s as any
+          void _drop
+          return { ...rest, updatedAt: Date.now() }
+        }
+        const base = s.organismMask ?? { mode: 'all' as const, feather: 0.15 }
+        return { ...s, organismMask: { ...base, ...patch }, updatedAt: Date.now() }
       })
       return { scenes: next }
     })

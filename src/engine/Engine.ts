@@ -3,6 +3,7 @@ import type { Scene as ArtScene, VisualParams, MappingShape, OrganismKind } from
 import type { OrganismLike } from './organisms'
 import { MappingPass } from './MappingPass'
 import { senseBus, readSense } from '../senses/SenseBus'
+import { getSilhouetteMask } from '../senses/Silhouette'
 import { loadTexture } from '../lib/textureLoader'
 import type { Obstacle } from '../types/scene'
 import { resetCounters } from './Obstacles'
@@ -25,6 +26,11 @@ export class Engine {
   private feedbackRT2: THREE.WebGLRenderTarget
   private feedbackQuadScene = new THREE.Scene()
   private feedbackQuadMat: THREE.ShaderMaterial
+  /** Mutable mask texture re-uploaded each frame from getSilhouetteMask(). */
+  private organismMaskTex!: THREE.DataTexture
+  /** Last mask buffer size, used to decide between texImage vs texSubImage. */
+  private organismMaskW = 1
+  private organismMaskH = 1
   private mapping = new MappingPass()
   private mainRT: THREE.WebGLRenderTarget
   private currentScene: ArtScene | null = null
@@ -71,22 +77,51 @@ export class Engine {
     this.feedbackRT = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType })
     this.feedbackRT2 = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType })
 
+    // Allocate a 1×1 white DataTexture as the default mask so the feedback
+    // shader can always sample uMask even when SelfieSegmenter isn't running.
+    const seedMaskTex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1)
+    seedMaskTex.needsUpdate = true
+    this.organismMaskTex = seedMaskTex
     this.feedbackQuadMat = new THREE.ShaderMaterial({
       uniforms: {
         uPrev: { value: null },
         uCurr: { value: null },
         uFade: { value: 0.92 },
+        uMask: { value: this.organismMaskTex },
+        uMaskValid: { value: 0 },     // 0 = mask off (full pass-through)
+        uMaskMode: { value: 0 },      // 0=all, 1=body-only, 2=background-only
+        uMaskFeather: { value: 0.15 },
       },
       vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position,1.0); }`,
       fragmentShader: `
         varying vec2 vUv;
         uniform sampler2D uPrev;
         uniform sampler2D uCurr;
+        uniform sampler2D uMask;
         uniform float uFade;
+        uniform float uMaskValid;
+        uniform float uMaskMode;
+        uniform float uMaskFeather;
+        // Mirror the sample x — the silhouette mask is stored in webcam space
+        // (origin top-left, NOT mirrored), but the organism layer is rendered
+        // in mirrored AR space. Without this flip, the mask would clip the
+        // organisms on the wrong side of the body.
+        float maskWeight(vec2 uv) {
+          if (uMaskValid < 0.5 || uMaskMode < 0.5) return 1.0;
+          float body = texture2D(uMask, vec2(1.0 - uv.x, 1.0 - uv.y)).r;
+          float f = max(0.001, uMaskFeather);
+          float edge = smoothstep(0.5 - f, 0.5 + f, body);
+          return (uMaskMode < 1.5) ? edge : (1.0 - edge);
+        }
         void main() {
           vec3 prev = texture2D(uPrev, vUv).rgb * uFade;
           vec3 curr = texture2D(uCurr, vUv).rgb;
-          gl_FragColor = vec4(max(prev, curr), 1.0);
+          vec3 c = max(prev, curr);
+          float m = maskWeight(vUv);
+          // Multiply BOTH the color and the alpha. Killing alpha lets AR mode
+          // show the camera through the clipped area; killing color makes
+          // the same area read as black in non-AR (where bg is opaque).
+          gl_FragColor = vec4(c * m, m);
         }
       `,
     })
@@ -473,6 +508,46 @@ export class Engine {
     this.renderer.setClearColor(this.bg, this.bgAlpha)
     this.renderer.clear()
     this.renderer.render(this.scene, this.camera)
+
+    // Refresh the organism-mask uniform set : push the SelfieSegmenter buffer
+    // into the DataTexture if the scene asks for body/background clipping.
+    // The shader treats uMaskValid=0 as full pass-through, so the cost of
+    // doing nothing when applyTo='all' is just a single uniform write.
+    const omCfg = this.currentScene.organismMask
+    const omActive = !!omCfg && omCfg.mode !== 'all'
+    const silMask = omActive ? getSilhouetteMask() : null
+    if (silMask && omActive) {
+      if (silMask.w !== this.organismMaskW || silMask.h !== this.organismMaskH) {
+        // Re-create a sized DataTexture — re-using the GPU object would
+        // require manually setting image.width/height + needsUpdate which
+        // three.js handles cleanly via a fresh DataTexture for the rare
+        // resize case.
+        const rgba = new Uint8Array(silMask.w * silMask.h * 4)
+        for (let i = 0; i < silMask.data.length; i++) {
+          const v = silMask.data[i]
+          rgba[i * 4] = v; rgba[i * 4 + 1] = v; rgba[i * 4 + 2] = v; rgba[i * 4 + 3] = 255
+        }
+        const tex = new THREE.DataTexture(rgba, silMask.w, silMask.h)
+        tex.needsUpdate = true
+        this.organismMaskTex.dispose()
+        this.organismMaskTex = tex
+        this.feedbackQuadMat.uniforms.uMask.value = tex
+        this.organismMaskW = silMask.w
+        this.organismMaskH = silMask.h
+      } else {
+        // Same size — just rewrite the buffer and flag for re-upload.
+        const rgba = this.organismMaskTex.image.data as Uint8Array
+        for (let i = 0; i < silMask.data.length; i++) {
+          const v = silMask.data[i]
+          rgba[i * 4] = v; rgba[i * 4 + 1] = v; rgba[i * 4 + 2] = v; rgba[i * 4 + 3] = 255
+        }
+        this.organismMaskTex.needsUpdate = true
+      }
+    }
+    this.feedbackQuadMat.uniforms.uMaskValid.value = (omActive && silMask) ? 1 : 0
+    this.feedbackQuadMat.uniforms.uMaskMode.value =
+      !omActive ? 0 : omCfg!.mode === 'body' ? 1 : 2
+    this.feedbackQuadMat.uniforms.uMaskFeather.value = omCfg?.feather ?? 0.15
 
     // feedback blend mainRT into feedbackRT
     this.feedbackQuadMat.uniforms.uPrev.value = this.feedbackRT.texture

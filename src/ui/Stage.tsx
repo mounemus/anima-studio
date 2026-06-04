@@ -55,14 +55,17 @@ export function Stage({ onEngineReady }: Props) {
     const filterApplyTo = current?.webcamFilter?.applyTo
     const needForFilter = current?.webcamFilter?.kind && current.webcamFilter.kind !== 'none'
       && filterApplyTo && filterApplyTo !== 'all'
-    const need = needForObstacle || needForMaskBody || !!needForFilter
+    // The organism-layer mask uses the same SelfieSegmenter buffer — auto-start it
+    // so 'Mask organism on body' actually shows the body without an extra checkbox.
+    const needForOrganismMask = current?.organismMask && current.organismMask.mode !== 'all'
+    const need = needForObstacle || needForMaskBody || !!needForFilter || !!needForOrganismMask
     const video = document.querySelector('video') as HTMLVideoElement | null
     if (need && video?.srcObject) {
       startSilhouette(video).catch((e) => console.warn('Silhouette failed', e))
     } else {
       stopSilhouette()
     }
-  }, [current?.obstacles, current?.mapping?.arMaskBody, current?.webcamFilter?.kind, current?.webcamFilter?.applyTo])
+  }, [current?.obstacles, current?.mapping?.arMaskBody, current?.webcamFilter?.kind, current?.webcamFilter?.applyTo, current?.organismMask?.mode])
 
   // Start/stop color tracking based on tracker obstacles
   useEffect(() => {

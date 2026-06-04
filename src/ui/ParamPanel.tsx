@@ -410,6 +410,8 @@ export function ParamPanel() {
             <TextureGen />
 
             <WebcamFilterPanel />
+
+            <OrganismMaskPanel />
           </div>
         )}
 
@@ -800,6 +802,49 @@ function WebcamFilterPanel() {
           <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 6, lineHeight: 1.4 }}>
             Le filtre s'active dans le miroir AR (bouton AR en haut). Sans caméra, il
             n'a rien à filtrer — active la caméra ou l'AR pour le voir.
+          </p>
+        </>
+      )}
+    </>
+  )
+}
+
+function OrganismMaskPanel() {
+  const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
+  const setOrganismMask = useSceneStore((s) => s.setOrganismMask)
+  const m = current.organismMask ?? { mode: 'all' as const, feather: 0.15 }
+  return (
+    <>
+      <h3 style={{ marginTop: 18 }}>🎭 Masque organisme (silhouette)</h3>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8, lineHeight: 1.4 }}>
+        Restreint la couche organisme (particules, cellules, fractale…) à
+        l'intérieur — ou à l'extérieur — de ta silhouette détectée par
+        MediaPipe. Indépendant du filtre caméra : on peut filtrer le corps
+        ET ne montrer les particules que dans le corps.
+      </p>
+      <div className="palette-row">
+        <label>Afficher l'organisme</label>
+        <select
+          value={m.mode}
+          onChange={(e) => setOrganismMask({ mode: e.target.value as any })}
+        >
+          <option value="all">🌍 Partout</option>
+          <option value="body">👤 Dans mon corps seulement</option>
+          <option value="background">🖼️ Hors de mon corps (décor seulement)</option>
+        </select>
+      </div>
+      {m.mode !== 'all' && (
+        <>
+          <Slider
+            label="Adoucissement bord"
+            value={m.feather ?? 0.15}
+            min={0} max={0.5} step={0.01}
+            onChange={(v) => setOrganismMask({ feather: v })}
+            format={(v) => v.toFixed(2)}
+          />
+          <p style={{ fontSize: 11, color: 'var(--accent)', marginTop: 4, lineHeight: 1.4 }}>
+            ✓ Silhouette MediaPipe auto-démarrée. En mode AR, la zone hors
+            silhouette laisse passer la caméra brute (alpha = 0).
           </p>
         </>
       )}

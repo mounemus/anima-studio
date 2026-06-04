@@ -339,6 +339,14 @@ export interface Scene {
   notes?: string
   /** Live webcam shader filter for the AR mirror layer. See engine/WebcamFilters. */
   webcamFilter?: WebcamFilterRef
+  /** Restrict the whole organism layer to the SelfieSegmenter silhouette.
+   *  Independent from webcamFilter — you can have the body filtered AND only
+   *  show particles inside the body (or only outside). 'all' = no clipping. */
+  organismMask?: {
+    mode: 'all' | 'body' | 'background'
+    /** 0..1 — soft transition width around the silhouette edge. */
+    feather?: number
+  }
 }
 
 /** Reference into the WebcamFilters module. Kept stringly-typed in the type layer
