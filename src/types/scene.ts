@@ -75,6 +75,10 @@ export interface CellsParams {
   attraction: number
   repulsion: number
   trail: number
+  /** Boundary behavior when a cell hits the canvas edge.
+   *  - 'bounce'  (default) : soft bounce, halves velocity — original behavior
+   *  - 'wrap'              : teleport to the opposite edge (toroidal) */
+  boundary?: 'bounce' | 'wrap'
 }
 
 export type OrganismParams =

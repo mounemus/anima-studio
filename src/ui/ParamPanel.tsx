@@ -189,6 +189,21 @@ export function ParamPanel() {
                 <Slider label="Taille" value={v.size} min={0.4} max={3} onChange={(x) => patchValues({ size: x })} />
                 <Slider label="Attraction" value={v.attraction} min={0} max={2} onChange={(x) => patchValues({ attraction: x })} />
                 <Slider label="Répulsion" value={v.repulsion} min={0} max={2} onChange={(x) => patchValues({ repulsion: x })} />
+                <div className="palette-row" style={{ marginTop: 8 }}>
+                  <label>Bords</label>
+                  <select
+                    value={(v as any).boundary ?? 'bounce'}
+                    onChange={(e) => patchValues({ boundary: e.target.value })}
+                    title="Comportement des cellules aux bords de l'écran"
+                  >
+                    <option value="bounce">↩️ Rebond (par défaut)</option>
+                    <option value="wrap">🔁 Wrap (traverse les bords)</option>
+                  </select>
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 4, marginBottom: 0, lineHeight: 1.35 }}>
+                  En mode <strong>Wrap</strong> avec un flux directionnel vers le bas, les cellules
+                  s'écoulent en continu au lieu de s'accumuler contre le bord.
+                </p>
               </>
             )}
             {current.organism.kind === 'worms' && (

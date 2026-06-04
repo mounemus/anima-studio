@@ -140,12 +140,23 @@ export class CellsOrganism {
       this.vy[i] = this.vy[i] * 0.9 + fy
       this.px[i] += this.vx[i] * dt
       this.py[i] += this.vy[i] * dt
-      // soft bounce
+      // Boundary handling — preserves the legacy soft-bounce as default but
+      // exposes 'wrap' so cells can rain through the edges and reappear on the
+      // opposite side. Without this, gravity-flow scenes pile up the agents
+      // at the bottom edge.
       const ax = this.aspect
-      if (this.px[i] > ax) { this.px[i] = ax; this.vx[i] *= -0.5 }
-      if (this.px[i] < -ax) { this.px[i] = -ax; this.vx[i] *= -0.5 }
-      if (this.py[i] > 1) { this.py[i] = 1; this.vy[i] *= -0.5 }
-      if (this.py[i] < -1) { this.py[i] = -1; this.vy[i] *= -0.5 }
+      const mode = (p as any).boundary ?? 'bounce'
+      if (mode === 'wrap') {
+        if (this.px[i] >  ax) this.px[i] -= 2 * ax
+        if (this.px[i] < -ax) this.px[i] += 2 * ax
+        if (this.py[i] >  1) this.py[i] -= 2
+        if (this.py[i] < -1) this.py[i] += 2
+      } else {
+        if (this.px[i] >  ax) { this.px[i] =  ax; this.vx[i] *= -0.5 }
+        if (this.px[i] < -ax) { this.px[i] = -ax; this.vx[i] *= -0.5 }
+        if (this.py[i] >  1) { this.py[i] =  1; this.vy[i] *= -0.5 }
+        if (this.py[i] < -1) { this.py[i] = -1; this.vy[i] *= -0.5 }
+      }
       this.phase[i] += dt * (1 + this.radius[i] * 10) * pulse * 0.5
 
       const r = (this.radius[i] + Math.sin(this.phase[i]) * 0.015) * sizeBase
