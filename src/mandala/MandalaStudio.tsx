@@ -59,13 +59,17 @@ export function MandalaStudio() {
   const [audioReact, setAudioReact] = useState(true)
   const [crystal, setCrystal] = useState(true)
   const [volumetric, setVolumetric] = useState(true)
+  const [permanent, setPermanent] = useState(false)             // tracé non-éphémère (pour export propre)
+  const [bgMode, setBgMode] = useState<'webcam' | 'black' | 'color'>('webcam')
+  const [bgColor, setBgColor] = useState('#05060f')
+  const [panelOpen, setPanelOpen] = useState(true)
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
   // The render loop reads parameters through a ref so slider changes apply live
   // without re-subscribing the rAF closure.
-  const paramsRef = useRef({ style, segments, size, fade, skeleton, interconnect, audioReact, crystal, volumetric })
-  paramsRef.current = { style, segments, size, fade, skeleton, interconnect, audioReact, crystal, volumetric }
+  const paramsRef = useRef({ style, segments, size, fade, skeleton, interconnect, audioReact, crystal, volumetric, permanent })
+  paramsRef.current = { style, segments, size, fade, skeleton, interconnect, audioReact, crystal, volumetric, permanent }
 
   const pathsRef = useRef<MandalaElement[]>([])
   const lastPosRef = useRef<Record<number, { x: number; y: number }>>({})
@@ -167,8 +171,9 @@ export function MandalaStudio() {
 
       if (clearRef.current) { pathsRef.current = []; clearRef.current = false }
 
-      // Fade out (persistence). 100 = infini (no fade).
-      if (p.fade !== 100) {
+      // Fade out (persistence). 100 = infini, or the "permanent" toggle disables
+      // fade entirely so the full drawing accumulates for a clean export.
+      if (p.fade !== 100 && !p.permanent) {
         const dec = p.fade / 1000
         const next: MandalaElement[] = []
         for (const el of pathsRef.current) { el.alpha -= dec; if (el.alpha > 0) next.push(el) }
@@ -317,7 +322,24 @@ export function MandalaStudio() {
   const exportPng = () => {
     const c = canvasRef.current
     if (!c) return
-    c.toBlob((blob) => {
+    // Composite the chosen background behind the mandala geometry so the export
+    // matches what's on screen (webcam frame / solid color / black) instead of a
+    // bare transparent PNG.
+    const out = document.createElement('canvas')
+    out.width = c.width; out.height = c.height
+    const octx = out.getContext('2d')!
+    if (bgMode === 'webcam' && videoRef.current && videoRef.current.readyState >= 2) {
+      octx.save(); octx.translate(out.width, 0); octx.scale(-1, 1)   // mirror to match display
+      octx.drawImage(videoRef.current, 0, 0, out.width, out.height)
+      octx.restore()
+    } else if (bgMode === 'color') {
+      octx.fillStyle = bgColor; octx.fillRect(0, 0, out.width, out.height)
+    } else if (bgMode === 'black') {
+      octx.fillStyle = '#000'; octx.fillRect(0, 0, out.width, out.height)
+    }
+    // (if 'webcam' but no video, leaves transparent — fine for overlay use)
+    octx.drawImage(c, 0, 0)
+    out.toBlob((blob) => {
       if (!blob) return
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -329,23 +351,40 @@ export function MandalaStudio() {
 
   const enableAudio = () => { startAudio().catch(() => {}) }
 
+  // Container background : transparent lets the webcam show; otherwise a solid fill.
+  const containerBg = bgMode === 'webcam' ? '#000' : bgMode === 'color' ? bgColor : '#000'
+
   return (
-    <div style={{ position: 'fixed', inset: 0, background: '#000', overflow: 'hidden', userSelect: 'none', fontFamily: 'var(--font, system-ui)' }}>
+    <div style={{ position: 'fixed', inset: 0, background: containerBg, overflow: 'hidden', userSelect: 'none', fontFamily: 'var(--font, system-ui)' }}>
+      {/* Keep the video element rendering even when hidden (opacity, not display:none)
+          so MediaPipe keeps reading frames for hand tracking. */}
       <video ref={videoRef} autoPlay playsInline muted
-        style={{ position: 'absolute', inset: 0, width: '100vw', height: '100vh', objectFit: 'cover', transform: 'scaleX(-1)', zIndex: 1 }} />
+        style={{ position: 'absolute', inset: 0, width: '100vw', height: '100vh', objectFit: 'cover', transform: 'scaleX(-1)', zIndex: 1, opacity: bgMode === 'webcam' ? 1 : 0 }} />
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100vw', height: '100vh', zIndex: 2 }} />
 
+      {/* Collapsed: a single re-open button */}
+      {!panelOpen && (
+        <button onClick={() => setPanelOpen(true)} title="Ouvrir le panneau"
+          style={{ position: 'absolute', top: 16, left: 16, zIndex: 11, width: 'auto', padding: '8px 12px', ...selStyle, fontSize: 16 }}>☰</button>
+      )}
+
       {/* Control panel */}
+      {panelOpen && (
       <div style={{
         position: 'absolute', top: 16, left: 16, zIndex: 10, width: 280,
         background: 'rgba(10,10,15,0.85)', padding: 18, borderRadius: 16,
         backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.15)',
-        boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+        boxShadow: '0 10px 30px rgba(0,0,0,0.5)', maxHeight: 'calc(100vh - 32px)', overflowY: 'auto',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
           <strong style={{ color: '#00f0ff', textTransform: 'uppercase', letterSpacing: 1, fontSize: 14 }}>Mandala Studio</strong>
-          <Link to="/" style={{ color: '#aaa', fontSize: 12, textDecoration: 'none' }}>← Studio</Link>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Link to="/" style={{ color: '#aaa', fontSize: 12, textDecoration: 'none' }}>← Studio</Link>
+            <button onClick={() => setPanelOpen(false)} title="Réduire le panneau"
+              style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 16, padding: 0, lineHeight: 1 }}>«</button>
+          </div>
         </div>
+        <div style={{ color: error ? '#ff6b6b' : '#7a7a85', fontSize: 11, marginBottom: 12, lineHeight: 1.3 }}>{error ?? status}</div>
 
         <Field label="Style de tracé">
           <select value={style} onChange={(e) => setStyle(e.target.value as DrawStyle)} style={selStyle}>
@@ -363,9 +402,27 @@ export function MandalaStudio() {
           <input type="range" min={1} max={25} value={size} onChange={(e) => setSize(+e.target.value)} style={rngStyle} />
         </Field>
 
-        <Field label={`Persistance — ${fade === 100 ? 'Infini' : 'Éphémère'}`}>
-          <input type="range" min={1} max={100} value={fade} onChange={(e) => setFade(+e.target.value)} style={rngStyle} />
+        <Field label={`Persistance — ${permanent ? 'Permanent' : fade === 100 ? 'Infini' : 'Éphémère'}`}>
+          <input type="range" min={1} max={100} value={fade} disabled={permanent} onChange={(e) => setFade(+e.target.value)} style={{ ...rngStyle, opacity: permanent ? 0.4 : 1 }} />
         </Field>
+        <label style={chkRow} title="Le tracé ne s'efface jamais — idéal pour composer puis exporter une œuvre complète">
+          <input type="checkbox" checked={permanent} onChange={(e) => setPermanent(e.target.checked)} style={{ accentColor: '#00f0ff' }} />
+          🔒 Tracé permanent (non-éphémère)
+        </label>
+
+        <Field label="Fond (arrière-plan)">
+          <select value={bgMode} onChange={(e) => setBgMode(e.target.value as any)} style={selStyle}>
+            <option value="webcam">📷 Webcam (AR)</option>
+            <option value="black">⬛ Noir (épuré)</option>
+            <option value="color">🎨 Couleur personnalisée</option>
+          </select>
+        </Field>
+        {bgMode === 'color' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 11, color: '#aaa' }}>Couleur du fond</span>
+            <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} style={{ marginLeft: 'auto', width: 44, height: 28, border: 'none', background: 'none', cursor: 'pointer' }} />
+          </div>
+        )}
 
         <Field label="Squelette des mains">
           <select value={skeleton ? 'visible' : 'hidden'} onChange={(e) => setSkeleton(e.target.value === 'visible')} style={selStyle}>
@@ -395,18 +452,11 @@ export function MandalaStudio() {
           <button onClick={() => { clearRef.current = true }} style={{ ...selStyle, flex: 1, background: 'rgba(255,40,100,0.2)', borderColor: 'rgba(255,40,100,0.4)' }}>Réinitialiser</button>
           <button onClick={exportPng} style={{ ...selStyle, flex: 1 }}>📸 Exporter</button>
         </div>
+        <p style={{ color: '#777', fontSize: 10, marginTop: 10, marginBottom: 0, lineHeight: 1.4 }}>
+          Pince pour intensifier · serre les doigts pour le cristal ✦ · avance/recule la main pour la 3D ◈
+        </p>
       </div>
-
-      {/* Status / instructions */}
-      <div style={{
-        position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 10,
-        textAlign: 'center', pointerEvents: 'none', background: 'rgba(0,0,0,0.7)',
-        padding: '8px 28px', borderRadius: 28, backdropFilter: 'blur(5px)', border: '1px solid rgba(255,255,255,0.1)',
-      }}>
-        <div style={{ color: '#00f0ff', fontSize: 16, textTransform: 'uppercase', letterSpacing: 1 }}>Mandala Studio AR</div>
-        <div style={{ color: error ? '#ff6b6b' : '#aaa', fontSize: 12 }}>{error ?? status}</div>
-        {!error && <div style={{ color: '#888', fontSize: 11 }}>Pince pour intensifier · serre les doigts pour le cristal ✦ · avance/recule la main pour la 3D ◈</div>}
-      </div>
+      )}
     </div>
   )
 }
