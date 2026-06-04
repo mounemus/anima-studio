@@ -775,23 +775,23 @@ function WebcamFilterPanel() {
               onChange={(v) => setWebcamFilter({ poseReact: v })} format={(v) => `${Math.round(v * 100)}%`} />
           )}
           <h4 style={{ marginTop: 12, marginBottom: 4, fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1 }}>
-            👤 Zone d'application
+            🎯 Cibler le filtre sur
           </h4>
           <div className="palette-row">
-            <label>Appliquer sur</label>
+            <label>Filtrer</label>
             <select
               value={f.applyTo ?? 'all'}
               onChange={(e) => setWebcamFilter({ applyTo: e.target.value as any })}
               title="Restreint le filtre à la silhouette détectée par MediaPipe."
             >
-              <option value="all">🌍 Toute l'image</option>
+              <option value="all">🌍 Toute l'image webcam</option>
               <option value="body">👤 Mon corps seulement</option>
               <option value="background">🖼️ L'arrière-plan seulement</option>
             </select>
           </div>
           {(f.applyTo === 'body' || f.applyTo === 'background') && (
             <>
-              <Slider label="Adoucissement bord" value={f.maskFeather ?? 0.15} min={0} max={0.5} step={0.01}
+              <Slider label="Bord filtre (douceur)" value={f.maskFeather ?? 0.15} min={0} max={0.5} step={0.01}
                 onChange={(v) => setWebcamFilter({ maskFeather: v })} format={(v) => v.toFixed(2)} />
               <p style={{ fontSize: 11, color: 'var(--accent)', marginTop: 4, lineHeight: 1.4 }}>
                 ✓ Silhouette MediaPipe auto-démarrée. Le filtre n'affecte que la zone choisie ;
@@ -799,13 +799,47 @@ function WebcamFilterPanel() {
               </p>
             </>
           )}
+          <CameraStatusHint kind="filter" />
           <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 6, lineHeight: 1.4 }}>
-            Le filtre s'active dans le miroir AR (bouton AR en haut). Sans caméra, il
-            n'a rien à filtrer — active la caméra ou l'AR pour le voir.
+            Le filtre s'active dans le miroir AR (bouton AR en haut).
           </p>
         </>
       )}
     </>
+  )
+}
+
+/** Inline reminder that surfaces if the camera isn't running. The TopBar
+ *  exposes __animaCameraOn as a window global and emits an 'anima:camera-state'
+ *  custom event — we poll the global and subscribe to the event so the hint
+ *  updates the moment the user clicks Caméra above. */
+function CameraStatusHint({ kind }: { kind: 'filter' | 'organism' }) {
+  const [on, setOn] = useState<boolean>(!!(window as any).__animaCameraOn)
+  useEffect(() => {
+    const tick = () => setOn(!!(window as any).__animaCameraOn)
+    const onEvt = () => tick()
+    window.addEventListener('anima:camera-state', onEvt)
+    const id = window.setInterval(tick, 600)
+    return () => { window.removeEventListener('anima:camera-state', onEvt); clearInterval(id) }
+  }, [])
+  if (on) return null
+  const need = kind === 'filter'
+    ? "Sans caméra il n'y a rien à filtrer."
+    : "Sans caméra le masque ne sait pas où est ton corps — les organismes restent visibles partout."
+  return (
+    <div style={{
+      marginTop: 6, padding: 8, background: 'rgba(255,107,166,0.08)',
+      border: '1px solid rgba(255,107,166,0.35)', borderRadius: 'var(--radius-sm)',
+      fontSize: 11, color: 'var(--text)', lineHeight: 1.4,
+    }}>
+      ⚠️ <strong>Caméra éteinte.</strong> {need}{' '}
+      <button
+        onClick={() => window.dispatchEvent(new Event('anima:request-camera'))}
+        style={{ fontSize: 11, padding: '2px 8px', marginLeft: 4 }}
+      >
+        Activer la caméra
+      </button>
+    </div>
   )
 }
 
@@ -815,28 +849,28 @@ function OrganismMaskPanel() {
   const m = current.organismMask ?? { mode: 'all' as const, feather: 0.15 }
   return (
     <>
-      <h3 style={{ marginTop: 18 }}>🎭 Masque organisme (silhouette)</h3>
+      <h3 style={{ marginTop: 18 }}>🎭 Masque organismes (silhouette)</h3>
       <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8, lineHeight: 1.4 }}>
-        Restreint la couche organisme (particules, cellules, fractale…) à
-        l'intérieur — ou à l'extérieur — de ta silhouette détectée par
-        MediaPipe. Indépendant du filtre caméra : on peut filtrer le corps
-        ET ne montrer les particules que dans le corps.
+        Restreint la couche <strong>organismes</strong> (particules, cellules,
+        fractale, RD…) à l'intérieur ou à l'extérieur de ta silhouette.
+        Indépendant du filtre caméra : tu peux filtrer le corps ET ne montrer
+        les organismes que dedans, ou l'inverse.
       </p>
       <div className="palette-row">
-        <label>Afficher l'organisme</label>
+        <label>Confiner</label>
         <select
           value={m.mode}
           onChange={(e) => setOrganismMask({ mode: e.target.value as any })}
         >
-          <option value="all">🌍 Partout</option>
-          <option value="body">👤 Dans mon corps seulement</option>
-          <option value="background">🖼️ Hors de mon corps (décor seulement)</option>
+          <option value="all">🌍 Aucun masque (partout)</option>
+          <option value="body">👤 Dans mon corps</option>
+          <option value="background">🖼️ Hors de mon corps</option>
         </select>
       </div>
       {m.mode !== 'all' && (
         <>
           <Slider
-            label="Adoucissement bord"
+            label="Bord masque (douceur)"
             value={m.feather ?? 0.15}
             min={0} max={0.5} step={0.01}
             onChange={(v) => setOrganismMask({ feather: v })}
@@ -848,6 +882,7 @@ function OrganismMaskPanel() {
           </p>
         </>
       )}
+      <CameraStatusHint kind="organism" />
     </>
   )
 }

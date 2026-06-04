@@ -103,15 +103,23 @@ export function Stage({ onEngineReady }: Props) {
   }, [])
 
   // Auto-request the camera as soon as a zone selects 'webcam' content
-  // (or arClipToZones is on, since AR-in-zones implies webcam zones make sense).
+  // (or arClipToZones is on, since AR-in-zones implies webcam zones make sense)
+  // OR a webcam filter / organism mask needs the silhouette — those run on top
+  // of MediaPipe which itself needs the video stream. Without this, picking
+  // 'Mon corps seulement' on either mask silently fails (no video → no
+  // SelfieSegmenter output → mask shader sees uMaskValid=0 → 'all' fallback).
   useEffect(() => {
-    const needsCamera = !!(
+    const needsForZones = !!(
       current?.mapping?.shapes?.some((sh) => sh.content?.type === 'webcam' && sh.enabled)
     )
+    const filterNeedsCamera = current?.webcamFilter?.kind && current.webcamFilter.kind !== 'none'
+    const orgMaskNeedsCamera = current?.organismMask && current.organismMask.mode !== 'all'
+    const silObstacle = current?.obstacles?.some((o) => o.kind === 'silhouette' && o.enabled)
+    const needsCamera = needsForZones || !!filterNeedsCamera || !!orgMaskNeedsCamera || !!silObstacle
     if (needsCamera && !(window as any).__animaCameraOn) {
       window.dispatchEvent(new Event('anima:request-camera'))
     }
-  }, [current?.mapping?.shapes])
+  }, [current?.mapping?.shapes, current?.webcamFilter?.kind, current?.organismMask?.mode, current?.obstacles])
 
   return (
     <div className="canvas-wrap" ref={ref} />
