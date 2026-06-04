@@ -47,9 +47,19 @@ function refreshDeviceList() {
     : '(aucun appareil — utilise le clavier virtuel ci-dessous)'
 }
 
-/** Programmatic note-on / note-off — used by the on-screen virtual keyboard. */
+/**
+ * Programmatic note-on / note-off — used by the on-screen virtual keyboard.
+ *
+ * Also unlocks the audio context lazily on first use, so notes played from
+ * the virtual keyboard immediately produce sound through the synth without
+ * requiring a separate user gesture on the volume button.
+ */
+import { soundEngine } from '../engine/SoundEngine'
+
 export function virtualNoteOn(note: number, velocity = 0.8) {
   if (note < 0 || note >= 128) return
+  // The first call here counts as the user's "audio gesture" — wake the engine.
+  try { soundEngine.ensure() } catch { /* ignore (context creation may fail in iframes) */ }
   senseBus.midi.notes[note] = Math.max(0, Math.min(1, velocity))
   senseBus.midi.available = true   // even without a real device, the bus is live
 }
@@ -60,6 +70,7 @@ export function virtualNoteOff(note: number) {
 /** Programmatic CC set — used by the on-screen XY pad and sliders. */
 export function virtualCC(num: number, value0to1: number) {
   if (num < 0 || num >= 128) return
+  try { soundEngine.ensure() } catch { /* ignore */ }
   const v = Math.max(0, Math.min(1, value0to1))
   senseBus.midi.cc[num] = v
   if (num === 1) senseBus.midi.mod = v

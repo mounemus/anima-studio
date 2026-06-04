@@ -20,6 +20,36 @@ interface Voice {
   lastDensity: number
 }
 
+// ---------------- MIDI polysynth (notes from senseBus.midi.notes) ----------------
+
+interface MidiVoice {
+  osc: OscillatorNode
+  gain: GainNode
+  releaseTimer: number | null
+  note: number
+}
+
+export interface MidiSynthConfig {
+  enabled: boolean
+  waveform: Waveform
+  /** 0..1 — overall mix into the master bus */
+  volume: number
+  /** Attack time (s). */
+  attack: number
+  /** Release time (s). */
+  release: number
+  /** Filter cutoff in Hz (modulated up by mod wheel). */
+  filterCutoff: number
+  /** Resonance. */
+  filterQ: number
+}
+
+const MIDI_SYNTH_DEFAULT: MidiSynthConfig = {
+  enabled: true, waveform: 'triangle', volume: 0.5,
+  attack: 0.008, release: 0.35,
+  filterCutoff: 2200, filterQ: 1.5,
+}
+
 export class SoundEngine {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
@@ -28,6 +58,12 @@ export class SoundEngine {
   private masterVolume = 0.6
   /** Used to estimate density (count / typical normalizer). */
   totalAgents = 1
+  // MIDI synth state
+  private midiBus: GainNode | null = null
+  private midiFilter: BiquadFilterNode | null = null
+  private midiVoices = new Map<number, MidiVoice>()  // note → voice
+  private prevNoteOn = new Float32Array(128)         // edge-detect note on/off
+  midiSynth: MidiSynthConfig = { ...MIDI_SYNTH_DEFAULT }
 
   ensure() {
     if (this.ctx) return this.ctx
@@ -35,6 +71,15 @@ export class SoundEngine {
     this.master = this.ctx.createGain()
     this.master.gain.value = this.muted ? 0 : this.masterVolume
     this.master.connect(this.ctx.destination)
+    // MIDI synth bus: dedicated GainNode + shared filter routed into master
+    this.midiBus = this.ctx.createGain()
+    this.midiBus.gain.value = this.midiSynth.volume
+    this.midiFilter = this.ctx.createBiquadFilter()
+    this.midiFilter.type = 'lowpass'
+    this.midiFilter.frequency.value = this.midiSynth.filterCutoff
+    this.midiFilter.Q.value = this.midiSynth.filterQ
+    this.midiBus.connect(this.midiFilter)
+    this.midiFilter.connect(this.master)
     return this.ctx
   }
 
@@ -123,6 +168,93 @@ export class SoundEngine {
   /** Read-only density per obstacle id (0..1) for UI feedback. */
   density(id: string): number {
     return this.voices.get(id)?.lastDensity ?? 0
+  }
+
+  /** Update MIDI synth config (waveform / volume / envelopes / filter). */
+  setMidiSynth(patch: Partial<MidiSynthConfig>) {
+    this.midiSynth = { ...this.midiSynth, ...patch }
+    if (this.midiBus) this.midiBus.gain.setTargetAtTime(this.midiSynth.volume, this.ctx!.currentTime, 0.05)
+    if (this.midiFilter) {
+      this.midiFilter.frequency.setTargetAtTime(this.midiSynth.filterCutoff, this.ctx!.currentTime, 0.05)
+      this.midiFilter.Q.setTargetAtTime(this.midiSynth.filterQ, this.ctx!.currentTime, 0.05)
+    }
+  }
+
+  /** Poll senseBus.midi.notes and trigger/release voices. Call once per frame. */
+  tickMidi() {
+    if (!this.ctx || !this.midiBus || !this.midiFilter) return
+    if (!this.midiSynth.enabled) {
+      // Kill any sustaining voices
+      if (this.midiVoices.size > 0) {
+        for (const note of Array.from(this.midiVoices.keys())) this.releaseNote(note)
+      }
+      this.prevNoteOn.fill(0)
+      return
+    }
+    const now = this.ctx.currentTime
+    const notes = senseBus.midi.notes
+    // Mod wheel modulates the filter cutoff smoothly
+    const modAmount = senseBus.midi.mod
+    const cutoff = Math.min(12000, this.midiSynth.filterCutoff * (1 + modAmount * 4))
+    this.midiFilter.frequency.setTargetAtTime(cutoff, now, 0.04)
+    // Edge-detect each note
+    for (let n = 21; n < 109; n++) {  // 88-key piano range
+      const v = notes[n] ?? 0
+      const wasOn = this.prevNoteOn[n] > 0
+      const isOn = v > 0
+      if (isOn && !wasOn) this.triggerNote(n, v)
+      else if (!isOn && wasOn) this.releaseNote(n)
+      this.prevNoteOn[n] = v
+    }
+  }
+
+  private triggerNote(note: number, velocity: number) {
+    if (!this.ctx || !this.midiBus) return
+    // If a voice for this note already exists (re-trigger), kill it first
+    const existing = this.midiVoices.get(note)
+    if (existing) {
+      try { existing.osc.stop() } catch {}
+      existing.osc.disconnect(); existing.gain.disconnect()
+      if (existing.releaseTimer) clearTimeout(existing.releaseTimer)
+      this.midiVoices.delete(note)
+    }
+    // Polyphony cap: kill oldest if we hit 24 voices
+    if (this.midiVoices.size >= 24) {
+      const oldestKey = this.midiVoices.keys().next().value
+      if (oldestKey !== undefined) this.releaseNote(oldestKey)
+    }
+    const now = this.ctx.currentTime
+    const osc = this.ctx.createOscillator()
+    const gain = this.ctx.createGain()
+    osc.type = this.midiSynth.waveform
+    osc.frequency.value = noteFreq(note)
+    // ADSR-ish: 0 → velocity*0.5 over attack, sustain
+    const peak = Math.max(0.05, Math.min(1, velocity)) * 0.5
+    gain.gain.setValueAtTime(0, now)
+    gain.gain.linearRampToValueAtTime(peak, now + this.midiSynth.attack)
+    osc.connect(gain)
+    gain.connect(this.midiBus)
+    osc.start(now)
+    this.midiVoices.set(note, { osc, gain, releaseTimer: null, note })
+  }
+
+  private releaseNote(note: number) {
+    const v = this.midiVoices.get(note)
+    if (!v || !this.ctx) return
+    const now = this.ctx.currentTime
+    const rel = Math.max(0.02, this.midiSynth.release)
+    try {
+      v.gain.gain.cancelScheduledValues(now)
+      v.gain.gain.setValueAtTime(v.gain.gain.value, now)
+      v.gain.gain.linearRampToValueAtTime(0, now + rel)
+    } catch { /* ignore */ }
+    // Stop + disconnect after release ends
+    if (v.releaseTimer) clearTimeout(v.releaseTimer)
+    v.releaseTimer = window.setTimeout(() => {
+      try { v.osc.stop() } catch {}
+      v.osc.disconnect(); v.gain.disconnect()
+      this.midiVoices.delete(note)
+    }, Math.ceil((rel + 0.02) * 1000))
   }
 
   destroy() {

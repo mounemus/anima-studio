@@ -359,6 +359,8 @@ export class Engine {
     }
     // After organisms moved, push counters → audio
     soundEngine.tick()
+    // Polysynth: poll MIDI notes (USB or virtual) and trigger/release voices
+    soundEngine.tickMidi()
 
     // render main organism to mainRT
     this.renderer.setRenderTarget(this.mainRT)

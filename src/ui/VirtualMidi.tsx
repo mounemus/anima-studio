@@ -14,6 +14,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { virtualNoteOn, virtualNoteOff, virtualCC } from '../senses/MIDI'
+import { soundEngine } from '../engine/SoundEngine'
 
 // Keyboard mapping — same row pattern as Ableton / FL Studio
 // White keys: A=C, S=D, D=E, F=F, G=G, H=A, J=B, K=C
@@ -40,9 +41,17 @@ export function VirtualMidi() {
   const [octave, setOctave] = useState(4)  // C4 = MIDI 60
   const [held, setHeld] = useState<Set<number>>(new Set())
   const [ccValues, setCcValues] = useState<Record<number, number>>({ 1: 0, 7: 0.8, 11: 1, 74: 0.5 })
-  const [xyCC, setXyCC] = useState<{ x: number; y: number }>({ x: 12, y: 13 })   // CC12, CC13 by default
+  const [xyCC, setXyCC] = useState<{ x: number; y: number }>({ x: 12, y: 13 })
   const [xyVal, setXyVal] = useState<{ x: number; y: number }>({ x: 0.5, y: 0.5 })
   const padRef = useRef<HTMLDivElement>(null)
+  // Synth controls — mirror soundEngine.midiSynth into local state so sliders react
+  const [synth, setSynth] = useState({ ...soundEngine.midiSynth })
+  const patchSynth = (p: Partial<typeof synth>) => {
+    const next = { ...synth, ...p }
+    setSynth(next)
+    soundEngine.ensure()
+    soundEngine.setMidiSynth(next)
+  }
 
   // Press a note → senseBus + visual state
   const press = (note: number) => {
@@ -118,6 +127,53 @@ export function VirtualMidi() {
         </span>
         <button onClick={() => setOctave((o) => Math.max(0, o - 1))} style={{ fontSize: 10, padding: '2px 6px' }}>◀</button>
         <button onClick={() => setOctave((o) => Math.min(8, o + 1))} style={{ fontSize: 10, padding: '2px 6px' }}>▶</button>
+      </div>
+
+      {/* Synth controls (audible output) */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '4px 6px', marginBottom: 6, background: synth.enabled ? 'rgba(0,255,163,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${synth.enabled ? 'rgba(0,255,163,0.3)' : 'var(--line)'}`, borderRadius: 'var(--radius-sm)' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
+          <input type="checkbox" checked={synth.enabled} onChange={(e) => patchSynth({ enabled: e.target.checked })} />
+          🔊 Synth audio
+        </label>
+        <select
+          value={synth.waveform}
+          onChange={(e) => patchSynth({ waveform: e.target.value as any })}
+          style={{ fontSize: 11, padding: '1px 4px' }}
+          title="Forme d'onde"
+        >
+          <option value="sine">Sine</option>
+          <option value="triangle">Triangle</option>
+          <option value="sawtooth">Sawtooth</option>
+          <option value="square">Square</option>
+        </select>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: 'var(--text-dim)' }}>
+          Vol
+          <input
+            type="range" min={0} max={1} step={0.02} value={synth.volume}
+            onChange={(e) => patchSynth({ volume: parseFloat(e.target.value) })}
+            style={{ width: 70 }}
+          />
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: 'var(--text-dim)' }}>
+          Filtre
+          <input
+            type="range" min={200} max={8000} step={50} value={synth.filterCutoff}
+            onChange={(e) => patchSynth({ filterCutoff: parseFloat(e.target.value) })}
+            style={{ width: 70 }}
+          />
+          <span style={{ fontFamily: 'var(--mono)', minWidth: 38, textAlign: 'right' }}>{Math.round(synth.filterCutoff)}Hz</span>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: 'var(--text-dim)' }}>
+          Release
+          <input
+            type="range" min={0.05} max={2} step={0.02} value={synth.release}
+            onChange={(e) => patchSynth({ release: parseFloat(e.target.value) })}
+            style={{ width: 60 }}
+          />
+        </label>
+        {soundEngine.isMuted() && (
+          <span style={{ fontSize: 10, color: 'var(--warn)' }}>⚠ Master coupé (icône 🔊 en haut)</span>
+        )}
       </div>
 
       {/* Piano */}
