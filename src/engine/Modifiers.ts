@@ -114,13 +114,18 @@ export function applyModifiers(
       case 'vortex': {
         const c = m.center === 'hand' ? handWorldPos(aspect) : { x: (m.center.x - 0.5) * 2 * aspect, y: -(m.center.y - 0.5) * 2 }
         if (!c) break
-        const r2max = m.radius * m.radius
+        // Guard radius=0 : without it, an agent exactly at the center divides
+        // 0/0 → NaN, and NaN positions propagate forever (the agent vanishes
+        // permanently). Imported / AI-authored scenes can carry radius=0 even
+        // though the UI slider clamps it.
+        const radius = Math.max(1e-3, m.radius)
+        const r2max = radius * radius
         for (let i = 0; i < count; i++) {
           const px = positions[i * 3] - c.x
           const py = positions[i * 3 + 1] - c.y
           const d2 = px * px + py * py
           if (d2 > r2max) continue
-          const fall = 1 - Math.sqrt(d2) / m.radius
+          const fall = 1 - Math.sqrt(d2) / radius
           // Tangential rotation
           const omega = m.omega * fall * dt
           const cos = Math.cos(omega), sin = Math.sin(omega)
@@ -159,14 +164,25 @@ export function applyModifiers(
       }
       case 'pulseGate': {
         if (!velocities) break
+        // Guard width=0 : when phase hits exactly 0 or 1, (phase-edge)/0 = 0/0 =
+        // NaN → beat=NaN → k=NaN → every velocity becomes NaN permanently.
+        const width = Math.max(1e-3, m.width)
         // beat function: 1 at the pulse, ~0 elsewhere, with `width` controlling sharpness
         const phase = (t * m.bpm) % 1
-        const beat = Math.exp(-Math.pow((phase - 0) / m.width, 2)) + Math.exp(-Math.pow((phase - 1) / m.width, 2))
+        let beat = Math.exp(-Math.pow((phase - 0) / width, 2)) + Math.exp(-Math.pow((phase - 1) / width, 2))
+        if (!Number.isFinite(beat)) beat = 0
         if (beat < 0.05) continue
         const k = 1 + (m.intensity - 1) * beat
+        // Cap the velocity magnitude so a high intensity applied across several
+        // consecutive frames can't exponentially blow agents off-screen.
+        const VMAX = 4
         for (let i = 0; i < count; i++) {
-          velocities[i * 2] *= k
-          velocities[i * 2 + 1] *= k
+          let vx = velocities[i * 2] * k
+          let vy = velocities[i * 2 + 1] * k
+          const sp = Math.hypot(vx, vy)
+          if (sp > VMAX) { const s = VMAX / sp; vx *= s; vy *= s }
+          velocities[i * 2] = vx
+          velocities[i * 2 + 1] = vy
         }
         break
       }

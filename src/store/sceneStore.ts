@@ -51,9 +51,22 @@ interface SceneStoreState {
 }
 
 let persistTimer = 0
+let pendingPersist: (() => void) | null = null
 const debouncePersist = (fn: () => void) => {
   clearTimeout(persistTimer)
-  persistTimer = window.setTimeout(fn, 300)
+  pendingPersist = fn
+  persistTimer = window.setTimeout(() => { pendingPersist = null; fn() }, 300)
+}
+/** Run any pending debounced save NOW. Called before switching scenes so an
+ *  edit made <300ms before a scene-switch lands on the scene that was current
+ *  AT EDIT TIME, instead of the newly-selected scene (silent data loss). */
+const flushPersist = () => {
+  if (pendingPersist) {
+    clearTimeout(persistTimer)
+    const f = pendingPersist
+    pendingPersist = null
+    f()
+  }
 }
 
 export const useSceneStore = create<SceneStoreState>((set, get) => ({
@@ -96,7 +109,9 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
     set({ scenes: existing, currentId: existing[0]?.id ?? null, dbStatus: 'ok', dbError: null })
   },
 
-  select: (id) => set({ currentId: id }),
+  // Flush any pending debounced save for the OUTGOING scene before switching,
+  // otherwise a recent edit would be written against the incoming scene.
+  select: (id) => { flushPersist(); set({ currentId: id }) },
 
   add: async (s) => {
     await saveScene(s)

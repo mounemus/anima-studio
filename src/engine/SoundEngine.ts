@@ -66,8 +66,15 @@ export class SoundEngine {
   midiSynth: MidiSynthConfig = { ...MIDI_SYNTH_DEFAULT }
 
   ensure() {
-    if (this.ctx) return this.ctx
+    if (this.ctx) {
+      // The context can fall into 'suspended' after a tab is backgrounded or
+      // when first created from a non-gesture path. resume() is a no-op if it's
+      // already running; without it the whole app goes silent with no error.
+      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {})
+      return this.ctx
+    }
     this.ctx = new AudioContext()
+    if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {})
     this.master = this.ctx.createGain()
     this.master.gain.value = this.muted ? 0 : this.masterVolume
     this.master.connect(this.ctx.destination)
@@ -88,6 +95,7 @@ export class SoundEngine {
 
   setMuted(m: boolean) {
     this.muted = m
+    if (this.ctx?.state === 'suspended') this.ctx.resume().catch(() => {})
     if (this.master) this.master.gain.setTargetAtTime(m ? 0 : this.masterVolume, this.ctx!.currentTime, 0.05)
   }
 
@@ -271,6 +279,19 @@ export class SoundEngine {
       v.osc.disconnect(); v.filter.disconnect(); v.gain.disconnect()
     }
     this.voices.clear()
+    // Tear down the MIDI synth side too — previously these leaked on every
+    // destroy(): sustaining oscillators kept running, release timers fired
+    // callbacks against a closed context, and the midiBus/filter were orphaned.
+    for (const v of this.midiVoices.values()) {
+      if (v.releaseTimer) clearTimeout(v.releaseTimer)
+      try { v.osc.stop() } catch {}
+      try { v.osc.disconnect(); v.gain.disconnect() } catch {}
+    }
+    this.midiVoices.clear()
+    this.prevNoteOn.fill(0)
+    try { this.midiBus?.disconnect(); this.midiFilter?.disconnect() } catch {}
+    this.midiBus = null
+    this.midiFilter = null
     this.master?.disconnect()
     this.ctx?.close()
     this.ctx = null

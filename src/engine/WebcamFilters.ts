@@ -327,6 +327,7 @@ export class WebcamFilterPass {
   private maskW = 1
   private maskH = 1
   private vao: WebGLVertexArrayObject
+  private buffer: WebGLBuffer | null = null
   private uniforms = new Map<string, WebGLUniformLocation | null>()
   private rafId = 0
   private startTime = performance.now()
@@ -350,6 +351,7 @@ export class WebcamFilterPass {
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0)
     gl.enableVertexAttribArray(0)
     this.vao = vao
+    this.buffer = buf   // keep a handle so dispose() can free it (deleting the VAO doesn't free its buffers)
 
     // Allocate video & previous textures
     const mk = () => {
@@ -531,5 +533,6 @@ export class WebcamFilterPass {
     gl.deleteTexture(this.prevTexture)
     gl.deleteTexture(this.maskTexture)
     gl.deleteVertexArray(this.vao)
+    if (this.buffer) gl.deleteBuffer(this.buffer)
   }
 }

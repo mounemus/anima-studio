@@ -23,17 +23,25 @@ function sanitizeForSave(s: Scene): Scene {
   return next
 }
 
-/** Forward-migrate older saved scenes (add missing fields with sane defaults). */
-function migrateScene(s: any): Scene {
+/** Forward-migrate older saved scenes (add missing fields with sane defaults).
+ *  Exported so the import path can reuse the exact same hardening as load. */
+export function migrateScene(s: any): Scene {
+  const v = s.visual ?? {}
   return {
     ...s,
     mapping: { ...defaultMapping(), ...(s.mapping ?? {}) },
     obstacles: Array.isArray(s.obstacles) ? s.obstacles : [],
     flow: s.flow ?? defaultFlow(),
     visual: {
-      palette: { bg: '#000000', primary: '#00ffa3', secondary: '#00d4ff', glow: '#7c3aed' },
       bloom: 0.5, feedback: 0.92, blendMode: 'add' as const, texture: null, textureIntensity: 0,
-      ...(s.visual ?? {}),
+      ...v,
+      // Palette must be DEEP-merged : a partial palette (e.g. only {primary})
+      // from an old/external file would otherwise wipe bg/secondary/glow and
+      // crash the Engine which reads palette.bg/primary/secondary/glow.
+      palette: {
+        bg: '#000000', primary: '#00ffa3', secondary: '#00d4ff', glow: '#7c3aed',
+        ...(v.palette ?? {}),
+      },
     },
     evolution: s.evolution ?? { enabled: false, driftSpeed: 0.1, amplitude: 0.2 },
     senses: s.senses ?? { hands: true, audio: false, light: false, bindings: [] },
@@ -64,7 +72,10 @@ export async function clearAll() {
 }
 
 export function exportSceneJSON(s: Scene) {
-  const blob = new Blob([JSON.stringify(s, null, 2)], { type: 'application/json' })
+  // Strip blob:/transient sources so the exported file doesn't carry dead
+  // references that break on re-import or on another machine.
+  const clean = sanitizeForSave(s)
+  const blob = new Blob([JSON.stringify(clean, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -75,9 +86,11 @@ export function exportSceneJSON(s: Scene) {
 
 export async function importSceneJSON(file: File): Promise<Scene> {
   const text = await file.text()
-  const s = JSON.parse(text) as Scene
-  if (!s.id || !s.organism) throw new Error('Invalid scene file')
-  return s
+  const raw = JSON.parse(text)
+  if (!raw || !raw.id || !raw.organism) throw new Error('Invalid scene file')
+  // Run the imported object through the SAME hardening as the load path, so an
+  // old or partial JSON (missing palette/mapping/visual) can't crash the Engine.
+  return sanitizeForSave(migrateScene(raw))
 }
 
 /**

@@ -623,6 +623,14 @@ export class Engine {
     this.zoneOrganisms.clear()
     this.mapping.dispose()
     this.mainRT.dispose(); this.feedbackRT.dispose(); this.feedbackRT2.dispose()
+    // Dispose the feedback-pass resources : renderer.dispose() does NOT free
+    // per-material compiled programs nor scene-graph geometries, so without
+    // these each Stage remount / HMR cycle leaked one shader program, one VBO
+    // and one mask DataTexture.
+    this.feedbackQuadMat.dispose()
+    const fbMesh = this.feedbackQuadScene.children[0] as THREE.Mesh | undefined
+    fbMesh?.geometry?.dispose()
+    this.organismMaskTex?.dispose()
     // Release any module-level singletons that would otherwise leak across HMR
     stopMaskedWebcam()
     stopColorTracking()

@@ -44,7 +44,13 @@ export function SceneList() {
     if (!f) return
     try {
       const s = await importSceneJSON(f)
-      await add(s)
+      // Guard against silently overwriting an existing scene that happens to
+      // share the imported id : mint a fresh id + copy label instead.
+      const collision = scenes.some((x) => x.id === s.id)
+      const safe = collision
+        ? { ...s, id: `${s.id}-import-${Date.now().toString(36)}`, name: `${s.name} (importé)` }
+        : s
+      await add(safe)
     } catch (err) { alert('Fichier invalide: ' + err) }
     e.target.value = ''
   }
