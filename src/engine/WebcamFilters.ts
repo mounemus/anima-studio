@@ -15,6 +15,7 @@
  * the video signal so artists can compose them with the organism layer.
  */
 import { senseBus } from '../senses/SenseBus'
+import { getSilhouetteMask } from '../senses/Silhouette'
 
 export type WebcamFilterKind =
   | 'none'
@@ -42,6 +43,14 @@ export interface WebcamFilterConfig {
   audioReact?: number
   /** Pose reactivity 0..1 — bind wrist positions to the filter's spatial params. */
   poseReact?: number
+  /** Where the filter is applied :
+   *  - 'all'        (default)  : whole frame
+   *  - 'body'                  : only inside the SelfieSegmenter silhouette
+   *  - 'background'            : only outside the silhouette (keep body untouched)
+   *  Needs the silhouette mask running; engine auto-starts it when this is set. */
+  applyTo?: 'all' | 'body' | 'background'
+  /** 0..1 — feathered edge softness around the silhouette boundary. */
+  maskFeather?: number
 }
 
 export const FILTER_DEFAULTS: Record<WebcamFilterKind, WebcamFilterConfig> = {
@@ -74,6 +83,7 @@ in vec2 vUv;
 out vec4 outColor;
 uniform sampler2D uVideo;
 uniform sampler2D uPrev;     // previous frame (for temporal filters)
+uniform sampler2D uMask;     // body silhouette (R channel = 0..1)
 uniform vec2 uResolution;
 uniform float uTime;
 uniform float uIntensity;
@@ -86,11 +96,26 @@ uniform float uHigh;
 uniform vec2 uPose1;         // left wrist (0..1) — for pose-reactive filters
 uniform vec2 uPose2;         // right wrist
 uniform float uPoseValid;    // 0 or 1
+uniform float uMaskValid;    // 0 (no silhouette running) or 1
+uniform float uApplyTo;      // 0=all, 1=body, 2=background
+uniform float uMaskFeather;  // 0..1 — softness around silhouette edge
 
 vec3 sampleVideo(vec2 uv) {
   return texture(uVideo, vec2(1.0 - uv.x, uv.y)).rgb;  // mirror horizontally
 }
 float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+
+/** maskWeight returns 0..1, how much of the filtered result to keep at this
+ *  pixel. The filter shader writes vec3 fxColor; we wrap the final outColor
+ *  with mix(rawVideo, fxColor, maskWeight * uIntensity) instead of each filter
+ *  doing its own intensity blend, so applyTo applies uniformly to all kinds. */
+float maskWeight(vec2 uv) {
+  if (uMaskValid < 0.5 || uApplyTo < 0.5) return 1.0;
+  float body = texture(uMask, vec2(1.0 - uv.x, uv.y)).r;
+  float feather = max(0.001, uMaskFeather);
+  float edge = smoothstep(0.5 - feather, 0.5 + feather, body);
+  return (uApplyTo < 1.5) ? edge : (1.0 - edge);  // 1=body, 2=background
+}
 `
 
 // ---------- FILTER LIBRARY ----------
@@ -118,7 +143,7 @@ void main() {
   vec3 base = sampleVideo(vUv);
   vec3 edgeCol = uColor * edge;
   vec3 mixed = mix(base * (1.0 - edge * 0.7), edgeCol, edge);
-  outColor = vec4(mix(base, mixed, uIntensity), 1.0);
+  outColor = vec4(mix(base, mixed, uIntensity * maskWeight(vUv)), 1.0);
 }`
 
 // ASCII — quantize the screen into character cells, pick a glyph by luminance.
@@ -152,7 +177,7 @@ void main() {
   float g = glyphAt(inCell, bin);
   vec3 tint = mix(uColor, col, 0.5);
   vec3 fxCol = tint * g;
-  outColor = vec4(mix(col, fxCol, uIntensity), 1.0);
+  outColor = vec4(mix(col, fxCol, uIntensity * maskWeight(vUv)), 1.0);
 }`
 
 // HALFTONE — circular dots whose radius encodes luminance, rotated grid.
@@ -169,7 +194,7 @@ void main() {
   float d = length(grid);
   float dotMask = smoothstep(radius, radius - 0.05, d);
   vec3 dotCol = mix(vec3(0.0), uColor, dotMask);
-  outColor = vec4(mix(col, dotCol, uIntensity), 1.0);
+  outColor = vec4(mix(col, dotCol, uIntensity * maskWeight(vUv)), 1.0);
 }`
 
 // POSTERIZE — color quantization, woodblock-print look.
@@ -181,7 +206,7 @@ void main() {
   // Boost saturation for a stronger graphic feel
   float L = luma(q);
   q = mix(vec3(L), q, 1.3);
-  outColor = vec4(mix(sampleVideo(vUv), q, uIntensity), 1.0);
+  outColor = vec4(mix(sampleVideo(vUv), q, uIntensity * maskWeight(vUv)), 1.0);
 }`
 
 // KALEIDOSCOPE — N-fold mirror symmetry; the center follows the average of
@@ -199,7 +224,7 @@ void main() {
   vec2 uv2 = center + vec2(cos(a), sin(a)) * r;
   uv2 = clamp(uv2, vec2(0.001), vec2(0.999));
   vec3 col = sampleVideo(uv2);
-  outColor = vec4(mix(sampleVideo(vUv), col, uIntensity), 1.0);
+  outColor = vec4(mix(sampleVideo(vUv), col, uIntensity * maskWeight(vUv)), 1.0);
 }`
 
 // ECHO — temporal feedback. Blends current frame with the previous output to
@@ -210,7 +235,7 @@ void main() {
   vec3 prev = texture(uPrev, vUv).rgb;
   float k = clamp(uPar0 + uBass * 0.05, 0.0, 0.99);
   vec3 trail = max(cur, prev * k);   // brighter-of accumulator, not just blend
-  outColor = vec4(mix(cur, trail, uIntensity), 1.0);
+  outColor = vec4(mix(cur, trail, uIntensity * maskWeight(vUv)), 1.0);
 }`
 
 // LIQUIFY — Perlin-ish noise warp; the warp strength rides the bass.
@@ -228,7 +253,7 @@ void main() {
   vec2 q = vec2(noise(vUv * 4.0 + uTime * 0.3), noise(vUv * 4.0 - uTime * 0.4));
   vec2 warp = (q - 0.5) * amp;
   vec3 col = sampleVideo(vUv + warp);
-  outColor = vec4(mix(sampleVideo(vUv), col, uIntensity), 1.0);
+  outColor = vec4(mix(sampleVideo(vUv), col, uIntensity * maskWeight(vUv)), 1.0);
 }`
 
 // CHROMATIC — RGB channel split, scaling with bass.
@@ -239,7 +264,7 @@ void main() {
   float r = sampleVideo(vUv + dir * amp).r;
   float g = sampleVideo(vUv).g;
   float b = sampleVideo(vUv - dir * amp).b;
-  outColor = vec4(mix(sampleVideo(vUv), vec3(r, g, b), uIntensity), 1.0);
+  outColor = vec4(mix(sampleVideo(vUv), vec3(r, g, b), uIntensity * maskWeight(vUv)), 1.0);
 }`
 
 // INFRARED — false-color thermography (luminance → palette).
@@ -260,7 +285,7 @@ void main() {
   vec3 col = sampleVideo(vUv);
   float t = luma(col) * uPar0 + uMid * 0.1;
   vec3 thermal = thermalPalette(t);
-  outColor = vec4(mix(col, thermal, uIntensity), 1.0);
+  outColor = vec4(mix(col, thermal, uIntensity * maskWeight(vUv)), 1.0);
 }`
 
 const SHADERS: Record<WebcamFilterKind, string> = {
@@ -293,6 +318,9 @@ export class WebcamFilterPass {
   private kind: WebcamFilterKind = 'none'
   private videoTexture: WebGLTexture
   private prevTexture: WebGLTexture        // previous-frame snapshot for ECHO
+  private maskTexture: WebGLTexture        // SelfieSegmenter body silhouette
+  private maskW = 1
+  private maskH = 1
   private vao: WebGLVertexArrayObject
   private uniforms = new Map<string, WebGLUniformLocation | null>()
   private rafId = 0
@@ -330,6 +358,12 @@ export class WebcamFilterPass {
     }
     this.videoTexture = mk()
     this.prevTexture = mk()
+    this.maskTexture = mk()
+    // Seed the mask with a single white pixel so an uninitialized run shows the
+    // filter on the whole frame (maskWeight=1 everywhere) until the silhouette
+    // pipeline catches up and starts feeding real data.
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTexture)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, 1, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, new Uint8Array([255]))
 
     this.setKind('none')
   }
@@ -371,9 +405,10 @@ export class WebcamFilterPass {
     this.uniforms.clear()
     const u = (name: string) => this.uniforms.set(name, gl.getUniformLocation(p, name))
     ;[
-      'uVideo', 'uPrev', 'uResolution', 'uTime', 'uIntensity',
+      'uVideo', 'uPrev', 'uMask', 'uResolution', 'uTime', 'uIntensity',
       'uPar0', 'uPar1', 'uColor', 'uBass', 'uMid', 'uHigh',
       'uPose1', 'uPose2', 'uPoseValid',
+      'uMaskValid', 'uApplyTo', 'uMaskFeather',
     ].forEach(u)
     this.kind = k
   }
@@ -429,6 +464,30 @@ export class WebcamFilterPass {
     gl.bindTexture(gl.TEXTURE_2D, this.prevTexture)
     gl.uniform1i(this.uniforms.get('uPrev') ?? null, 1)
 
+    // Upload the latest silhouette mask if available + bind to unit 2.
+    // We re-upload every frame; the mask is small (typically 144×256 = 36 KB)
+    // so the texImage2D cost is negligible compared to the video upload.
+    const mask = getSilhouetteMask()
+    const applyTo = this.cfg.applyTo ?? 'all'
+    const maskValid = mask && applyTo !== 'all' ? 1 : 0
+    if (mask && applyTo !== 'all') {
+      gl.activeTexture(gl.TEXTURE2)
+      gl.bindTexture(gl.TEXTURE_2D, this.maskTexture)
+      if (mask.w !== this.maskW || mask.h !== this.maskH) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, mask.w, mask.h, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, mask.data)
+        this.maskW = mask.w; this.maskH = mask.h
+      } else {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, mask.w, mask.h, gl.LUMINANCE, gl.UNSIGNED_BYTE, mask.data)
+      }
+    }
+    gl.activeTexture(gl.TEXTURE2)
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTexture)
+    gl.uniform1i(this.uniforms.get('uMask') ?? null, 2)
+    gl.uniform1f(this.uniforms.get('uMaskValid') ?? null, maskValid)
+    gl.uniform1f(this.uniforms.get('uApplyTo') ?? null,
+      applyTo === 'all' ? 0 : applyTo === 'body' ? 1 : 2)
+    gl.uniform1f(this.uniforms.get('uMaskFeather') ?? null, this.cfg.maskFeather ?? 0.15)
+
     gl.uniform2f(this.uniforms.get('uResolution') ?? null, this.canvas.width, this.canvas.height)
     gl.uniform1f(this.uniforms.get('uTime') ?? null, (performance.now() - this.startTime) * 0.001)
     gl.uniform1f(this.uniforms.get('uIntensity') ?? null, this.cfg.intensity)
@@ -465,6 +524,7 @@ export class WebcamFilterPass {
     if (this.program) gl.deleteProgram(this.program)
     gl.deleteTexture(this.videoTexture)
     gl.deleteTexture(this.prevTexture)
+    gl.deleteTexture(this.maskTexture)
     gl.deleteVertexArray(this.vao)
   }
 }

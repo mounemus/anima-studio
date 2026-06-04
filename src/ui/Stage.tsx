@@ -45,18 +45,24 @@ export function Stage({ onEngineReady }: Props) {
     }
   }, [current?.organism, current?.visual, current?.mapping, current?.obstacles])
 
-  // Start/stop silhouette segmentation when needed (silhouette obstacle OR maskBody)
+  // Start/stop silhouette segmentation when needed (silhouette obstacle, maskBody,
+  // OR a webcamFilter with applyTo restricted to body/background — without the
+  // SelfieSegmenter feeding the mask the filter would silently fall back to
+  // whole-frame mode).
   useEffect(() => {
     const needForObstacle = current?.obstacles?.some((o) => o.kind === 'silhouette' && o.enabled) ?? false
     const needForMaskBody = !!current?.mapping?.arMaskBody
-    const need = needForObstacle || needForMaskBody
+    const filterApplyTo = current?.webcamFilter?.applyTo
+    const needForFilter = current?.webcamFilter?.kind && current.webcamFilter.kind !== 'none'
+      && filterApplyTo && filterApplyTo !== 'all'
+    const need = needForObstacle || needForMaskBody || !!needForFilter
     const video = document.querySelector('video') as HTMLVideoElement | null
     if (need && video?.srcObject) {
       startSilhouette(video).catch((e) => console.warn('Silhouette failed', e))
     } else {
       stopSilhouette()
     }
-  }, [current?.obstacles, current?.mapping?.arMaskBody])
+  }, [current?.obstacles, current?.mapping?.arMaskBody, current?.webcamFilter?.kind, current?.webcamFilter?.applyTo])
 
   // Start/stop color tracking based on tracker obstacles
   useEffect(() => {

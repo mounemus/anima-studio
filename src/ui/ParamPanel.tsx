@@ -772,6 +772,31 @@ function WebcamFilterPanel() {
             <Slider label="Réactivité pose (poignets)" value={f.poseReact ?? 0} min={0} max={1} step={0.05}
               onChange={(v) => setWebcamFilter({ poseReact: v })} format={(v) => `${Math.round(v * 100)}%`} />
           )}
+          <h4 style={{ marginTop: 12, marginBottom: 4, fontSize: 11, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1 }}>
+            👤 Zone d'application
+          </h4>
+          <div className="palette-row">
+            <label>Appliquer sur</label>
+            <select
+              value={f.applyTo ?? 'all'}
+              onChange={(e) => setWebcamFilter({ applyTo: e.target.value as any })}
+              title="Restreint le filtre à la silhouette détectée par MediaPipe."
+            >
+              <option value="all">🌍 Toute l'image</option>
+              <option value="body">👤 Mon corps seulement</option>
+              <option value="background">🖼️ L'arrière-plan seulement</option>
+            </select>
+          </div>
+          {(f.applyTo === 'body' || f.applyTo === 'background') && (
+            <>
+              <Slider label="Adoucissement bord" value={f.maskFeather ?? 0.15} min={0} max={0.5} step={0.01}
+                onChange={(v) => setWebcamFilter({ maskFeather: v })} format={(v) => v.toFixed(2)} />
+              <p style={{ fontSize: 11, color: 'var(--accent)', marginTop: 4, lineHeight: 1.4 }}>
+                ✓ Silhouette MediaPipe auto-démarrée. Le filtre n'affecte que la zone choisie ;
+                le reste reste brut.
+              </p>
+            </>
+          )}
           <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 6, lineHeight: 1.4 }}>
             Le filtre s'active dans le miroir AR (bouton AR en haut). Sans caméra, il
             n'a rien à filtrer — active la caméra ou l'AR pour le voir.
