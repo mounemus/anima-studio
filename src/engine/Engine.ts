@@ -31,6 +31,10 @@ export class Engine {
   /** Last mask buffer size, used to decide between texImage vs texSubImage. */
   private organismMaskW = 1
   private organismMaskH = 1
+  /** Reusable scratch buffers for the Boids/Cells modifier adapter — reallocated
+   *  only when the agent count grows, instead of every frame (GC churn). */
+  private modPos: Float32Array | null = null
+  private modVel: Float32Array | null = null
   private mapping = new MappingPass()
   private mainRT: THREE.WebGLRenderTarget
   private currentScene: ArtScene | null = null
@@ -438,8 +442,11 @@ export class Engine {
         // Vortex/GravityWell/PulseGate/MagneticBands appear dead on Boids+Cells.
         if (!positions && typeof o.px === 'object' && typeof o.py === 'object') {
           count = o.count ?? o.px.length
-          positions = new Float32Array(count * 3)
-          velocities = o.vx && o.vy ? new Float32Array(count * 2) : null
+          // Reuse cached scratch buffers; grow only when the count increases.
+          if (!this.modPos || this.modPos.length < count * 3) this.modPos = new Float32Array(count * 3)
+          if (o.vx && o.vy && (!this.modVel || this.modVel.length < count * 2)) this.modVel = new Float32Array(count * 2)
+          positions = this.modPos
+          velocities = o.vx && o.vy ? this.modVel : null
           for (let i = 0; i < count; i++) {
             positions[i * 3] = o.px[i]
             positions[i * 3 + 1] = o.py[i]
