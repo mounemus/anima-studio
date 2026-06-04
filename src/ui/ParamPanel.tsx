@@ -1269,13 +1269,31 @@ function ObstaclesTab() {
                 <input
                   type="checkbox"
                   checked={sel.silhouette.invert}
-                  onChange={(e) => update(sel.id, { silhouette: { invert: e.target.checked } })}
+                  onChange={(e) => update(sel.id, { silhouette: { ...sel.silhouette!, invert: e.target.checked } })}
                 />
                 <span>Inverser (l'organisme reste DANS la silhouette)</span>
               </label>
-              <p style={{ fontSize: 11, color: 'var(--text-mute)' }}>
+              <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none', marginBottom: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={sel.silhouette.hideOverlay ?? false}
+                  onChange={(e) => update(sel.id, { silhouette: { ...sel.silhouette!, hideOverlay: e.target.checked } })}
+                />
+                <span>Masquer l'aperçu visuel (l'obstacle reste actif)</span>
+              </label>
+              {!sel.silhouette.hideOverlay && (
+                <Slider
+                  label="Opacité de l'aperçu"
+                  value={sel.silhouette.overlayOpacity ?? 0.5}
+                  min={0} max={1} step={0.05}
+                  onChange={(v) => update(sel.id, { silhouette: { ...sel.silhouette!, overlayOpacity: v } })}
+                  format={(v) => `${Math.round(v * 100)}%`}
+                />
+              )}
+              <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 6, lineHeight: 1.4 }}>
                 Segmentation MediaPipe SelfieSegmenter à 10 fps. Active la caméra pour démarrer.
                 Combinez avec <strong>kill</strong> : les organismes "disparaissent" derrière toi.
+                Réduire l'opacité ou masquer l'aperçu n'affecte pas la physique — uniquement le rendu cyan.
               </p>
             </>
           )}

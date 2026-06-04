@@ -57,9 +57,16 @@ export function SilhouetteOverlay({ stageRef }: { stageRef: React.RefObject<HTML
       if (!scratchCtx) return
       // Use the first silhouette obstacle's interaction for color
       const o = activeSilhouettes[0]
+      // Skip the entire draw if the user hid the overlay — physics still run
+      // through the engine; this just blanks the on-screen cyan glow.
+      if (o.silhouette?.hideOverlay) { ctx.clearRect(0, 0, W, H); return }
+      const opacity = o.silhouette?.overlayOpacity ?? 0.5
+      if (opacity <= 0.001) { ctx.clearRect(0, 0, W, H); return }
       const [R, G, B] = INTERACTION_RGBA[o.interaction]
       const invert = o.silhouette?.invert ?? false
       const img = scratchCtx.createImageData(mask.w, mask.h)
+      // Base alpha 160 (≈ previous "soft 80 + edge 70 ≈ 0.6" composite) scaled by opacity
+      const baseAlpha = Math.round(160 * opacity)
       for (let i = 0; i < mask.data.length; i++) {
         const v = mask.data[i] > 127
         const on = v !== invert
@@ -67,7 +74,7 @@ export function SilhouetteOverlay({ stageRef }: { stageRef: React.RefObject<HTML
         img.data[o4] = R
         img.data[o4 + 1] = G
         img.data[o4 + 2] = B
-        img.data[o4 + 3] = on ? 80 : 0
+        img.data[o4 + 3] = on ? baseAlpha : 0
       }
       scratchCtx.putImageData(img, 0, 0)
 
@@ -78,10 +85,11 @@ export function SilhouetteOverlay({ stageRef }: { stageRef: React.RefObject<HTML
       ctx.scale(-1, 1)   // mirror X to match the displayed webcam
       // Soft fill
       ctx.filter = 'blur(5px)'
+      ctx.globalAlpha = opacity
       ctx.drawImage(scratch, 0, 0, W, H)
       // Hard edge (less blur, more contrast)
       ctx.filter = 'blur(1px) brightness(1.7)'
-      ctx.globalAlpha = 0.7
+      ctx.globalAlpha = 0.7 * opacity
       ctx.drawImage(scratch, 0, 0, W, H)
       ctx.restore()
       ctx.filter = 'none'

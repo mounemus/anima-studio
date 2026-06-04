@@ -245,8 +245,16 @@ export interface Obstacle {
   polygon?: { points: Vec2[] }
   /** for hand: which landmark to use as center (default = palm), and radius */
   hand?: { source: 'palm' | 'index'; radius: number }
-  /** for silhouette: threshold + invert */
-  silhouette?: { invert: boolean }
+  /** for silhouette: threshold + invert + how visible the overlay is on screen */
+  silhouette?: {
+    invert: boolean
+    /** 0..1 — opacity of the visual silhouette overlay on the stage.
+     *  0 hides the cyan glow completely while keeping the obstacle physics active. */
+    overlayOpacity?: number
+    /** When true, skip drawing the overlay entirely (same as opacity 0 but
+     *  short-circuits the rAF loop). Physics still apply to organisms. */
+    hideOverlay?: boolean
+  }
   /** for pose: which joints to use (MediaPipe indices) + per-joint radius */
   pose?: { joints: number[]; radius: number }
   /** for tracker: HSV target color + tolerance + radius. Position auto-updated by color tracker. */
