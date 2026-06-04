@@ -143,6 +143,18 @@ export class Engine {
     loadMelody((s as any).melody ?? null)
     this.applyVisual(s.visual)
     this.mapping.apply(s.mapping)
+    // Sync sonification voices to the scene's obstacles — without this the first
+    // scene-load doesn't reach the SoundEngine and "Sonifier cet obstacle" stays
+    // silent until the user touches an obstacle field.
+    soundEngine.sync(s.obstacles ?? [])
+    // Same for color trackers: scene-load should hand them to ColorTracker
+    // immediately, otherwise tracker-obstacles only fire after the user re-saves.
+    const trackerCfgs = (s.obstacles ?? [])
+      .filter((o) => o.enabled && o.kind === 'tracker' && o.tracker)
+      .map((o) => ({ id: o.id, h: o.tracker!.h, s: o.tracker!.s, v: o.tracker!.v, tolerance: o.tracker!.tolerance }))
+    setTrackers(trackerCfgs)
+    // And the flow field — the scene declares it but the Flow module needs it
+    setFlow(s.flow)
     // clear feedback
     this.renderer.setRenderTarget(this.feedbackRT)
     this.renderer.clear()

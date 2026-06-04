@@ -156,6 +156,22 @@ export function ParamPanel() {
                 <Slider label="Dispersion" value={v.spread} min={0.2} max={2} onChange={(x) => patchValues({ spread: x })} />
                 <Slider label="Gravité" value={v.gravity} min={-1} max={1} onChange={(x) => patchValues({ gravity: x })} />
                 <Slider label="Turbulence" value={v.turbulence} min={0} max={2} onChange={(x) => patchValues({ turbulence: x })} />
+                <div className="palette-row" style={{ marginTop: 8 }}>
+                  <label>Bords</label>
+                  <select
+                    value={(v as any).boundary ?? 'respawn'}
+                    onChange={(e) => patchValues({ boundary: e.target.value })}
+                    title="Comportement quand une particule sort de l'écran"
+                  >
+                    <option value="respawn">♻️ Respawn (recyclage central)</option>
+                    <option value="wrap">🔁 Wrap (passe par les bords — pluie infinie)</option>
+                    <option value="kill">💀 Kill (disparaît — la population baisse)</option>
+                  </select>
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 4, marginBottom: 0, lineHeight: 1.35 }}>
+                  Pour un effet pluie/neige continu : choisis <strong>Wrap</strong> + gravité positive +
+                  un obstacle circulaire <em>"avoid"</em> en bas (le "parapluie").
+                </p>
               </>
             )}
             {current.organism.kind === 'tendrils' && (
@@ -593,6 +609,40 @@ function BindingsManager() {
   )
 }
 
+function GravityWellEditor({ wells, onChange }: {
+  wells: { x: number; y: number; strength: number; radius: number }[]
+  onChange: (wells: { x: number; y: number; strength: number; radius: number }[]) => void
+}) {
+  const patch = (i: number, p: Partial<{ x: number; y: number; strength: number; radius: number }>) => {
+    const next = wells.map((w, idx) => idx === i ? { ...w, ...p } : w)
+    onChange(next)
+  }
+  const add = () => onChange([...wells, { x: 0.5, y: 0.5, strength: 1, radius: 0.4 }])
+  const remove = (i: number) => onChange(wells.filter((_, idx) => idx !== i))
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <p style={{ fontSize: 10, color: 'var(--text-mute)', margin: 0 }}>
+        Chaque puits attire (force &gt; 0) ou repousse (force &lt; 0) les agents dans son rayon.
+        Pour faire chuter une pluie qui contourne un parapluie, combine ce puits (haut, force négative = répulsion)
+        avec un obstacle circulaire (en bas, interaction "avoid") sur des Particles avec gravité positive.
+      </p>
+      {wells.map((w, i) => (
+        <div key={i} style={{ padding: 6, background: 'var(--bg)', borderRadius: 4, border: '1px solid var(--line)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <span style={{ flex: 1, fontSize: 11, fontWeight: 500 }}>Puits #{i + 1}</span>
+            <button className="ghost icon danger" onClick={() => remove(i)} title="Supprimer ce puits"><Trash2 size={10} /></button>
+          </div>
+          <Slider label="X" value={w.x} min={0} max={1} step={0.01} onChange={(v) => patch(i, { x: v })} format={(v) => v.toFixed(2)} />
+          <Slider label="Y" value={w.y} min={0} max={1} step={0.01} onChange={(v) => patch(i, { y: v })} format={(v) => v.toFixed(2)} />
+          <Slider label="Force" value={w.strength} min={-4} max={4} step={0.05} onChange={(v) => patch(i, { strength: v })} format={(v) => v.toFixed(2)} />
+          <Slider label="Rayon" value={w.radius} min={0.05} max={2} step={0.05} onChange={(v) => patch(i, { radius: v })} format={(v) => v.toFixed(2)} />
+        </div>
+      ))}
+      <button onClick={add} style={{ fontSize: 11, padding: '4px 8px', justifyContent: 'center' }}>+ Ajouter un puits</button>
+    </div>
+  )
+}
+
 function BehaviorModifiers() {
   const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
   const add = useSceneStore((s) => s.addModifier)
@@ -664,9 +714,10 @@ function BehaviorModifiers() {
               </>
             )}
             {m.kind === 'gravityWell' && (
-              <p style={{ fontSize: 10, color: 'var(--text-mute)' }}>
-                {m.wells.length} puits — édite via JSON pour l'instant (UI à venir).
-              </p>
+              <GravityWellEditor
+                wells={m.wells}
+                onChange={(wells) => update(m.id, { wells })}
+              />
             )}
           </div>
         )
@@ -1231,6 +1282,17 @@ function SoundSection({ obstacleId, sound, onChange }: {
       {s.enabled && (
         <>
           <div className="palette-row">
+            <label>Mode</label>
+            <select
+              value={s.density === false ? 'drone' : 'density'}
+              onChange={(e) => onChange({ ...s, density: e.target.value === 'density' })}
+              title="Drone = note continue. Densité = volume modulé par le nombre d'agents dans l'obstacle."
+            >
+              <option value="drone">🎵 Drone (continu)</option>
+              <option value="density">🔊 Densité (modulé par les agents)</option>
+            </select>
+          </div>
+          <div className="palette-row">
             <label>Note</label>
             <select value={String(s.note)} onChange={(e) => onChange({ ...s, note: e.target.value === 'auto' ? 'auto' : parseInt(e.target.value) })}>
               {NOTES.map((n) => <option key={String(n.v)} value={String(n.v)}>{n.label}</option>)}
@@ -1249,7 +1311,9 @@ function SoundSection({ obstacleId, sound, onChange }: {
             <div style={{ width: `${density * 100}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent), var(--accent-3))', transition: 'width 80ms linear' }} />
           </div>
           <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 8, lineHeight: 1.4 }}>
-            Le volume varie avec la densité d'organismes dans l'obstacle. Plus l'écosystème est dense → plus la note est forte.
+            {s.density === false
+              ? "Mode drone : note continue au volume configuré, indépendamment des agents."
+              : "Mode densité : la note monte avec le nombre d'agents qui traversent l'obstacle (avec un seuil minimum audible)."}
           </p>
         </>
       )}

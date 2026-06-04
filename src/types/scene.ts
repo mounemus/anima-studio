@@ -52,6 +52,11 @@ export interface ParticleParams {
   trail: number
   gravity: number
   turbulence: number
+  /** Boundary behavior when a particle leaves the visible area.
+   *  - 'respawn' (default) : age out + restart from the spawn disc — original behavior
+   *  - 'wrap'              : teleport to the opposite edge (toroidal) — for endless rain/snow
+   *  - 'kill'              : let them fall out forever (will deplete) */
+  boundary?: 'respawn' | 'wrap' | 'kill'
 }
 
 export interface TendrilsParams {

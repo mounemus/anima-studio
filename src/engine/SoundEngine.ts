@@ -156,7 +156,15 @@ export class SoundEngine {
       // Audio reactivity: bass boosts volume, highs open cutoff
       const ar = v.cfg.audioReactivity ?? 0
       const audioBoost = 1 + ar * bass * 1.8
-      const target = v.cfg.volume * density * audioBoost
+      // Drone mode (density: false) → constant tone at configured volume so the
+      // user hears the obstacle as soon as "Sonifier" is enabled, even when no
+      // organism is inside. Density mode (default) → volume scales with how
+      // many agents are currently passing through the obstacle.
+      // Always keep a small floor so the voice doesn't feel "dead" — empirically
+      // 12% of the configured volume is audible but not intrusive.
+      const droneMode = v.cfg.density === false
+      const densityFactor = droneMode ? 1 : Math.max(0.12, density)
+      const target = v.cfg.volume * densityFactor * audioBoost
       v.gain.gain.setTargetAtTime(target, now, 0.08)
       if (ar > 0) {
         const liveCutoff = v.cfg.cutoff * (1 + ar * high * 2.5)

@@ -47,10 +47,19 @@ export class ParticlesOrganism {
   setAspect(a: number) { this.aspect = a }
 
   updateParams(p: ParticleParams) {
+    const prevBoundary = this.params?.boundary ?? 'respawn'
+    const nextBoundary = p.boundary ?? 'respawn'
     this.params = p
     this.count = Math.min(p.count, MAX)
     this.mesh.geometry.setDrawRange(0, this.count)
     this.mat.size = p.size * (0.04 + senseBus.audio.bass * 0.06)
+    // Switching INTO wrap mode mid-session: redistribute particles uniformly
+    // across the canvas so the user sees the rain/snow effect take hold right
+    // away instead of waiting for the spawn disc to disperse.
+    if (prevBoundary !== 'wrap' && nextBoundary === 'wrap') {
+      for (let i = 0; i < this.count; i++) this.respawn(i)
+      this.mesh.geometry.attributes.position.needsUpdate = true
+    }
   }
 
   applyVisual(visual: VisualParams) {
@@ -75,10 +84,18 @@ export class ParticlesOrganism {
   }
 
   private respawn(i: number) {
-    const a = Math.random() * Math.PI * 2
-    const r = Math.random() * (this.params?.spread ?? 0.5)
-    this.positions[i * 3] = Math.cos(a) * r * this.aspect
-    this.positions[i * 3 + 1] = Math.sin(a) * r
+    // In wrap mode, spread the initial spawn uniformly across the whole canvas
+    // so rain/snow looks like it's been falling forever from frame 1, instead
+    // of starting as a tight clump at center.
+    if ((this.params?.boundary ?? 'respawn') === 'wrap') {
+      this.positions[i * 3] = (Math.random() - 0.5) * 2 * this.aspect * 1.4
+      this.positions[i * 3 + 1] = (Math.random() - 0.5) * 2 * 1.4
+    } else {
+      const a = Math.random() * Math.PI * 2
+      const r = Math.random() * (this.params?.spread ?? 0.5)
+      this.positions[i * 3] = Math.cos(a) * r * this.aspect
+      this.positions[i * 3 + 1] = Math.sin(a) * r
+    }
     this.positions[i * 3 + 2] = 0
     const v = (this.params?.speed ?? 0.5) * 0.3
     this.velocities[i * 3] = (Math.random() - 0.5) * v
@@ -135,15 +152,49 @@ export class ParticlesOrganism {
       // move
       x += vx * p.speed * aBoost * dt
       y += vy * p.speed * aBoost * dt
-      // life
-      life[i] -= dt
-      if (life[i] <= 0 || Math.abs(x) > this.aspect * 1.5 || Math.abs(y) > 1.5) {
-        this.respawn(i)
-      } else {
+      // Boundary handling — three modes :
+      //  'wrap'    → teleport to the opposite side; perfect for endless rain/snow
+      //              (life timer is disabled so falling particles never vanish mid-air)
+      //  'kill'    → let them drift off forever; population depletes over time
+      //  'respawn' → original behavior : age-out + edge-out → recycle from spawn disc
+      const mode = p.boundary ?? 'respawn'
+      const xMax = this.aspect * 1.5
+      const yMax = 1.5
+      if (mode === 'wrap') {
+        // Toroidal wrap — span is 2 * limit on each axis
+        const xSpan = xMax * 2
+        const ySpan = yMax * 2
+        if (x >  xMax) x -= xSpan
+        if (x < -xMax) x += xSpan
+        if (y >  yMax) y -= ySpan
+        if (y < -yMax) y += ySpan
         positions[i * 3] = x
         positions[i * 3 + 1] = y
         vel[i * 3] = vx
         vel[i * 3 + 1] = vy
+      } else if (mode === 'kill') {
+        life[i] -= dt
+        if (life[i] <= 0 || Math.abs(x) > xMax || Math.abs(y) > yMax) {
+          // park off-screen, freeze — no respawn
+          positions[i * 3] = xMax * 2
+          positions[i * 3 + 1] = yMax * 2
+        } else {
+          positions[i * 3] = x
+          positions[i * 3 + 1] = y
+          vel[i * 3] = vx
+          vel[i * 3 + 1] = vy
+        }
+      } else {
+        // 'respawn' (default — unchanged)
+        life[i] -= dt
+        if (life[i] <= 0 || Math.abs(x) > xMax || Math.abs(y) > yMax) {
+          this.respawn(i)
+        } else {
+          positions[i * 3] = x
+          positions[i * 3 + 1] = y
+          vel[i * 3] = vx
+          vel[i * 3 + 1] = vy
+        }
       }
     }
     this.mesh.geometry.attributes.position.needsUpdate = true

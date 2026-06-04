@@ -25,8 +25,14 @@
  *   - Bouton reset = re-seed pattern initial
  */
 import * as THREE from 'three'
-import type { VisualParams } from '../../types/scene'
+import type { Obstacle, VisualParams } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
+import { trackerStates } from '../ColorTracker'
+
+/** Max number of obstacle-driven splats sampled by the SIM shader each frame.
+ *  Each enabled obstacle (circle, hand, tracker, pose joint) emits one splat;
+ *  beyond this cap the extras are dropped silently. 12 covers a typical scene. */
+const MAX_SPLATS = 12
 
 export type RDPreset = 'spots' | 'coral' | 'mitosis' | 'fingerprint' | 'worms' | 'maze' | 'pulse'
 
@@ -71,9 +77,13 @@ const SIM_FRAG = `
   uniform float uK;
   uniform float uDu;
   uniform float uDv;
-  uniform vec2 uSplatPos;    // [-1,-1] = off
+  uniform vec2 uSplatPos;    // [-1,-1] = off — primary hand splat (kept for back-compat)
   uniform float uSplatRadius;
   uniform float uSplatStrength;
+  // Obstacles & trackers : each entry = (x, y, radius, signedStrength)
+  // Positive strength injects V (life), negative removes V (avoid/kill).
+  uniform vec4 uSplats[${MAX_SPLATS}];
+  uniform int uSplatCount;
 
   // Discrete Laplacian — 8-cell stencil with weights (Gray-Scott classique)
   vec2 laplacian(vec2 uv) {
@@ -109,6 +119,21 @@ const SIM_FRAG = `
       if (d < uSplatRadius) {
         float falloff = 1.0 - smoothstep(0.0, uSplatRadius, d);
         v = min(1.0, v + uSplatStrength * falloff);
+      }
+    }
+    // Obstacle / tracker splats — every enabled obstacle in the scene paints
+    // into the chemistry: attract = inject V, avoid/kill = remove V. Tracking
+    // (color tracker) and pose joints are routed through the same array.
+    for (int i = 0; i < ${MAX_SPLATS}; i++) {
+      if (i >= uSplatCount) break;
+      vec4 sp = uSplats[i];
+      if (sp.x < 0.0) continue;
+      float d = distance(vUv, sp.xy);
+      if (d < sp.z) {
+        float falloff = 1.0 - smoothstep(0.0, sp.z, d);
+        v = v + sp.w * falloff;
+        // When removing life we also re-saturate U to encourage chemistry recovery
+        if (sp.w < 0.0) u = min(1.0, u - sp.w * 0.5 * falloff);
       }
     }
     u = clamp(u, 0.0, 1.0);
@@ -168,6 +193,10 @@ export class ReactionDiffusionOrganism {
   private res: number
   // Engine writes its renderer here so we can run simulation passes
   renderer: THREE.WebGLRenderer | null = null
+  /** Deferred seed flag: the constructor runs before the Engine attaches its
+   *  renderer, so the initial pattern must be written on the first update(). */
+  private _seeded = false
+  private splatArr: THREE.Vector4[] = []
 
   constructor(params: ReactionDiffusionParams, visual: VisualParams) {
     this.params = params
@@ -183,6 +212,10 @@ export class ReactionDiffusionOrganism {
     this.currentRT = this.rtA
 
     // Sim setup : full-screen quad in a private scene we render into the OFFSCREEN RT
+    // Pre-allocate the splat array so the uniform is always a stable Vector4[]
+    const splatArr: THREE.Vector4[] = []
+    for (let i = 0; i < MAX_SPLATS; i++) splatArr.push(new THREE.Vector4(-1, -1, 0, 0))
+    this.splatArr = splatArr
     this.simMat = new THREE.ShaderMaterial({
       vertexShader: VERT, fragmentShader: SIM_FRAG,
       uniforms: {
@@ -195,6 +228,8 @@ export class ReactionDiffusionOrganism {
         uSplatPos: { value: new THREE.Vector2(-1, -1) },
         uSplatRadius: { value: params.splatSize },
         uSplatStrength: { value: params.splatStrength },
+        uSplats: { value: splatArr },
+        uSplatCount: { value: 0 },
       },
     })
     this.simScene = new THREE.Scene()
@@ -216,7 +251,8 @@ export class ReactionDiffusionOrganism {
       },
     })
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.displayMat)
-    this.seed()
+    // Initial seed is deferred to the first update() — the Engine attaches
+    // its renderer AFTER construction, so seeding here would no-op silently.
   }
 
   /** Initial pattern: small disk of V in the middle, U everywhere. */
@@ -292,6 +328,8 @@ export class ReactionDiffusionOrganism {
 
   update(_dt: number) {
     if (!this.renderer) return
+    // Lazy seed — runs once on the first frame, after the Engine has attached its renderer.
+    if (!this._seeded) { this.seed(); this._seeded = true }
     const p = this.params
     const h = senseBus.hands
     const a = senseBus.audio
@@ -305,6 +343,10 @@ export class ReactionDiffusionOrganism {
     } else {
       this.simMat.uniforms.uSplatPos.value.set(-1, -1)
     }
+    // Build obstacle / tracker / pose splats — every enabled obstacle pushes
+    // chemistry into V. This is how scenes, tracking and obstacles "physically"
+    // interact with the simulation (attract = inject life, avoid/kill = remove).
+    this.buildObstacleSplats(p)
     // Run N simulation steps per frame, swapping rtA <-> rtB each step
     const steps = Math.max(1, Math.min(16, Math.round(p.stepsPerFrame)))
     for (let i = 0; i < steps; i++) {
@@ -319,6 +361,58 @@ export class ReactionDiffusionOrganism {
     this.displayMat.uniforms.uSrc.value = this.currentRT.texture
     // Slow auto hue cycle
     this.displayMat.uniforms.uHueShift.value = (performance.now() * 0.00005) % 1
+  }
+
+  /** Collect every enabled obstacle into the splat uniform array.
+   *  Coord convention: obstacles are normalized canvas 0..1 (top-left origin)
+   *  whereas sim UV uses bottom-left origin, so y is flipped. */
+  private buildObstacleSplats(p: ReactionDiffusionParams) {
+    const obstacles = (this.obstacles ?? []) as Obstacle[]
+    let n = 0
+    const baseR = p.splatSize
+    const baseS = p.splatStrength
+    const arr = this.splatArr
+    const push = (x: number, y: number, r: number, s: number) => {
+      if (n >= MAX_SPLATS) return
+      arr[n].set(x, 1 - y, Math.max(0.005, r), s)
+      n++
+    }
+    const signFor = (kind: Obstacle['interaction'], strength: number) => {
+      // attract pulls life in (+V), kill/avoid/bounce push it out (-V)
+      const mag = baseS * strength
+      if (kind === 'attract') return +mag
+      if (kind === 'kill') return -mag
+      // avoid + bounce: soft erosion, half magnitude so the field can recover
+      return -mag * 0.5
+    }
+    for (const o of obstacles) {
+      if (!o.enabled) continue
+      if (o.kind === 'circle' && o.circle) {
+        push(o.circle.cx, o.circle.cy, o.circle.r + o.margin * 0.5, signFor(o.interaction, o.strength))
+      } else if (o.kind === 'hand' && o.hand && senseBus.hands.detected) {
+        const src = o.hand.source === 'index' ? senseBus.hands.indexTip : senseBus.hands.palm
+        push(src.x, src.y, o.hand.radius + o.margin * 0.5, signFor(o.interaction, o.strength))
+      } else if (o.kind === 'tracker' && o.tracker) {
+        const st = trackerStates.get(o.id)
+        if (!st || st.confidence < 0.1) continue
+        push(st.x, st.y, o.tracker.radius + o.margin * 0.5, signFor(o.interaction, o.strength * st.confidence))
+      } else if (o.kind === 'pose' && o.pose && senseBus.pose.detected) {
+        for (const ji of o.pose.joints) {
+          if (n >= MAX_SPLATS) break
+          const j = senseBus.pose.landmarks[ji]
+          if (!j || j.vis < 0.3) continue
+          push(j.x, j.y, o.pose.radius + o.margin * 0.5, signFor(o.interaction, o.strength * j.vis))
+        }
+      }
+      // polygon + silhouette obstacles still apply to other organisms; for RD
+      // they need a mask texture pass — left for a follow-up.
+      if (n >= MAX_SPLATS) break
+    }
+    // Clear unused slots so the shader's early-out is well-defined.
+    for (let i = n; i < MAX_SPLATS; i++) arr[i].set(-1, -1, 0, 0)
+    this.simMat.uniforms.uSplatCount.value = n
+    // Note: assigning .value (same reference) is enough; three.js diffs by reference.
+    void baseR
   }
 
   dispose() {
