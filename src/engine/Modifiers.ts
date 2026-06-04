@@ -201,3 +201,39 @@ export function getColorCycleShift(modifiers: Modifier[]): number {
   }
   return total
 }
+
+/** Rotate a hex color's hue by `shift` (full turn = 1). Saturation/lightness preserved.
+ *  Used by the engine loop to apply colorCycle modifiers to scene palettes without
+ *  requiring every organism to expose a hue-shift uniform. */
+export function rotateHueHex(hex: string, shift: number): string {
+  if (!shift) return hex
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex)
+  if (!m) return hex
+  const n = parseInt(m[1], 16)
+  const r = ((n >> 16) & 0xff) / 255
+  const g = ((n >> 8) & 0xff) / 255
+  const b = (n & 0xff) / 255
+  const max = Math.max(r, g, b), min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  if (max === min) return hex   // grey — hue undefined
+  const d = max - min
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  let h = 0
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6
+  else if (max === g) h = ((b - r) / d + 2) / 6
+  else h = ((r - g) / d + 4) / 6
+  h = (h + shift + 1) % 1
+  const hue2rgb = (p: number, q: number, t: number) => {
+    if (t < 0) t += 1; if (t > 1) t -= 1
+    if (t < 1 / 6) return p + (q - p) * 6 * t
+    if (t < 1 / 2) return q
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
+    return p
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+  const p = 2 * l - q
+  const rr = Math.round(hue2rgb(p, q, h + 1 / 3) * 255)
+  const gg = Math.round(hue2rgb(p, q, h) * 255)
+  const bb = Math.round(hue2rgb(p, q, h - 1 / 3) * 255)
+  return '#' + ((rr << 16) | (gg << 8) | bb).toString(16).padStart(6, '0')
+}

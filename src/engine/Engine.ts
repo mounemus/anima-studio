@@ -14,7 +14,7 @@ import { startMaskedWebcam, stopMaskedWebcam } from './MaskedWebcam'
 import { createOrganism, ORGANISM_DEFAULTS } from './OrganismFactory'
 import { tick as timelineTick, loadTimeline } from './Timeline'
 import { tick as melodyTick, loadMelody } from './MelodyEngine'
-import { applyModifiers, type Modifier } from './Modifiers'
+import { applyModifiers, getColorCycleShift, rotateHueHex, type Modifier } from './Modifiers'
 
 export class Engine {
   private renderer: THREE.WebGLRenderer
@@ -190,6 +190,14 @@ export class Engine {
   }
 
 
+  /** Sync the active behavior-modifier list. Without this, modifiers added or
+   *  edited in the UI sit in the store but never reach the Engine until the
+   *  next full scene reload — which is what made Vortex / GravityWell /
+   *  ColorCycle / PulseGate / MagneticBands appear "dead" in production. */
+  updateModifiers(modifiers: Modifier[]) {
+    if (this.currentScene) this.currentScene = { ...this.currentScene, modifiers }
+  }
+
   updateObstacles(obs: Obstacle[]) {
     if (this.currentScene) this.currentScene = { ...this.currentScene, obstacles: obs }
     if (this.organism) (this.organism as any).obstacles = obs
@@ -361,6 +369,26 @@ export class Engine {
           // Mark the GPU geometry dirty so the next draw picks up modifier-written positions
           const geom = (this.organism.mesh as any).geometry
           if (geom?.attributes?.position) geom.attributes.position.needsUpdate = true
+        }
+        // ColorCycle modifier — visual-only, so it's outside applyModifiers().
+        // Re-issue applyVisual() with a hue-rotated palette so every organism (and
+        // any shader uniform that consumes the palette) picks up the live shift.
+        // The applyVisual() texture-loading path is a no-op when the URL is unchanged,
+        // so this is cheap; the only real work is the per-organism color rebuild.
+        const hueShift = getColorCycleShift(mods)
+        if (hueShift !== 0 && this.currentScene.visual) {
+          const v = this.currentScene.visual
+          const shifted = {
+            ...v,
+            palette: {
+              bg: v.palette.bg,
+              primary: rotateHueHex(v.palette.primary, hueShift),
+              secondary: rotateHueHex(v.palette.secondary, hueShift),
+              glow: rotateHueHex(v.palette.glow, hueShift),
+            },
+          }
+          this.organism.applyVisual(shifted)
+          for (const e of this.zoneOrganisms.values()) e.organism.applyVisual(shifted)
         }
       }
     }

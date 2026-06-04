@@ -74,6 +74,13 @@ export function Stage({ onEngineReady }: Props) {
     if (current && engineRef.current) engineRef.current.updateFlow(current.flow)
   }, [current?.flow])
 
+  // Propagate modifier updates — without this, Vortex / GravityWell / ColorCycle /
+  // PulseGate / MagneticBands only "took" on a full scene reload because Engine
+  // reads modifiers from currentScene every frame.
+  useEffect(() => {
+    if (current && engineRef.current) engineRef.current.updateModifiers(current.modifiers ?? [])
+  }, [current?.modifiers])
+
   // React to camera state changes: invalidate webcam textures and force a re-resolve
   // so zones using webcam content pick up (or release) the live MediaStream.
   useEffect(() => {
