@@ -408,6 +408,8 @@ export function ParamPanel() {
 
             <h3 style={{ marginTop: 14 }}><Sparkles size={11} style={{ verticalAlign: 'middle', color: 'var(--accent)' }} /> Texture IA</h3>
             <TextureGen />
+
+            <WebcamFilterPanel />
           </div>
         )}
 
@@ -663,6 +665,120 @@ function BindingsManager() {
         </div>
       ))}
     </div>
+  )
+}
+
+const WEBCAM_FILTERS: { v: string; label: string; desc: string }[] = [
+  { v: 'none',         label: '— Aucun',                desc: 'La caméra passe telle quelle.' },
+  { v: 'edges',        label: '✏️ Edges (Sobel)',       desc: 'Contours façon croquis. Bass = épaisseur des traits.' },
+  { v: 'ascii',        label: '⌨️ ASCII',               desc: 'Caractères selon la luminance. Bass = taille, aigus = jitter.' },
+  { v: 'halftone',     label: '⚫ Halftone',             desc: 'Points imprimés rotatifs. Médiums = densité.' },
+  { v: 'posterize',    label: '🎨 Posterize',           desc: 'Quantification couleurs woodblock. Aigus = nb niveaux.' },
+  { v: 'kaleidoscope', label: '🌀 Kaléidoscope',        desc: 'Symétrie N-pli. Les poignets (pose) dirigent le centre.' },
+  { v: 'echo',         label: '👻 Echo (motion trails)', desc: 'Rémanence temporelle. Bass = persistance.' },
+  { v: 'liquify',      label: '💧 Liquify',              desc: 'Warp Perlin audio-réactif. Bass = amplitude.' },
+  { v: 'chromatic',    label: '📺 Aberration RGB',       desc: 'Décalage canaux. Bass = ampleur.' },
+  { v: 'infrared',     label: '🌡️ Thermographie',        desc: 'Fausse couleur infrarouge depuis la luminance.' },
+]
+
+function WebcamFilterPanel() {
+  const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
+  const setWebcamFilter = useSceneStore((s) => s.setWebcamFilter)
+  const f = current.webcamFilter ?? { kind: 'none', intensity: 1 }
+  const meta = WEBCAM_FILTERS.find((m) => m.v === f.kind) ?? WEBCAM_FILTERS[0]
+  // Per-filter defaults so switching kinds doesn't carry over irrelevant params.
+  const setKind = (k: string) => {
+    const defaults: Record<string, any> = {
+      none:         {},
+      edges:        { param0: 0.15, color: '#00ffa3', audioReact: 0.5 },
+      ascii:        { param0: 8,    color: '#7cffd4', audioReact: 0.6 },
+      halftone:     { param0: 0.012, color: '#ff5aa0', audioReact: 0.4 },
+      posterize:    { param0: 5,    audioReact: 0.3 },
+      kaleidoscope: { param0: 6,    poseReact: 1.0 },
+      echo:         { param0: 0.94, audioReact: 0.5 },
+      liquify:      { param0: 0.04, audioReact: 1.0 },
+      chromatic:    { param0: 0.015, audioReact: 1.0 },
+      infrared:     { param0: 1.0,  audioReact: 0.3 },
+    }
+    setWebcamFilter({ kind: k as any, intensity: 1, ...defaults[k] })
+  }
+  return (
+    <>
+      <h3 style={{ marginTop: 18 }}>📹 Filtre caméra (live)</h3>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8, lineHeight: 1.4 }}>
+        Effets shader appliqués au flux webcam en miroir AR. Audio & pose modulent
+        les paramètres en temps réel — combine avec l'organisme pour des compositions
+        hybrides.
+      </p>
+      <div className="palette-row">
+        <label>Effet</label>
+        <select value={f.kind} onChange={(e) => setKind(e.target.value)}>
+          {WEBCAM_FILTERS.map((m) => <option key={m.v} value={m.v}>{m.label}</option>)}
+        </select>
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', margin: '4px 0 10px', lineHeight: 1.4, fontStyle: 'italic' }}>
+        {meta.desc}
+      </p>
+      {f.kind !== 'none' && (
+        <>
+          <Slider label="Intensité (mix)" value={f.intensity} min={0} max={1} step={0.02}
+            onChange={(v) => setWebcamFilter({ intensity: v })}
+            format={(v) => `${Math.round(v * 100)}%`} />
+          {f.kind === 'edges' && (
+            <Slider label="Seuil contour" value={f.param0 ?? 0.15} min={0.02} max={0.5} step={0.01}
+              onChange={(v) => setWebcamFilter({ param0: v })} format={(v) => v.toFixed(2)} />
+          )}
+          {f.kind === 'ascii' && (
+            <Slider label="Taille caractère (px)" value={f.param0 ?? 8} min={4} max={32} step={1}
+              onChange={(v) => setWebcamFilter({ param0: Math.round(v) })} format={(v) => `${Math.round(v)}px`} />
+          )}
+          {f.kind === 'halftone' && (
+            <Slider label="Espacement points" value={f.param0 ?? 0.012} min={0.004} max={0.05} step={0.001}
+              onChange={(v) => setWebcamFilter({ param0: v })} format={(v) => v.toFixed(3)} />
+          )}
+          {f.kind === 'posterize' && (
+            <Slider label="Niveaux par canal" value={f.param0 ?? 5} min={2} max={16} step={1}
+              onChange={(v) => setWebcamFilter({ param0: Math.round(v) })} format={(v) => `${Math.round(v)}`} />
+          )}
+          {f.kind === 'kaleidoscope' && (
+            <Slider label="Segments" value={f.param0 ?? 6} min={2} max={16} step={1}
+              onChange={(v) => setWebcamFilter({ param0: Math.round(v) })} format={(v) => `${Math.round(v)}`} />
+          )}
+          {f.kind === 'echo' && (
+            <Slider label="Persistance" value={f.param0 ?? 0.94} min={0.5} max={0.99} step={0.005}
+              onChange={(v) => setWebcamFilter({ param0: v })} format={(v) => v.toFixed(3)} />
+          )}
+          {f.kind === 'liquify' && (
+            <Slider label="Amplitude warp" value={f.param0 ?? 0.04} min={0.005} max={0.2} step={0.005}
+              onChange={(v) => setWebcamFilter({ param0: v })} format={(v) => v.toFixed(3)} />
+          )}
+          {f.kind === 'chromatic' && (
+            <Slider label="Aberration" value={f.param0 ?? 0.015} min={0.002} max={0.08} step={0.001}
+              onChange={(v) => setWebcamFilter({ param0: v })} format={(v) => v.toFixed(3)} />
+          )}
+          {f.kind === 'infrared' && (
+            <Slider label="Gain thermique" value={f.param0 ?? 1.0} min={0.3} max={2.5} step={0.05}
+              onChange={(v) => setWebcamFilter({ param0: v })} format={(v) => v.toFixed(2)} />
+          )}
+          {(f.kind === 'edges' || f.kind === 'ascii' || f.kind === 'halftone') && (
+            <div className="palette-row">
+              <label>Couleur</label>
+              <input type="color" value={f.color ?? '#00ffa3'} onChange={(e) => setWebcamFilter({ color: e.target.value })} />
+            </div>
+          )}
+          <Slider label="Réactivité audio" value={f.audioReact ?? 0} min={0} max={1} step={0.05}
+            onChange={(v) => setWebcamFilter({ audioReact: v })} format={(v) => `${Math.round(v * 100)}%`} />
+          {f.kind === 'kaleidoscope' && (
+            <Slider label="Réactivité pose (poignets)" value={f.poseReact ?? 0} min={0} max={1} step={0.05}
+              onChange={(v) => setWebcamFilter({ poseReact: v })} format={(v) => `${Math.round(v * 100)}%`} />
+          )}
+          <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 6, lineHeight: 1.4 }}>
+            Le filtre s'active dans le miroir AR (bouton AR en haut). Sans caméra, il
+            n'a rien à filtrer — active la caméra ou l'AR pour le voir.
+          </p>
+        </>
+      )}
+    </>
   )
 }
 

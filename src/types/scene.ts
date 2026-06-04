@@ -337,6 +337,20 @@ export interface Scene {
   modifiers?: SceneModifier[]
   melody?: Melody
   notes?: string
+  /** Live webcam shader filter for the AR mirror layer. See engine/WebcamFilters. */
+  webcamFilter?: WebcamFilterRef
+}
+
+/** Reference into the WebcamFilters module. Kept stringly-typed in the type layer
+ *  so scene.ts doesn't import engine code (engine imports scene types). */
+export interface WebcamFilterRef {
+  kind: string
+  intensity: number
+  param0?: number
+  param1?: number
+  color?: string
+  audioReact?: number
+  poseReact?: number
 }
 
 export const defaultMapping = (): MappingConfig => ({
