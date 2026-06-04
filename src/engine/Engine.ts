@@ -361,11 +361,43 @@ export class Engine {
       const mods = (this.currentScene.modifiers ?? []) as Modifier[]
       if (mods.length > 0) {
         const o = this.organism as any
-        const positions: Float32Array | undefined = o.positions ?? o.heads?.array
-        const velocities: Float32Array | null = o.velocities ?? null
-        const count: number = o.count ?? (positions ? positions.length / 3 : 0)
+        let positions: Float32Array | undefined = o.positions ?? o.heads?.array
+        let velocities: Float32Array | null = o.velocities ?? null
+        let count: number = o.count ?? (positions ? positions.length / 3 : 0)
+        let separateAgentArrays: { px: Float32Array; py: Float32Array; vx?: Float32Array; vy?: Float32Array } | null = null
+        // Boids and Cells store agents as separate px/py/vx/vy arrays, not as
+        // interleaved positions[]. Pack them into stride-3/stride-2 buffers for
+        // the modifier API and copy back after. Without this adapter, modifiers
+        // are completely silent on those organisms — which is exactly what made
+        // Vortex/GravityWell/PulseGate/MagneticBands appear dead on Boids+Cells.
+        if (!positions && typeof o.px === 'object' && typeof o.py === 'object') {
+          count = o.count ?? o.px.length
+          positions = new Float32Array(count * 3)
+          velocities = o.vx && o.vy ? new Float32Array(count * 2) : null
+          for (let i = 0; i < count; i++) {
+            positions[i * 3] = o.px[i]
+            positions[i * 3 + 1] = o.py[i]
+            if (velocities) {
+              velocities[i * 2] = o.vx[i]
+              velocities[i * 2 + 1] = o.vy[i]
+            }
+          }
+          separateAgentArrays = { px: o.px, py: o.py, vx: o.vx, vy: o.vy }
+        }
         if (positions && count > 0) {
           applyModifiers(positions, velocities, count, dt, this.width / this.height, mods)
+          if (separateAgentArrays) {
+            // Copy modifier-mutated values back into the organism's storage
+            const s = separateAgentArrays
+            for (let i = 0; i < count; i++) {
+              s.px[i] = positions[i * 3]
+              s.py[i] = positions[i * 3 + 1]
+              if (s.vx && s.vy && velocities) {
+                s.vx[i] = velocities[i * 2]
+                s.vy[i] = velocities[i * 2 + 1]
+              }
+            }
+          }
           // Mark the GPU geometry dirty so the next draw picks up modifier-written positions
           const geom = (this.organism.mesh as any).geometry
           if (geom?.attributes?.position) geom.attributes.position.needsUpdate = true

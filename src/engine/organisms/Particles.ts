@@ -24,7 +24,10 @@ export class ParticlesOrganism {
     this.count = Math.min(params.count, MAX)
     const geo = new THREE.BufferGeometry()
     this.positions = new Float32Array(MAX * 3)
-    this.velocities = new Float32Array(MAX * 3)
+    // Stride 2 (vx,vy) — matches what applyModifiers() in Modifiers.ts expects;
+    // before this fix the modifier hook wrote to velocities[i*2] thinking stride 2
+    // while Particles stored at i*3, corrupting all particle indices past zero.
+    this.velocities = new Float32Array(MAX * 2)
     this.life = new Float32Array(MAX)
     const colors = new Float32Array(MAX * 3)
     for (let i = 0; i < MAX; i++) this.respawn(i)
@@ -98,8 +101,8 @@ export class ParticlesOrganism {
     }
     this.positions[i * 3 + 2] = 0
     const v = (this.params?.speed ?? 0.5) * 0.3
-    this.velocities[i * 3] = (Math.random() - 0.5) * v
-    this.velocities[i * 3 + 1] = (Math.random() - 0.5) * v
+    this.velocities[i * 2] = (Math.random() - 0.5) * v
+    this.velocities[i * 2 + 1] = (Math.random() - 0.5) * v
     this.life[i] = Math.random() * 3 + 1
   }
 
@@ -119,8 +122,8 @@ export class ParticlesOrganism {
     for (let i = 0; i < this.count; i++) {
       let x = positions[i * 3]
       let y = positions[i * 3 + 1]
-      let vx = vel[i * 3]
-      let vy = vel[i * 3 + 1]
+      let vx = vel[i * 2]
+      let vy = vel[i * 2 + 1]
 
       // turbulence via cheap noise
       const nx = Math.sin(x * 3 + t * 0.7) + Math.cos(y * 2.3 - t * 0.5)
@@ -170,8 +173,8 @@ export class ParticlesOrganism {
         if (y < -yMax) y += ySpan
         positions[i * 3] = x
         positions[i * 3 + 1] = y
-        vel[i * 3] = vx
-        vel[i * 3 + 1] = vy
+        vel[i * 2] = vx
+        vel[i * 2 + 1] = vy
       } else if (mode === 'kill') {
         life[i] -= dt
         if (life[i] <= 0 || Math.abs(x) > xMax || Math.abs(y) > yMax) {
@@ -181,8 +184,8 @@ export class ParticlesOrganism {
         } else {
           positions[i * 3] = x
           positions[i * 3 + 1] = y
-          vel[i * 3] = vx
-          vel[i * 3 + 1] = vy
+          vel[i * 2] = vx
+          vel[i * 2 + 1] = vy
         }
       } else {
         // 'respawn' (default — unchanged)
@@ -192,8 +195,8 @@ export class ParticlesOrganism {
         } else {
           positions[i * 3] = x
           positions[i * 3 + 1] = y
-          vel[i * 3] = vx
-          vel[i * 3 + 1] = vy
+          vel[i * 2] = vx
+          vel[i * 2 + 1] = vy
         }
       }
     }
