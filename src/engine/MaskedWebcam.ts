@@ -65,9 +65,17 @@ function loop() {
   const mask = getSilhouetteMask()
 
   if (video && video.readyState >= 2 && video.videoWidth > 0) {
-    // 1) Draw the webcam frame (already mirrored at display time — here we draw raw)
+    // 1) Draw the webcam frame MIRRORED on X. The silhouette mask buffer is
+    //    written already-mirrored (senses/Silhouette.ts mirrors the column), so
+    //    drawing the video raw clipped the body on the WRONG side. Mirroring the
+    //    video here puts both in the same space → body correctly clipped, and
+    //    the output texture reads as a mirror (correct for AR self-view).
     ctx.clearRect(0, 0, CANVAS_W, CANVAS_H)
+    ctx.save()
+    ctx.translate(CANVAS_W, 0)
+    ctx.scale(-1, 1)
     ctx.drawImage(video, 0, 0, CANVAS_W, CANVAS_H)
+    ctx.restore()
 
     if (mask) {
       // 2) Build a mask image (white where person, transparent where background).

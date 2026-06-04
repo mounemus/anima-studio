@@ -374,6 +374,28 @@ export class Engine {
     resetCounters()
     soundEngine.totalAgents = (this.currentScene.organism.values as any).count ?? 0
 
+    // ORDER MATTERS : evolution drift runs FIRST (it rebuilds the whole param
+    // set from baseValues), THEN timeline + sense-bindings patch on top. If this
+    // were reversed, evolution would overwrite the timeline/binding patches every
+    // frame and the automation would have no visible effect.
+
+    // Evolution: organic drift of organism params via low-freq noise (in-engine, no React loop)
+    if (this.currentScene.evolution.enabled && this.organism) {
+      this.evolutionT += dt * this.currentScene.evolution.driftSpeed
+      const amp = this.currentScene.evolution.amplitude
+      const evolved: Record<string, number> = { ...this.baseValues }
+      let idx = 0
+      for (const k in this.baseValues) {
+        const base = this.baseValues[k]
+        if (typeof base !== 'number' || k === 'count' || k === 'length') continue
+        const n = Math.sin(this.evolutionT * (0.7 + idx * 0.3) + idx * 1.7) * 0.7
+                + Math.sin(this.evolutionT * 2.3 + idx * 0.9) * 0.3
+        evolved[k] = Math.max(0, base * (1 + n * amp))
+        idx++
+      }
+      this.organism.updateParams(evolved)
+    }
+
     // Timeline tick: sample every track at the current playhead time and route the
     // resulting patches to the right subsystem WITHOUT going through the React store
     // (which would persist them to localStorage — we only want the visual effect).
@@ -394,23 +416,6 @@ export class Engine {
         patches.push({ path: b.target, value: min + (max - min) * v })
       }
       this.applyTimelinePatches(patches)
-    }
-
-    // Evolution: organic drift of organism params via low-freq noise (in-engine, no React loop)
-    if (this.currentScene.evolution.enabled && this.organism) {
-      this.evolutionT += dt * this.currentScene.evolution.driftSpeed
-      const amp = this.currentScene.evolution.amplitude
-      const evolved: Record<string, number> = { ...this.baseValues }
-      let idx = 0
-      for (const k in this.baseValues) {
-        const base = this.baseValues[k]
-        if (typeof base !== 'number' || k === 'count' || k === 'length') continue
-        const n = Math.sin(this.evolutionT * (0.7 + idx * 0.3) + idx * 1.7) * 0.7
-                + Math.sin(this.evolutionT * 2.3 + idx * 0.9) * 0.3
-        evolved[k] = Math.max(0, base * (1 + n * amp))
-        idx++
-      }
-      this.organism.updateParams(evolved)
     }
 
     if (this.organism) {

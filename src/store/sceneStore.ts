@@ -447,11 +447,22 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
   },
 }))
 
+// Surface storage write failures (quota full / private mode) into dbError so
+// the user is warned their change wasn't saved instead of losing it silently.
+if (typeof window !== 'undefined') {
+  window.addEventListener('anima:storage-error', (e: Event) => {
+    const detail = (e as CustomEvent).detail ?? {}
+    useSceneStore.setState({ dbError: detail.message ?? 'Échec de sauvegarde' })
+  })
+}
+
 // Multi-tab synchronization: when another tab writes a scene to localStorage,
 // hydrate it into this tab's store so both stay consistent (last-write-wins).
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
-    if (!e.key || !e.key.startsWith('scene:') || !e.newValue) return
+    // Keys are namespaced 'anima:scene:<id>'. The old check 'scene:' never
+    // matched (the prefix is present), so cross-tab sync silently never ran.
+    if (!e.key || !e.key.includes('scene:') || !e.newValue) return
     try {
       const updated = JSON.parse(e.newValue) as Scene
       if (!updated.id) return

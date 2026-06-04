@@ -85,7 +85,12 @@ export function MirrorView({ videoRef, active, opacity = 0.7 }: Props) {
         <canvas
           ref={filterCanvasRef}
           className="mirror-bg"
-          style={{ opacity, pointerEvents: 'none' }}
+          // Cancel the .mirror-bg CSS scaleX(-1): the filter shader ALREADY
+          // mirrors the video internally (sampleVideo uses 1-uv.x), so letting
+          // CSS flip again double-mirrors → the filtered view would be
+          // camera-native while the raw mirror video is mirrored. transform:none
+          // keeps the single (shader) mirror, matching the raw video orientation.
+          style={{ opacity, pointerEvents: 'none', transform: 'none' }}
         />
       )}
       {!streamReady && (

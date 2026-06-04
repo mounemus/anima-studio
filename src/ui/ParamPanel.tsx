@@ -921,12 +921,24 @@ function GravityWellEditor({ wells, onChange }: {
   )
 }
 
+// Only these organisms keep persistent per-agent position+velocity arrays that
+// the position/velocity modifiers can actually move. The others are procedural
+// (regenerated each frame) or GPU full-quad simulations with no agents — the
+// position modifiers are silent no-ops there. colorCycle is visual-only and
+// works on every organism.
+const AGENT_ORGANISMS = new Set(['boids', 'particles', 'cells', 'spores'])
+function modifierApplies(modKind: string, organismKind: string): boolean {
+  if (modKind === 'colorCycle') return true
+  return AGENT_ORGANISMS.has(organismKind)
+}
+
 function BehaviorModifiers() {
   const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
   const add = useSceneStore((s) => s.addModifier)
   const remove = useSceneStore((s) => s.removeModifier)
   const update = useSceneStore((s) => s.updateModifier)
   const mods = current.modifiers ?? []
+  const orgKind = current.organism.kind
   const LABELS: Record<string, { name: string; emoji: string; help: string }> = {
     vortex: { name: 'Vortex', emoji: '🌀', help: 'Tourbillon autour d\'un point (ou la main).' },
     gravityWell: { name: 'Puits gravitationnel', emoji: '🕳️', help: 'Attire/repousse vers des points.' },
@@ -940,12 +952,27 @@ function BehaviorModifiers() {
       <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
         Effets orthogonaux superposables à l'organisme principal — combine-les librement.
       </p>
+      {!AGENT_ORGANISMS.has(orgKind) && (
+        <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8, lineHeight: 1.4, fontStyle: 'italic' }}>
+          ℹ️ <strong>{orgKind}</strong> n'a pas d'agents à vitesse : seul 🌈 <em>Cycle de couleurs</em>
+          a un effet. Les modificateurs de mouvement (Vortex, Puits, Battement, Bandes) sont sans effet ici.
+        </p>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 8 }}>
-        {(Object.keys(LABELS) as (keyof typeof LABELS)[]).map((k) => (
-          <button key={k} onClick={() => add(k as any)} style={{ fontSize: 11, justifyContent: 'center', padding: '4px 6px' }} title={LABELS[k].help}>
-            <span>{LABELS[k].emoji}</span> {LABELS[k].name}
-          </button>
-        ))}
+        {(Object.keys(LABELS) as (keyof typeof LABELS)[]).map((k) => {
+          const applies = modifierApplies(k, orgKind)
+          return (
+            <button
+              key={k}
+              onClick={() => add(k as any)}
+              disabled={!applies}
+              style={{ fontSize: 11, justifyContent: 'center', padding: '4px 6px', opacity: applies ? 1 : 0.4, cursor: applies ? 'pointer' : 'not-allowed' }}
+              title={applies ? LABELS[k].help : `Sans effet sur ${orgKind} (pas d'agents à vitesse)`}
+            >
+              <span>{LABELS[k].emoji}</span> {LABELS[k].name}
+            </button>
+          )
+        })}
       </div>
       {mods.length === 0 && (
         <p style={{ fontSize: 11, color: 'var(--text-mute)', fontStyle: 'italic', textAlign: 'center', padding: '8px 0' }}>
@@ -954,11 +981,13 @@ function BehaviorModifiers() {
       )}
       {mods.map((m) => {
         const meta = LABELS[m.kind] ?? { name: m.kind, emoji: '?' }
+        const noEffect = !modifierApplies(m.kind, orgKind)
         return (
-          <div key={m.id} style={{ padding: 8, marginBottom: 6, background: 'var(--bg-elev-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)' }}>
+          <div key={m.id} style={{ padding: 8, marginBottom: 6, background: 'var(--bg-elev-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)', opacity: noEffect ? 0.6 : 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
               <input type="checkbox" checked={m.enabled} onChange={(e) => update(m.id, { enabled: e.target.checked })} />
               <span style={{ flex: 1, fontSize: 12, fontWeight: 500 }}>{meta.emoji} {meta.name}</span>
+              {noEffect && <span title={`Sans effet sur ${orgKind}`} style={{ fontSize: 10, color: 'var(--warn, #ffb347)' }}>⚠ inactif</span>}
               <button className="ghost icon danger" onClick={() => remove(m.id)} title="Supprimer"><Trash2 size={11} /></button>
             </div>
             {m.kind === 'vortex' && (

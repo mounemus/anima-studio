@@ -18,6 +18,17 @@ export function setItem<T>(key: string, value: T): boolean {
     return true
   } catch (e) {
     console.warn(`localStorage write failed for ${key}`, e)
+    // Surface quota/write failures instead of losing data silently. A
+    // QuotaExceededError usually means a large data:/base64 texture pushed the
+    // scene over the ~5MB cap — the UI listens for this and warns the user
+    // their last change was NOT saved.
+    const isQuota = e instanceof DOMException &&
+      (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')
+    try {
+      window.dispatchEvent(new CustomEvent('anima:storage-error', {
+        detail: { key, quota: isQuota, message: isQuota ? 'Stockage plein (scène trop lourde — texture data: ?)' : 'Échec d\'écriture du stockage' },
+      }))
+    } catch { /* non-browser env */ }
     return false
   }
 }

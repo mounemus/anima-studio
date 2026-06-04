@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Engine } from '../engine/Engine'
 import { useSceneStore } from '../store/sceneStore'
 import { startSilhouette, stopSilhouette } from '../senses/Silhouette'
@@ -13,6 +13,16 @@ export function Stage({ onEngineReady }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const engineRef = useRef<Engine | null>(null)
   const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))
+  // Tracks camera on/off. The silhouette/mask effects depend on it so they
+  // re-run when the camera is turned on AFTER a scene (with a body mask) is
+  // already loaded — previously they snapshotted document.querySelector('video')
+  // once and never re-evaluated, so the mask never started in that order.
+  const [cameraReady, setCameraReady] = useState<boolean>(!!(window as any).__animaCameraOn)
+  useEffect(() => {
+    const onState = () => setCameraReady(!!(window as any).__animaCameraOn)
+    window.addEventListener('anima:camera-state', onState)
+    return () => window.removeEventListener('anima:camera-state', onState)
+  }, [])
 
   useEffect(() => {
     if (!ref.current) return
@@ -65,7 +75,7 @@ export function Stage({ onEngineReady }: Props) {
     } else {
       stopSilhouette()
     }
-  }, [current?.obstacles, current?.mapping?.arMaskBody, current?.webcamFilter?.kind, current?.webcamFilter?.applyTo, current?.organismMask?.mode])
+  }, [current?.obstacles, current?.mapping?.arMaskBody, current?.webcamFilter?.kind, current?.webcamFilter?.applyTo, current?.organismMask?.mode, cameraReady])
 
   // Start/stop color tracking based on tracker obstacles
   useEffect(() => {
@@ -76,7 +86,7 @@ export function Stage({ onEngineReady }: Props) {
     } else {
       stopColorTracking()
     }
-  }, [current?.obstacles])
+  }, [current?.obstacles, cameraReady])
 
   // Propagate flow updates
   useEffect(() => {
