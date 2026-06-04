@@ -10,6 +10,7 @@ import { importSVG } from '../lib/svgImport'
 import { defaultShape } from '../types/scene'
 import { SHAPE_TEMPLATES } from '../lib/shapeTemplates'
 import { MidiMonitor } from './MidiMonitor'
+import { VirtualMidi } from './VirtualMidi'
 
 function hsvToCss(h: number, s: number, v: number): string {
   // HSV → HSL: l = v - vs/2, s_hsl = (v - l) / min(l, 1 - l)
@@ -367,6 +368,7 @@ function SensesTab() {
 
       <h3 style={{ marginTop: 18 }}>📡 Moniteur MIDI</h3>
       <MidiMonitor />
+      <VirtualMidi />
 
       <BindingsManager />
 

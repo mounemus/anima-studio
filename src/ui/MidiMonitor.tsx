@@ -35,6 +35,7 @@ export function MidiMonitor() {
       <div style={{ padding: 8, background: 'var(--bg-elev-2)', border: '1px dashed var(--line)', borderRadius: 'var(--radius-sm)' }}>
         <p style={{ fontSize: 11, color: 'var(--text-mute)', margin: 0 }}>
           🎹 MIDI inactif — clique <strong>MIDI</strong> dans la barre du haut pour activer WebMIDI (Chrome/Edge requis).
+          Si tu n'as pas de contrôleur, le clavier virtuel ci-dessous fonctionnera aussi.
         </p>
       </div>
     )

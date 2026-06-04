@@ -25,12 +25,45 @@ export async function startMIDI(): Promise<{ ok: boolean; error?: string; inputs
       if (port && port.type === 'input') {
         if (port.state === 'connected') attach(port as MIDIInput)
       }
+      // Refresh the device name list whenever ports come and go — without this
+      // the user sees "(aucun appareil)" even after they plug a controller in.
+      refreshDeviceList()
     }
-    senseBus.midi.device = inputs.join(', ') || 'MIDI (en attente d\'appareil)'
+    refreshDeviceList()
     return { ok: true, inputs }
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'WebMIDI refusé', inputs: [] }
   }
+}
+
+function refreshDeviceList() {
+  if (!access) return
+  const names: string[] = []
+  for (const input of access.inputs.values()) {
+    if (input.state === 'connected') names.push(input.name || 'MIDI')
+  }
+  senseBus.midi.device = names.length > 0
+    ? names.join(', ')
+    : '(aucun appareil — utilise le clavier virtuel ci-dessous)'
+}
+
+/** Programmatic note-on / note-off — used by the on-screen virtual keyboard. */
+export function virtualNoteOn(note: number, velocity = 0.8) {
+  if (note < 0 || note >= 128) return
+  senseBus.midi.notes[note] = Math.max(0, Math.min(1, velocity))
+  senseBus.midi.available = true   // even without a real device, the bus is live
+}
+export function virtualNoteOff(note: number) {
+  if (note < 0 || note >= 128) return
+  senseBus.midi.notes[note] = 0
+}
+/** Programmatic CC set — used by the on-screen XY pad and sliders. */
+export function virtualCC(num: number, value0to1: number) {
+  if (num < 0 || num >= 128) return
+  const v = Math.max(0, Math.min(1, value0to1))
+  senseBus.midi.cc[num] = v
+  if (num === 1) senseBus.midi.mod = v
+  senseBus.midi.available = true
 }
 
 function attach(input: MIDIInput) {
