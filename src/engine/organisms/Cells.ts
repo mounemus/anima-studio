@@ -126,18 +126,43 @@ export class CellsOrganism {
       const flow = sampleFlow(this.px[i], this.py[i], performance.now() * 0.001)
       fx += flow.fx * 0.5
       fy += flow.fy * 0.5
+      let bounceReflected = false
       if (this.obstacles && this.obstacles.length) {
         const o = solveObstacles(this.px[i], this.py[i], this.aspect, this.obstacles, getSilhouetteMask())
-        fx += o.fx * 0.2
-        fy += o.fy * 0.2
+        // Bounce hits get full force (and a velocity reflection along the
+        // surface normal); other interactions stay at the calmer 0.2× the
+        // organism was always tuned around. Without this, even a maxed-out
+        // Force slider couldn't push agents out of the silhouette body.
+        if (o.hit) {
+          fx += o.fx
+          fy += o.fy
+          const nLen = Math.hypot(o.bounceNx, o.bounceNy)
+          if (nLen > 1e-3) {
+            const nx = o.bounceNx / nLen
+            const ny = o.bounceNy / nLen
+            // Reflect velocity across the surface normal with elastic loss
+            const vDotN = this.vx[i] * nx + this.vy[i] * ny
+            if (vDotN < 0) {
+              this.vx[i] -= 2 * vDotN * nx * 0.9
+              this.vy[i] -= 2 * vDotN * ny * 0.9
+            }
+            bounceReflected = true
+          }
+        } else {
+          fx += o.fx * 0.2
+          fy += o.fy * 0.2
+        }
         if (o.kill) {
           this.px[i] = (Math.random() - 0.5) * 2 * this.aspect
           this.py[i] = (Math.random() - 0.5) * 2
           this.vx[i] = 0; this.vy[i] = 0
         }
       }
-      this.vx[i] = this.vx[i] * 0.9 + fx
-      this.vy[i] = this.vy[i] * 0.9 + fy
+      // Skip extra damping on the same frame as a bounce so the reflected
+      // velocity actually carries the cell out of the silhouette.
+      const damp = bounceReflected ? 0.98 : 0.9
+      this.vx[i] = this.vx[i] * damp + fx
+      this.vy[i] = this.vy[i] * damp + fy
       this.px[i] += this.vx[i] * dt
       this.py[i] += this.vy[i] * dt
       // Boundary handling — preserves the legacy soft-bounce as default but

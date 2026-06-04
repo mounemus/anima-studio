@@ -143,22 +143,58 @@ function applyObstacle(o: Obstacle, x: number, y: number, aspect: number, mask: 
       }
     }
   } else if (o.kind === 'silhouette' && mask) {
-    // Sample mask at this world position
-    const nx = (x / aspect) * 0.5 + 0.5            // 0..1
-    const ny = 0.5 - y * 0.5                        // 0..1
+    // Sample mask at this world position (canvas-normalized 0..1)
+    const nx = (x / aspect) * 0.5 + 0.5
+    const ny = 0.5 - y * 0.5
     if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return
-    const inside = mask.isPersonAt(nx, ny) !== !!o.silhouette?.invert
+    const invert = !!o.silhouette?.invert
+    const inside = mask.isPersonAt(nx, ny) !== invert
     if (inside) {
-      // Compute approximate normal via mask gradient
-      const eps = 1.5 / mask.w
-      const left = mask.isPersonAt(nx - eps, ny) ? 1 : 0
-      const right = mask.isPersonAt(nx + eps, ny) ? 1 : 0
-      const up = mask.isPersonAt(nx, ny - eps) ? 1 : 0
-      const down = mask.isPersonAt(nx, ny + eps) ? 1 : 0
-      const gx = left - right
-      const gy = up - down
-      const len = Math.max(1e-3, Math.hypot(gx, gy))
+      // 8-direction Sobel-style gradient with a wider kernel so the normal
+      // estimate is stable enough for bounce. The original 1.5px kernel was
+      // too tight — agents deep in the body silhouette got a (0,0) normal
+      // and never received any push, looking like "the bounce doesn't work".
+      const eps = 4 / mask.w
+      const sample = (sx: number, sy: number) => (mask.isPersonAt(sx, sy) !== invert) ? 1 : 0
+      const l  = sample(nx - eps, ny);          const r  = sample(nx + eps, ny)
+      const u  = sample(nx, ny - eps);          const d  = sample(nx, ny + eps)
+      const nl = sample(nx - eps, ny - eps);    const nr = sample(nx + eps, ny - eps)
+      const sl = sample(nx - eps, ny + eps);    const sr = sample(nx + eps, ny + eps)
+      // Sobel : convention matches the original 4-neighbor version — gx > 0
+      // when the *outside* of the obstacle is to the LEFT of the agent (so
+      // pushForce receives the push direction directly without resigning).
+      // Same for gy (positive = outside is upward in mask coords, which the
+      // existing -gy flip in the pushForce call converts to world space).
+      let gx = (nl + 2*l + sl) - (nr + 2*r + sr)
+      let gy = (nl + 2*u + nr) - (sl + 2*d + sr)
+      let len = Math.hypot(gx, gy)
+      // Deep-inside fallback: if no gradient is detected (the agent is far
+      // from any edge), spiral outward to find the nearest "outside" pixel
+      // and push toward it. Without this, agents stuck in the middle of the
+      // silhouette never escape, which is exactly the "force pas assez" bug.
+      if (len < 1e-3) {
+        let found = false
+        for (let ring = 2; ring <= 32 && !found; ring += 2) {
+          const stepEps = ring / mask.w
+          for (let a = 0; a < 8; a++) {
+            const ang = (a / 8) * Math.PI * 2
+            const sx = nx + Math.cos(ang) * stepEps
+            const sy = ny + Math.sin(ang) * stepEps
+            if (sx < 0 || sx > 1 || sy < 0 || sy > 1) continue
+            if (sample(sx, sy) === 0) {
+              // Outside-of-zone pixel found at angle `ang` from the agent.
+              // Push direction = same direction the spiral search probed,
+              // so (gx, gy) literally equals (cos ang, sin ang) — pushForce
+              // applies it directly (with the standard -gy flip for world y).
+              gx = Math.cos(ang); gy = Math.sin(ang)
+              len = 1; found = true; break
+            }
+          }
+        }
+        if (!found) return  // truly trapped — give up this frame
+      }
       bumpCounter(o.id)
+      // Note: mask y axis grows downward; world y grows upward → flip y normal
       pushForce(o, gx / len, -gy / len, 1, 1, true)
     }
   }
@@ -181,9 +217,12 @@ function pushForce(o: Obstacle, nx: number, ny: number, d: number, t: number, in
       tmp.bounceNx += nxN
       tmp.bounceNy += nyN
       tmp.hit = true
-      // also a strong push to extract
-      tmp.fx += nxN * k * 5.0
-      tmp.fy += nyN * k * 5.0
+      // 12× multiplier (was 5×) — silhouette's coarse mask + per-organism
+      // damping (e.g. Cells scales obstacle force by 0.2 by default) was
+      // eating most of the bounce. Higher base lets the user dial the
+      // visible behavior with the regular Force slider 0..2.
+      tmp.fx += nxN * k * 12.0
+      tmp.fy += nyN * k * 12.0
     }
   } else if (o.interaction === 'kill') {
     if (inside) tmp.kill = true
