@@ -13,6 +13,7 @@ import { resolveShapeTexture, pruneShapeTextures, setUseMaskedBody, disposeAllCo
 import { startMaskedWebcam, stopMaskedWebcam } from './MaskedWebcam'
 import { createOrganism, ORGANISM_DEFAULTS } from './OrganismFactory'
 import { tick as timelineTick, loadTimeline } from './Timeline'
+import { tick as melodyTick, loadMelody } from './MelodyEngine'
 import { applyModifiers, type Modifier } from './Modifiers'
 
 export class Engine {
@@ -135,6 +136,8 @@ export class Engine {
     this.evolutionT = 0
     // Load the scene's timeline (or default empty one) into the runtime
     loadTimeline(s.timeline as any)
+    // Same for the AI-generated melody, if any
+    loadMelody((s as any).melody ?? null)
     this.applyVisual(s.visual)
     this.mapping.apply(s.mapping)
     // clear feedback
@@ -359,6 +362,9 @@ export class Engine {
     }
     // After organisms moved, push counters → audio
     soundEngine.tick()
+    // AI-generated melody sequencer — fires virtual notes; the polysynth
+    // tick that follows turns them into audio in the same frame.
+    melodyTick()
     // Polysynth: poll MIDI notes (USB or virtual) and trigger/release voices
     soundEngine.tickMidi()
 

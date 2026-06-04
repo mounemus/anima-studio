@@ -12,7 +12,7 @@
  */
 import type {
   OrganismKind, OrganismParams, Palette, MappingShape, FlowField, Vec2,
-  ShapeKind,
+  ShapeKind, Melody, MelodyNote,
 } from '../types/scene'
 
 export interface SafeActions {
@@ -22,7 +22,34 @@ export interface SafeActions {
   visual?: { feedback?: number; blendMode?: 'add' | 'normal' | 'screen'; bloom?: number; textureIntensity?: number }
   flow?: Partial<FlowField>
   mappingShapes?: MappingShape[]
-  newScene?: any  // kept loose; caller (AIChat) re-runs through this validator before commit
+  melody?: Melody
+  newScene?: any
+}
+
+const MAX_MELODY_NOTES = 128
+
+function safeMelody(raw: any): Melody | undefined {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.notes)) return undefined
+  const tempo = clamp(raw.tempo, 30, 280, 120)!
+  const loop = raw.loop !== false
+  const notes: MelodyNote[] = []
+  for (const n of raw.notes.slice(0, MAX_MELODY_NOTES)) {
+    if (!n || typeof n !== 'object') continue
+    const note = clamp(n.note, 21, 108)
+    const time = clamp(n.time, 0, 1024)
+    const dur = clamp(n.dur, 0.01, 64)
+    if (note === undefined || time === undefined || dur === undefined) continue
+    const vel = clamp(n.vel, 0, 1)
+    notes.push({ note: Math.round(note), time, dur, vel: vel ?? 0.7 })
+  }
+  if (notes.length === 0) return undefined
+  // Sort by time for deterministic playback
+  notes.sort((a, b) => a.time - b.time)
+  const out: Melody = { tempo, loop, notes }
+  if (typeof raw.key === 'string') out.key = raw.key.slice(0, 20)
+  if (typeof raw.scale === 'string') out.scale = raw.scale.slice(0, 20)
+  if (typeof raw.description === 'string') out.description = raw.description.slice(0, 200)
+  return out
 }
 
 const ORG_KINDS: OrganismKind[] = ['boids', 'particles', 'tendrils', 'cells', 'worms', 'spores', 'psychedelic', 'mandala', 'fractal', 'mathcurve']
@@ -220,6 +247,8 @@ export function validateActions(raw: any): SafeActions {
   if (flow) out.flow = flow
   const shapes = safeShapes(raw.mappingShapes)
   if (shapes) out.mappingShapes = shapes
+  const melody = safeMelody(raw.melody)
+  if (melody) out.melody = melody
   // newScene: keep loose but bound the depth and apply the same validator pieces
   if (raw.newScene && typeof raw.newScene === 'object' && depth(raw.newScene) <= MAX_NEW_SCENE_DEPTH) {
     out.newScene = raw.newScene

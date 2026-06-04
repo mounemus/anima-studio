@@ -271,6 +271,31 @@ export interface SceneModifier {
   [k: string]: any
 }
 
+/** One note of a generated melody. Time + dur are expressed in BEATS (quarter notes). */
+export interface MelodyNote {
+  /** MIDI note number, 21 (A0) .. 108 (C8). Middle C = 60. */
+  note: number
+  /** Start time, in beats from melody origin. */
+  time: number
+  /** Duration in beats. */
+  dur: number
+  /** Velocity 0..1 (defaults 0.7 if absent). */
+  vel?: number
+}
+
+export interface Melody {
+  /** Beats per minute (40..240). */
+  tempo: number
+  /** Loop back to 0 when reaching end. */
+  loop: boolean
+  /** Note list, sorted by `time` ascending. Max 128 notes per validation. */
+  notes: MelodyNote[]
+  /** Optional metadata for UI display only. */
+  key?: string
+  scale?: string
+  description?: string
+}
+
 export interface Scene {
   id: string
   name: string
@@ -285,6 +310,7 @@ export interface Scene {
   flow?: FlowField
   timeline?: TimelineConfig
   modifiers?: SceneModifier[]
+  melody?: Melody
   notes?: string
 }
 

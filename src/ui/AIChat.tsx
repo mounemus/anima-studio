@@ -5,6 +5,8 @@ import type { Scene, FlowField } from '../types/scene'
 import { defaultMapping } from '../types/scene'
 import { startRecording, stopRecording, transcribeViaWhisper, recognizeLive, hasBrowserSTT, speak, stopSpeaking } from '../lib/voiceIO'
 import { validateActions } from '../lib/aiActions'
+import { loadMelody as loadMelodyEngine, play as playMelody } from '../engine/MelodyEngine'
+import { soundEngine } from '../engine/SoundEngine'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -88,6 +90,18 @@ export function AIChat({ open }: { open: boolean }) {
       if (actions.mappingShapes && actions.mappingShapes.length > 0) {
         addShapes(actions.mappingShapes)
         action = `🗺️ ${actions.mappingShapes.length} zone(s) de mapping créée(s)`
+      }
+      if (actions.melody) {
+        // Persist on scene + load into the engine + auto-play through the polysynth.
+        // The chat submit click counts as the user audio gesture, so ensure() will
+        // unlock the AudioContext successfully here.
+        useSceneStore.getState().setMelody(actions.melody)
+        try {
+          loadMelodyEngine(actions.melody)
+          soundEngine.ensure()
+          playMelody()
+        } catch (e) { console.warn('melody play failed', e) }
+        action = `🎵 Mélodie composée (${actions.melody.notes.length} notes @ ${actions.melody.tempo} BPM) — en lecture`
       }
       if (actions.newScene) {
         // Normalise the AI's returned scene — Claude may return a partial shape (no senses/mapping/evolution).
@@ -194,10 +208,18 @@ export function AIChat({ open }: { open: boolean }) {
             <button
               className="primary"
               onClick={() => send('Invente une nouvelle espèce d\'organisme totalement originale, avec une palette, un flux directionnel et une ambiance cohérente. Surprends-moi.')}
-              style={{ width: '100%', justifyContent: 'center', fontSize: 12, marginBottom: 10 }}
+              style={{ width: '100%', justifyContent: 'center', fontSize: 12, marginBottom: 6 }}
               disabled={loading || transcribing}
             >
               🌱 Inventer une nouvelle espèce
+            </button>
+            <button
+              className="primary"
+              onClick={() => send('Compose une mélodie courte (8-16 notes) en mode mineur, qui s\'accorde avec l\'ambiance de la scène. Tempo modéré. Joue-la en boucle.')}
+              style={{ width: '100%', justifyContent: 'center', fontSize: 12, marginBottom: 10 }}
+              disabled={loading || transcribing}
+            >
+              🎵 Compose une mélodie
             </button>
             <div>
               {SUGGESTIONS.map((s) => (

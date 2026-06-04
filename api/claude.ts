@@ -20,11 +20,19 @@ Tu DOIS retourner un objet JSON valide avec cette forme :
     "palette": { "bg":"#...", "primary":"#...", "secondary":"#...", "glow":"#..." },
     "visual": { "feedback": 0.93, "blendMode": "add" },
     "flow": { "enabled": true, "angle": 1.57, "strength": 1.2, "turbulence": 0.4 },
-    "mappingShapes": [                                      // OPTIONNEL : crée N zones de mapping
+    "mappingShapes": [
       { "name": "Étoile", "kind": "polygon",
         "points": [{"x":0.5,"y":0.1},{"x":0.6,"y":0.4}, ...],
         "smooth": 0.5, "rotation": 0, "opacity": 1 }
     ],
+    "melody": {                                              // OPTIONNEL : compose une mélodie pour le polysynth interne
+      "tempo": 90, "loop": true, "key": "Am", "scale": "minor",
+      "notes": [
+        { "note": 57, "time": 0,   "dur": 0.5, "vel": 0.6 },
+        { "note": 60, "time": 0.5, "dur": 0.25, "vel": 0.7 },
+        { "note": 64, "time": 0.75, "dur": 0.5, "vel": 0.65 }
+      ]
+    },
     "newScene": { ...scène complète... }
   }
 }
@@ -53,7 +61,20 @@ Flux directionnel (vent / courant) :
 
 Visuel: feedback(0.6-0.99) = trainée, blendMode = "add" | "normal". Couleurs en hex #rrggbb.
 
-Si l'utilisateur dit "crée", "invente", "imagine" : produis une newScene complète et cohérente, en choisissant l'espèce et le flux qui collent à la métaphore (ex: "tempête de plancton" → particles + flow strength 2, turbulence 1.5).
+## Mélodie (action "melody")
+- tempo : BPM 40..240 (typique 60..160).
+- loop : true (joue en boucle) ou false (joue une fois).
+- notes : liste de { note (MIDI 21..108, 60=C4), time (beats depuis début), dur (beats), vel (0..1) }.
+- Pense en GAMMES. Mineure (W H W W H W W) = sombre/mélancolique. Majeure (W W H W W W H) = lumineuse. Pentatonique mineure (A C D E G A) = méditative/exotique. Dorian (D E F G A B C D) = jazz/cool. Phrygien = oriental/mystique.
+- 8..32 notes pour rester organique. Max 128.
+- Le polysynth interne joue les notes en live via le clavier virtuel (waveform + filtre configurables par l'utilisateur).
+- Exemples :
+  * "mélodie méditative" : tempo 60, pentatonique en A mineur (notes A2/C3/D3/E3/G3 = 45/48/50/52/55), notes longues (dur 1-2), velocity douce (0.4-0.6).
+  * "mélodie joyeuse" : tempo 130, gamme majeure C (60/62/64/65/67/69/71/72), rythme syncopé (dur 0.25-0.5).
+  * "drone hypnotique" : 2-3 notes basses (C2=36, G2=43) tenues 8 beats chacune, loop court.
+- Choisis une mélodie qui s'ACCORDE AVEC L'AMBIANCE de la scène (organisme + palette + flow). Plancton = méditatif lent. Tempête = rapide chromatique. Mandala = pentatonique modale.
+
+Si l'utilisateur dit "crée", "invente", "imagine" : produis une newScene complète et cohérente, en choisissant l'espèce et le flux qui collent à la métaphore (ex: "tempête de plancton" → particles + flow strength 2, turbulence 1.5). Ajoute aussi une mélodie qui correspond.
 
 Reste cohérent avec le thème vivant/organique/onirique.
 
