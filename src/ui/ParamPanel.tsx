@@ -446,13 +446,55 @@ function SensesTab() {
     useSceneStore.setState({ scenes: [...useSceneStore.getState().scenes] })
   }
 
+  // "Obstacles physiques uniquement" preset — turns off every reactive sensor
+  // for this scene. Webcam / micro restent dispos en haut pour AR ou autres
+  // scènes ; cette scène-ci ignore juste leurs valeurs.
+  const setObstaclesOnly = () => {
+    (current.senses as any).hands = false
+    ;(current.senses as any).audio = false
+    ;(current.senses as any).light = false
+    ;(current.senses as any).midi = false
+    setScenes()
+    useSceneStore.setState({ scenes: [...useSceneStore.getState().scenes] })
+  }
+  const setAllOn = () => {
+    (current.senses as any).hands = true
+    ;(current.senses as any).audio = true
+    ;(current.senses as any).light = true
+    setScenes()
+    useSceneStore.setState({ scenes: [...useSceneStore.getState().scenes] })
+  }
+  const allOff = !current.senses.hands && !current.senses.audio && !current.senses.light && !(current.senses as any).midi
+
   return (
     <div className="section">
-      <h3>Capteurs actifs</h3>
+      <h3>Capteurs actifs <span style={{ fontSize: 10, color: 'var(--text-mute)', fontWeight: 400 }}>· filtres de cette scène</span></h3>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8, lineHeight: 1.5 }}>
+        Décide ce que cette scène écoute. Décocher un capteur n'éteint pas le périphérique
+        (la <strong>Caméra</strong>/<strong>Micro</strong> en haut restent dispos pour AR ou d'autres scènes) — seule
+        la scène courante ignore les valeurs entrantes.
+      </p>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
+        <button
+          onClick={setObstaclesOnly}
+          className={allOff ? 'primary' : ''}
+          style={{ flex: 1, fontSize: 11, justifyContent: 'center' }}
+          title="Désactive tracking main, micro et lumière — seuls les obstacles dessinés (cercle/polygone) influencent la scène."
+        >
+          🧱 Obstacles physiques seuls
+        </button>
+        <button
+          onClick={setAllOn}
+          style={{ flex: 1, fontSize: 11, justifyContent: 'center' }}
+          title="Réactive tout"
+        >
+          🎛️ Tout activer
+        </button>
+      </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
           <input type="checkbox" checked={current.senses.hands} onChange={() => toggle('hands')} />
-          <span>🖐️ Webcam + tracking main</span>
+          <span>🖐️ Tracking main + corps (MediaPipe)</span>
         </label>
         <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
           <input type="checkbox" checked={current.senses.audio} onChange={() => toggle('audio')} />

@@ -309,6 +309,31 @@ export class Engine {
 
     if (!this.currentScene) return
 
+    // SENSE MASK : the "Capteurs actifs" checkboxes used to be dead — toggled
+    // a boolean in the scene but nothing consumed it, so the user couldn't
+    // disable hand-tracking interactions without killing the whole webcam
+    // (which AR mode needs to stay alive). Now we gate at the source : zero
+    // out the senseBus fields the scene opted out of, so every organism +
+    // obstacle that reads senseBus.hands / .audio / .light behaves as if the
+    // sensor weren't there — without touching the actual MediaPipe pipeline.
+    const ss = this.currentScene.senses ?? { hands: true, audio: true, light: true }
+    if (ss.hands === false) {
+      senseBus.hands.detected = false
+      // also damp the pose feed so pose-joint obstacles stop pushing
+      senseBus.pose.detected = false
+    }
+    if (ss.audio === false) {
+      senseBus.audio.level = 0
+      senseBus.audio.bass = 0
+      senseBus.audio.mid = 0
+      senseBus.audio.high = 0
+    }
+    if (ss.light === false) {
+      // Light is read by some organisms via brightness — neutralize to mid.
+      senseBus.light.brightness = 0.5
+      senseBus.light.warmth = 0.5
+    }
+
     // Reset per-frame obstacle counters; record total population for density normalization
     resetCounters()
     soundEngine.totalAgents = (this.currentScene.organism.values as any).count ?? 0
