@@ -129,6 +129,9 @@ export class Engine {
     if (this.organism) {
       this.organism.setAspect(aspect)
       ;(this.organism as any).obstacles = s.obstacles ?? []
+      // Some organisms (ReactionDiffusion, CellularAutomata) need access to the
+      // engine renderer to run their own offscreen ping-pong simulation passes.
+      ;(this.organism as any).renderer = this.renderer
       this.scene.add(this.organism.mesh)
     }
     // snapshot base values for evolution drift

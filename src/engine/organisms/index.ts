@@ -8,6 +8,9 @@ export { PsychedelicOrganism } from './Psychedelic'
 export { MandalaOrganism } from './Mandala'
 export { FractalOrganism } from './Fractal'
 export { MathCurveOrganism } from './MathCurve'
+export { ReactionDiffusionOrganism } from './ReactionDiffusion'
+export { CellularAutomataOrganism } from './CellularAutomata'
+export { HilbertCurveOrganism } from './HilbertCurve'
 
 export interface OrganismLike {
   mesh: import('three').Object3D

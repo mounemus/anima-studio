@@ -52,8 +52,10 @@ function safeMelody(raw: any): Melody | undefined {
   return out
 }
 
-const ORG_KINDS: OrganismKind[] = ['boids', 'particles', 'tendrils', 'cells', 'worms', 'spores', 'psychedelic', 'mandala', 'fractal', 'mathcurve']
+const ORG_KINDS: OrganismKind[] = ['boids', 'particles', 'tendrils', 'cells', 'worms', 'spores', 'psychedelic', 'mandala', 'fractal', 'mathcurve', 'reactiondiffusion', 'cellularautomata', 'hilbert']
 const CURVE_FORMULAS = ['lissajous', 'rose', 'spirograph', 'butterfly', 'lorenz', 'heart'] as const
+const RD_PRESETS = ['spots', 'coral', 'mitosis', 'fingerprint', 'worms', 'maze', 'pulse'] as const
+const CA_RULES = ['conway', 'highlife', 'seeds', 'daedalus', 'maze', 'replicator'] as const
 const SHAPE_KINDS: ShapeKind[] = ['quad', 'polygon']
 const BLEND_MODES = ['add', 'normal', 'screen'] as const
 
@@ -86,9 +88,15 @@ function safePalette(raw: any): Palette | undefined {
 function safeOrganismValues(kind: OrganismKind, raw: any): Record<string, any> | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const out: Record<string, any> = {}
-  // mathcurve: 'formula' is a string enum, not a number — pass through if valid
+  // String enum params — pass through when valid
   if (kind === 'mathcurve' && typeof raw.formula === 'string' && (CURVE_FORMULAS as readonly string[]).includes(raw.formula)) {
     out.formula = raw.formula
+  }
+  if (kind === 'reactiondiffusion' && typeof raw.preset === 'string' && (RD_PRESETS as readonly string[]).includes(raw.preset)) {
+    out.preset = raw.preset
+  }
+  if (kind === 'cellularautomata' && typeof raw.rule === 'string' && (CA_RULES as readonly string[]).includes(raw.rule)) {
+    out.rule = raw.rule
   }
   // Per-kind sane ranges (mirror the SYSTEM prompt in api/claude.ts)
   const ranges: Record<string, Record<string, [number, number]>> = {
@@ -130,6 +138,20 @@ function safeOrganismValues(kind: OrganismKind, raw: any): Record<string, any> |
     mathcurve: {
       samples: [100, 4000], cycles: [0.1, 20], a: [-12, 12], b: [-12, 12], c: [-5, 5], d: [-Math.PI * 2, Math.PI * 2],
       scale: [0.05, 2.5], speed: [0, 4], thickness: [0.001, 0.025], lineOpacity: [0, 1],
+    },
+    reactiondiffusion: {
+      F: [0.005, 0.08], k: [0.04, 0.075], du: [0.5, 1.5], dv: [0.2, 1.0],
+      resolution: [64, 1024], stepsPerFrame: [1, 16], splatSize: [0.005, 0.25],
+      splatStrength: [0, 1], contrast: [0.3, 3],
+    },
+    cellularautomata: {
+      resolution: [32, 512], ticksPerSec: [1, 60], ageDecay: [0.5, 0.999],
+      brushSize: [0.002, 0.2], brushStrength: [0, 1], autoReseed: [0, 1],
+    },
+    hilbert: {
+      order: [1, 7], scale: [0.1, 1.6], progress: [0, 1], autoProgress: [0, 2],
+      rotation: [-3, 3], thickness: [0.0005, 0.025], handPull: [0, 1],
+      showPoints: [0, 1], hueAlongCurve: [0, 1],
     },
   }
   const r = ranges[kind]

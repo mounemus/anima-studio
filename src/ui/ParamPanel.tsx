@@ -58,6 +58,9 @@ const ORGANISM_PRESETS: Record<OrganismKind, Record<string, number>> = {
   mandala: { arms: 8, pointsPerArm: 64, outerRadius: 0.85, innerRadius: 0.05, waves: 3, freq: 1.0, rotation: 0.3, thickness: 0.008, layers: 2, connectors: 2, connectorOpacity: 0.4 },
   fractal: { iterations: 120, zoom: 1.0, cx: -0.7, cy: 0.27, followHand: 0.6, bailout: 4, brightness: 1.0, orbitSpeed: 0.3, orbitRadius: 0.12, rotation: 0.15, zoomBreath: 0.08 },
   mathcurve: { formula: 'lissajous', samples: 800, cycles: 1, a: 3, b: 5, c: 1, d: 0, scale: 0.8, speed: 0.5, thickness: 0.005, lineOpacity: 0.6 } as any,
+  reactiondiffusion: { preset: 'coral', F: 0.029, k: 0.057, du: 1.0, dv: 0.5, resolution: 512, stepsPerFrame: 8, splatSize: 0.04, splatStrength: 0.9, contrast: 1.5 } as any,
+  cellularautomata: { rule: 'conway', resolution: 256, ticksPerSec: 12, ageDecay: 0.92, brushSize: 0.03, brushStrength: 0.6, autoReseed: 0.5 } as any,
+  hilbert: { order: 5, scale: 1, progress: 1, autoProgress: 0.15, rotation: 0.1, thickness: 0.005, handPull: 0.5, showPoints: 1, hueAlongCurve: 0.5 } as any,
 }
 
 export function ParamPanel() {
@@ -128,6 +131,9 @@ export function ParamPanel() {
               <option value="mandala">🪷 Mandala — symétrie radiale</option>
               <option value="fractal">🌌 Fractale — Julia set GPU</option>
               <option value="mathcurve">📐 Courbe math — Lissajous, Rose, Spirograph...</option>
+              <option value="reactiondiffusion">🪸 Réaction-Diffusion — Gray-Scott (coral, mitosis...)</option>
+              <option value="cellularautomata">⬛ Automate cellulaire — Conway, HighLife...</option>
+              <option value="hilbert">🌀 Courbe de Hilbert — space-filling fractale</option>
             </select>
 
             <h3>Paramètres</h3>
@@ -233,6 +239,75 @@ export function ParamPanel() {
                 <Slider label="Respiration zoom" value={v.zoomBreath ?? 0.08} min={0} max={0.5} step={0.01} onChange={(x) => patchValues({ zoomBreath: x })} />
                 <Slider label="Rayon échappement" value={v.bailout} min={2} max={20} step={0.5} onChange={(x) => patchValues({ bailout: x })} />
                 <Slider label="Luminosité" value={v.brightness} min={0.3} max={2.5} step={0.05} onChange={(x) => patchValues({ brightness: x })} />
+              </>
+            )}
+            {current.organism.kind === 'reactiondiffusion' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Simulation chimique Gray-Scott GPU. La main "peint" des graines de V, audio bass = nourriture, audio high = mort. Change le preset pour explorer.
+                </p>
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Preset</div>
+                  <select value={(v as any).preset ?? 'coral'} onChange={(e) => patchValues({ preset: e.target.value as any })} style={{ width: '100%', fontSize: 12 }}>
+                    <option value="coral">🪸 Coral (organique)</option>
+                    <option value="spots">⚫ Spots (taches)</option>
+                    <option value="mitosis">🌀 Mitosis (spirales)</option>
+                    <option value="fingerprint">👆 Fingerprint (empreinte)</option>
+                    <option value="worms">🪱 Worms (vers)</option>
+                    <option value="maze">🧩 Maze (labyrinthe)</option>
+                    <option value="pulse">💗 Pulse (pulsations)</option>
+                  </select>
+                </div>
+                <Slider label="Feed (F)" value={v.F} min={0.005} max={0.08} step={0.001} onChange={(x) => patchValues({ F: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Kill (k)" value={v.k} min={0.04} max={0.075} step={0.001} onChange={(x) => patchValues({ k: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Résolution" value={v.resolution} min={128} max={1024} step={64} onChange={(x) => patchValues({ resolution: Math.round(x) })} format={(x) => `${Math.round(x)}²`} />
+                <Slider label="Steps / frame" value={v.stepsPerFrame} min={1} max={16} step={1} onChange={(x) => patchValues({ stepsPerFrame: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Splat size" value={v.splatSize} min={0.01} max={0.2} step={0.005} onChange={(x) => patchValues({ splatSize: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Splat strength" value={v.splatStrength} min={0} max={1} step={0.05} onChange={(x) => patchValues({ splatStrength: x })} />
+                <Slider label="Contraste" value={v.contrast} min={0.5} max={3} step={0.1} onChange={(x) => patchValues({ contrast: x })} />
+              </>
+            )}
+            {current.organism.kind === 'cellularautomata' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Automate cellulaire GPU. La main "dessine" des cellules vivantes, audio bass kick = reseed aléatoire, audio mid = vitesse de tick.
+                </p>
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Règle</div>
+                  <select value={(v as any).rule ?? 'conway'} onChange={(e) => patchValues({ rule: e.target.value as any })} style={{ width: '100%', fontSize: 12 }}>
+                    <option value="conway">Conway B3/S23 — Game of Life classique</option>
+                    <option value="highlife">HighLife B36/S23 — réplicateurs</option>
+                    <option value="seeds">Seeds B2/S — explose</option>
+                    <option value="daedalus">Daedalus B3/S012-8 — croissance</option>
+                    <option value="maze">Maze B3/S12345 — labyrinthe</option>
+                    <option value="replicator">Replicator B1357/S1357 — autoréplique tout</option>
+                  </select>
+                </div>
+                <Slider label="Résolution" value={v.resolution} min={64} max={512} step={32} onChange={(x) => patchValues({ resolution: Math.round(x) })} format={(x) => `${Math.round(x)}²`} />
+                <Slider label="Vitesse (ticks/sec)" value={v.ticksPerSec} min={1} max={60} step={1} onChange={(x) => patchValues({ ticksPerSec: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Trail (fade)" value={v.ageDecay} min={0.5} max={0.99} step={0.005} onChange={(x) => patchValues({ ageDecay: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Brush size" value={v.brushSize} min={0.005} max={0.1} step={0.005} onChange={(x) => patchValues({ brushSize: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Brush strength" value={v.brushStrength} min={0} max={1} step={0.05} onChange={(x) => patchValues({ brushStrength: x })} />
+                <Slider label="Auto-reseed (bass)" value={v.autoReseed} min={0} max={1} step={0.05} onChange={(x) => patchValues({ autoReseed: x })} />
+              </>
+            )}
+            {current.organism.kind === 'hilbert' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Courbe de Hilbert space-filling. Ordre N = 4^N points. La main pull la courbe, audio bass pulse, autoProgress dessine progressivement.
+                </p>
+                <Slider label="Ordre" value={v.order} min={1} max={7} step={1} onChange={(x) => patchValues({ order: Math.round(x) })} format={(x) => `${Math.round(x)} (${Math.pow(4, Math.round(x))} pts)`} />
+                <Slider label="Échelle" value={v.scale} min={0.3} max={1.5} step={0.02} onChange={(x) => patchValues({ scale: x })} />
+                <Slider label="Progress" value={v.progress} min={0} max={1} step={0.01} onChange={(x) => patchValues({ progress: x })} format={(x) => `${Math.round(x * 100)}%`} />
+                <Slider label="Auto-progress" value={v.autoProgress} min={0} max={2} step={0.02} onChange={(x) => patchValues({ autoProgress: x })} />
+                <Slider label="Rotation (rad/s)" value={v.rotation} min={-2} max={2} step={0.05} onChange={(x) => patchValues({ rotation: x })} />
+                <Slider label="Épaisseur points" value={v.thickness} min={0.001} max={0.02} step={0.0005} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(4)} />
+                <Slider label="Attraction main" value={v.handPull} min={0} max={1} step={0.05} onChange={(x) => patchValues({ handPull: x })} />
+                <Slider label="Décalage teinte" value={v.hueAlongCurve} min={0} max={1} step={0.05} onChange={(x) => patchValues({ hueAlongCurve: x })} />
+                <label style={{ display: 'flex', gap: 6, fontSize: 11, marginTop: 4, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!v.showPoints} onChange={(e) => patchValues({ showPoints: e.target.checked ? 1 : 0 })} />
+                  Afficher les sommets (points sur la courbe)
+                </label>
               </>
             )}
             {current.organism.kind === 'mathcurve' && (

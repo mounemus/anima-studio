@@ -1,4 +1,9 @@
-export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores' | 'psychedelic' | 'mandala' | 'fractal' | 'mathcurve'
+export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores' | 'psychedelic' | 'mandala' | 'fractal' | 'mathcurve' | 'reactiondiffusion' | 'cellularautomata' | 'hilbert'
+export type RDPreset = 'spots' | 'coral' | 'mitosis' | 'fingerprint' | 'worms' | 'maze' | 'pulse'
+export type CARule = 'conway' | 'highlife' | 'seeds' | 'daedalus' | 'maze' | 'replicator'
+export interface ReactionDiffusionParams { preset: RDPreset; F: number; k: number; du: number; dv: number; resolution: number; stepsPerFrame: number; splatSize: number; splatStrength: number; contrast: number }
+export interface CellularAutomataParams { rule: CARule; resolution: number; ticksPerSec: number; ageDecay: number; brushSize: number; brushStrength: number; autoReseed: number }
+export interface HilbertCurveParams { order: number; scale: number; progress: number; autoProgress: number; rotation: number; thickness: number; handPull: number; showPoints: number; hueAlongCurve: number }
 
 export interface PsychedelicParams { count: number; speed: number; freq: number; scale: number; trail: number; size: number }
 export interface MandalaParams { arms: number; pointsPerArm: number; outerRadius: number; innerRadius: number; waves: number; freq: number; rotation: number; thickness: number; layers: number; connectors: number; connectorOpacity: number }
@@ -78,6 +83,9 @@ export type OrganismParams =
   | { kind: 'mandala'; values: MandalaParams }
   | { kind: 'fractal'; values: FractalParams }
   | { kind: 'mathcurve'; values: MathCurveParams }
+  | { kind: 'reactiondiffusion'; values: ReactionDiffusionParams }
+  | { kind: 'cellularautomata'; values: CellularAutomataParams }
+  | { kind: 'hilbert'; values: HilbertCurveParams }
 
 export interface Palette {
   bg: string
