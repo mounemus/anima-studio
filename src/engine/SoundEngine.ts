@@ -53,6 +53,7 @@ const MIDI_SYNTH_DEFAULT: MidiSynthConfig = {
 export class SoundEngine {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
+  private recDest: MediaStreamAudioDestinationNode | null = null
   private voices = new Map<string, Voice>()
   private muted = false
   private masterVolume = 0.6
@@ -92,6 +93,20 @@ export class SoundEngine {
 
   isReady() { return !!this.ctx }
   isMuted() { return this.muted }
+
+  /** Returns a live MediaStream of the master audio bus for video recording.
+   *  Lazily taps the master gain via a MediaStreamAudioDestinationNode so the
+   *  recorded WebM carries the sonified obstacles + MIDI synth, not silence.
+   *  Returns null if audio was never started (ensure() not called yet). */
+  getRecordingAudioStream(): MediaStream | null {
+    if (!this.ctx || !this.master) return null
+    if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {})
+    if (!this.recDest) {
+      this.recDest = this.ctx.createMediaStreamDestination()
+      this.master.connect(this.recDest)   // tap, doesn't affect speaker output
+    }
+    return this.recDest.stream
+  }
 
   setMuted(m: boolean) {
     this.muted = m
@@ -292,6 +307,8 @@ export class SoundEngine {
     try { this.midiBus?.disconnect(); this.midiFilter?.disconnect() } catch {}
     this.midiBus = null
     this.midiFilter = null
+    try { this.recDest?.disconnect() } catch {}
+    this.recDest = null
     this.master?.disconnect()
     this.ctx?.close()
     this.ctx = null

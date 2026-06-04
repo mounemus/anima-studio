@@ -9,7 +9,8 @@ import { startHands, stopHands, createCameraStream } from '../senses/Hands'
 import { startPose, stopPose } from '../senses/Pose'
 import { startAudio, stopAudio } from '../senses/Audio'
 import { startLight, stopLight } from '../senses/Light'
-import { enterFullscreen, startRecording, stopRecording, screenshot } from '../lib/recorder'
+import { enterFullscreen, startRecording, stopRecording, screenshot, recordingElapsed } from '../lib/recorder'
+import { soundEngine } from '../engine/SoundEngine'
 import { isXRARSupported, startXR, endXR } from '../lib/webxr'
 import { MasterSound } from './MasterSound'
 
@@ -58,6 +59,7 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handsOn])
   const [recOn, setRecOn] = useState(false)
+  const [recSecs, setRecSecs] = useState(0)
   const [moodOn, setMoodOn] = useState(isMoodActive())
   const [fps, setFps] = useState(0)
   const [toast, setToast] = useState<{ msg: string; err?: boolean } | null>(null)
@@ -197,17 +199,31 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
     if (recOn) {
       await stopRecording()
       setRecOn(false)
-      showToast('Enregistrement sauvegardé')
+      setRecSecs(0)
+      showToast('Vidéo WebM sauvegardée 🎬')
     } else {
-      startRecording(c)
+      // Mux the live master audio into the recording so the WebM has sound
+      // (sonified obstacles + MIDI synth). Null if audio was never started.
+      const audio = soundEngine.getRecordingAudioStream()
+      startRecording(c, { fps: 60, audio })
       setRecOn(true)
-      showToast('Enregistrement WebM en cours...')
+      showToast(audio ? 'Enregistrement vidéo + audio…' : 'Enregistrement vidéo (audio muet — active le son)')
     }
   }
 
+  // Live recording timer
+  useEffect(() => {
+    if (!recOn) return
+    const id = window.setInterval(() => setRecSecs(Math.floor(recordingElapsed() / 1000)), 500)
+    return () => clearInterval(id)
+  }, [recOn])
+
   const shot = () => {
     const c = canvasGetter()
-    if (c) { screenshot(c); showToast('Capture sauvegardée') }
+    if (c) {
+      const { w, h } = screenshot(c)
+      showToast(`Image capturée — ${w}×${h}px 📸`)
+    }
   }
 
   const fpsClass = fps >= 50 ? 'fps-good' : fps >= 30 ? 'fps-mid' : 'fps-bad'
@@ -277,9 +293,15 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
         ><Sparkles size={16} /></button>
         <button onClick={onToggleTimeline} className={`ghost icon ${timelineOpen ? 'active' : ''}`} title="Timeline / Keyframes"><Clock size={16} /></button>
         <button onClick={shot} className="ghost icon" title="Capture PNG"><ImageDown size={16} /></button>
-        <button onClick={toggleRec} className={`ghost icon ${recOn ? 'rec active' : 'rec'}`} title={recOn ? 'Arrêter l\'enregistrement' : 'Enregistrer WebM'}>
+        <button onClick={toggleRec} className={`ghost icon ${recOn ? 'rec active' : 'rec'}`} title={recOn ? 'Arrêter l\'enregistrement' : 'Enregistrer vidéo (WebM + audio)'}>
           <Video size={16} />
         </button>
+        {recOn && (
+          <span style={{ fontSize: 11, fontFamily: 'var(--mono)', color: '#ff5a7a', display: 'inline-flex', alignItems: 'center', gap: 4 }} title="Durée d'enregistrement">
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#ff5a7a', display: 'inline-block', animation: 'pulse 1s infinite' }} />
+            {String(Math.floor(recSecs / 60)).padStart(2, '0')}:{String(recSecs % 60).padStart(2, '0')}
+          </span>
+        )}
         <div style={{ position: 'relative' }}>
           <button onClick={openDisplayMenu} className="ghost icon" title="Ouvrir la sortie sur un écran"><MonitorPlay size={16} /></button>
           {showDisplayMenu && displays && (
