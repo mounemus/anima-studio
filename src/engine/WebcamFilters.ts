@@ -108,10 +108,15 @@ float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 /** maskWeight returns 0..1, how much of the filtered result to keep at this
  *  pixel. The filter shader writes vec3 fxColor; we wrap the final outColor
  *  with mix(rawVideo, fxColor, maskWeight * uIntensity) instead of each filter
- *  doing its own intensity blend, so applyTo applies uniformly to all kinds. */
+ *  doing its own intensity blend, so applyTo applies uniformly to all kinds.
+ *
+ *  NOTE on orientation : senses/Silhouette.ts already mirrors X when writing
+ *  the buffer (line 72 — see "mirror X to match Hands"), so we sample the
+ *  mask with uv.x as-is. Re-flipping here was the cause of the body mask
+ *  appearing on the *wrong side* of the screen when the person moved. */
 float maskWeight(vec2 uv) {
   if (uMaskValid < 0.5 || uApplyTo < 0.5) return 1.0;
-  float body = texture(uMask, vec2(1.0 - uv.x, uv.y)).r;
+  float body = texture(uMask, vec2(uv.x, uv.y)).r;
   float feather = max(0.001, uMaskFeather);
   float edge = smoothstep(0.5 - feather, 0.5 + feather, body);
   return (uApplyTo < 1.5) ? edge : (1.0 - edge);  // 1=body, 2=background

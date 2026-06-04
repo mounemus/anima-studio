@@ -102,13 +102,14 @@ export class Engine {
         uniform float uMaskValid;
         uniform float uMaskMode;
         uniform float uMaskFeather;
-        // Mirror the sample x — the silhouette mask is stored in webcam space
-        // (origin top-left, NOT mirrored), but the organism layer is rendered
-        // in mirrored AR space. Without this flip, the mask would clip the
-        // organisms on the wrong side of the body.
+        // Y flip only — senses/Silhouette.ts already mirrors X in the buffer
+        // (line 72: "mirror X to match Hands"), so re-flipping here would put
+        // the body mask on the wrong side when the person moves. Y still needs
+        // a flip because three.js renders bottom-up while the mask is stored
+        // top-down (image-coordinate convention).
         float maskWeight(vec2 uv) {
           if (uMaskValid < 0.5 || uMaskMode < 0.5) return 1.0;
-          float body = texture2D(uMask, vec2(1.0 - uv.x, 1.0 - uv.y)).r;
+          float body = texture2D(uMask, vec2(uv.x, 1.0 - uv.y)).r;
           float f = max(0.001, uMaskFeather);
           float edge = smoothstep(0.5 - f, 0.5 + f, body);
           return (uMaskMode < 1.5) ? edge : (1.0 - edge);
