@@ -1161,24 +1161,36 @@ function TextureGen() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ prompt: finalPrompt, size: 'square' }),
+        credentials: 'include',   // send the admin session cookie
       })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d.error || 'erreur')
-      setTexture({
-        url: d.url,
-        prompt: d.prompt,
-        model: d.model,
-        seed: d.seed,
-        generatedAt: Date.now(),
-      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        // Map the common failures to actionable messages instead of a raw code.
+        if (r.status === 401) throw new Error('Connexion requise : ouvre /admin et connecte-toi, puis configure ta clé fal.ai. (La génération IA est protégée pour éviter l\'usage de ta clé payante par d\'autres.)')
+        if (r.status === 403) throw new Error('Requête bloquée (origine). Recharge la page depuis l\'URL officielle.')
+        if (r.status === 429) throw new Error(d.error || 'Trop de requêtes — attends une minute.')
+        if (r.status === 500 && /clé fal/i.test(d.error || '')) throw new Error('Clé fal.ai non configurée : va sur /admin → Réglages pour l\'ajouter.')
+        throw new Error(d.error || `Erreur ${r.status}`)
+      }
+      setTexture({ url: d.url, prompt: d.prompt, model: d.model, seed: d.seed, generatedAt: Date.now() })
       setPrompt('')
     } catch (e: any) { setErr(e.message) }
     finally { setBusy(false) }
   }
 
+  // Only a subset of organisms actually map a texture onto their material.
+  const TEXTURABLE = new Set(['boids', 'particles', 'cells', 'spores', 'worms'])
+  const organismSupportsTexture = TEXTURABLE.has(current.organism.kind)
+
   const tex = current.visual.texture
   return (
     <div>
+      {!organismSupportsTexture && (
+        <div style={{ fontSize: 11, color: 'var(--warn, #ffb347)', marginBottom: 8, lineHeight: 1.4, padding: 8, background: 'rgba(255,179,71,0.08)', border: '1px solid rgba(255,179,71,0.3)', borderRadius: 'var(--radius-sm)' }}>
+          ⚠️ L'organisme <strong>{current.organism.kind}</strong> n'affiche pas de texture.
+          Les textures s'appliquent à : <strong>Boids, Particules, Cellules, Spores, Worms</strong>.
+        </div>
+      )}
       {tex && (
         <div style={{ position: 'relative', marginBottom: 10 }}>
           <img src={tex.url} alt="" style={{ width: '100%', borderRadius: 'var(--radius-sm)', display: 'block' }} crossOrigin="anonymous" />
