@@ -20,11 +20,14 @@ interface Worm {
 
 /** Worms — rope-physics chains that snake through space and react to obstacles. */
 export class WormsOrganism {
-  mesh: THREE.LineSegments
+  mesh: THREE.Group
+  private line: THREE.LineSegments
+  private points: THREE.Points
   private worms: Worm[] = []
   private positions: Float32Array
   private colors: Float32Array
   private mat: THREE.LineBasicMaterial
+  private pointsMat: THREE.PointsMaterial
   private params: WormsParams
   private aspect = 1
   private c1 = new THREE.Color()
@@ -45,7 +48,19 @@ export class WormsOrganism {
       vertexColors: true, transparent: true, opacity: 0.95,
       blending: THREE.AdditiveBlending,
     })
-    this.mesh = new THREE.LineSegments(geo, this.mat)
+    this.line = new THREE.LineSegments(geo, this.mat)
+    // Points layer for real, controllable thickness (WebGL can't draw thick
+    // lines). Always additive so the zeroed inactive vertices stay invisible.
+    this.pointsMat = new THREE.PointsMaterial({
+      vertexColors: true, transparent: true, opacity: 0.95,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+      // Pixel-based size (predictable under the ortho camera) — gives worms a
+      // real, controllable body thickness. 0.004..0.08 → ~1..28 px.
+      size: Math.max(1, (params.thickness ?? 0.01) * 350), sizeAttenuation: false,
+    })
+    this.points = new THREE.Points(geo, this.pointsMat)
+    this.mesh = new THREE.Group()
+    this.mesh.add(this.line, this.points)
     this.applyVisual(visual)
     this.reset()
   }
@@ -77,6 +92,7 @@ export class WormsOrganism {
   updateParams(p: WormsParams) {
     const wasCount = this.worms.length
     this.params = p
+    this.pointsMat.size = Math.max(1, (p.thickness ?? 0.01) * 350)
     const target = Math.min(p.count, MAX_WORMS)
     while (this.worms.length < target) this.worms.push(this.spawn())
     while (this.worms.length > target) this.worms.pop()
@@ -194,14 +210,15 @@ export class WormsOrganism {
       const base = wi * segPerW
       for (let j = 0; j < segPerW; j++) { this.positions[base + j] = 0; this.colors[base + j] = 0 }
     }
-    this.mesh.geometry.attributes.position.needsUpdate = true
-    this.mesh.geometry.attributes.color.needsUpdate = true
+    this.line.geometry.attributes.position.needsUpdate = true
+    this.line.geometry.attributes.color.needsUpdate = true
   }
 
   setTexture(_tex: THREE.Texture | null) { /* worms are line strips, ignore texture for now */ }
 
   dispose() {
-    this.mesh.geometry.dispose()
+    this.line.geometry.dispose()
     this.mat.dispose()
+    this.pointsMat.dispose()
   }
 }

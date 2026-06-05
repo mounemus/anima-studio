@@ -152,7 +152,7 @@ export function ParamPanel() {
               <>
                 <Slider label="Population" value={v.count} min={500} max={8000} step={100} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
                 <Slider label="Vitesse" value={v.speed} min={0.1} max={3} onChange={(x) => patchValues({ speed: x })} />
-                <Slider label="Taille" value={v.size} min={0.3} max={3} onChange={(x) => patchValues({ size: x })} />
+                <Slider label="Taille de la poussière" value={v.size} min={0.2} max={8} step={0.1} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(1)} />
                 <Slider label="Dispersion" value={v.spread} min={0.2} max={2} onChange={(x) => patchValues({ spread: x })} />
                 <Slider label="Gravité" value={v.gravity} min={-1} max={1} onChange={(x) => patchValues({ gravity: x })} />
                 <Slider label="Turbulence" value={v.turbulence} min={0} max={2} onChange={(x) => patchValues({ turbulence: x })} />
@@ -180,6 +180,7 @@ export function ParamPanel() {
                 <Slider label="Longueur" value={v.length} min={8} max={64} step={1} onChange={(x) => patchValues({ length: Math.round(x) })} format={(x) => Math.round(x).toString()} />
                 <Slider label="Vitesse" value={v.speed} min={0.1} max={2} onChange={(x) => patchValues({ speed: x })} />
                 <Slider label="Torsion" value={v.twist} min={0} max={4} onChange={(x) => patchValues({ twist: x })} />
+                <Slider label="Épaisseur" value={v.thickness ?? 0.01} min={0.004} max={0.08} step={0.002} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(3)} />
               </>
             )}
             {current.organism.kind === 'cells' && (
@@ -213,6 +214,7 @@ export function ParamPanel() {
                 <Slider label="Vitesse" value={v.speed} min={0.1} max={2} onChange={(x) => patchValues({ speed: x })} />
                 <Slider label="Torsion" value={v.twist} min={0} max={3} onChange={(x) => patchValues({ twist: x })} />
                 <Slider label="Longueur segment" value={v.segLen} min={0.01} max={0.06} step={0.002} onChange={(x) => patchValues({ segLen: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Épaisseur" value={v.thickness ?? 0.01} min={0.004} max={0.08} step={0.002} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(3)} />
               </>
             )}
             {current.organism.kind === 'spores' && (
@@ -1178,8 +1180,9 @@ function TextureGen() {
     finally { setBusy(false) }
   }
 
-  // Only a subset of organisms actually map a texture onto their material.
-  const TEXTURABLE = new Set(['boids', 'particles', 'cells', 'spores', 'worms'])
+  // Only these organisms actually map a texture onto their material (others
+  // are shader-based or line strips and ignore setTexture).
+  const TEXTURABLE = new Set(['boids', 'particles', 'cells'])
   const organismSupportsTexture = TEXTURABLE.has(current.organism.kind)
 
   const tex = current.visual.texture
@@ -1188,7 +1191,7 @@ function TextureGen() {
       {!organismSupportsTexture && (
         <div style={{ fontSize: 11, color: 'var(--warn, #ffb347)', marginBottom: 8, lineHeight: 1.4, padding: 8, background: 'rgba(255,179,71,0.08)', border: '1px solid rgba(255,179,71,0.3)', borderRadius: 'var(--radius-sm)' }}>
           ⚠️ L'organisme <strong>{current.organism.kind}</strong> n'affiche pas de texture.
-          Les textures s'appliquent à : <strong>Boids, Particules, Cellules, Spores, Worms</strong>.
+          Les textures s'appliquent à : <strong>Boids, Particules, Cellules</strong>.
         </div>
       )}
       {tex && (

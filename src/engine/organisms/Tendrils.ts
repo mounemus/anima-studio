@@ -18,7 +18,9 @@ interface Tendril {
 
 /** Tendril organisms — growing curves that flock & twist */
 export class TendrilsOrganism {
-  mesh: THREE.LineSegments
+  mesh: THREE.Group
+  private line: THREE.LineSegments
+  private points: THREE.Points
   private tendrils: Tendril[] = []
   private positions: Float32Array
   private colors: Float32Array
@@ -29,6 +31,7 @@ export class TendrilsOrganism {
   // Hoisted: reused per-segment in update() to avoid GC pressure
   private tmp = new THREE.Color()
   private mat: THREE.LineBasicMaterial
+  private pointsMat: THREE.PointsMaterial
   obstacles: Obstacle[] | undefined
 
   constructor(params: TendrilsParams, visual: VisualParams) {
@@ -44,9 +47,24 @@ export class TendrilsOrganism {
       transparent: true,
       opacity: 0.9,
       blending: THREE.AdditiveBlending,
-      linewidth: 1,
+      linewidth: 1,   // NB: WebGL ignores this — real width comes from the Points layer below
     })
-    this.mesh = new THREE.LineSegments(geo, this.mat)
+    this.line = new THREE.LineSegments(geo, this.mat)
+    // Points layer on the SAME geometry : WebGL can't draw thick lines, so a
+    // sized point at every curve vertex is what gives tendrils a controllable
+    // thickness (and makes them actually visible on a projector). Inactive
+    // vertices collapse to the origin with colour (0,0,0) which is invisible
+    // under additive blending, so reusing the buffer is safe.
+    this.pointsMat = new THREE.PointsMaterial({
+      vertexColors: true, transparent: true, opacity: 0.9,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+      // Pixel-based size (sizeAttenuation off) — predictable thickness under the
+      // ortho camera; thickness 0.004..0.08 → ~1..24 px beads along the curve.
+      size: Math.max(1, (params.thickness ?? 0.01) * 300), sizeAttenuation: false,
+    })
+    this.points = new THREE.Points(geo, this.pointsMat)
+    this.mesh = new THREE.Group()
+    this.mesh.add(this.line, this.points)
     this.applyVisual(visual)
     this.reset()
   }
@@ -78,6 +96,7 @@ export class TendrilsOrganism {
   updateParams(p: TendrilsParams) {
     const wasCount = this.tendrils.length
     this.params = p
+    this.pointsMat.size = Math.max(1, (p.thickness ?? 0.01) * 300)
     const target = Math.min(p.count, MAX_TENDRILS)
     while (this.tendrils.length < target) this.tendrils.push(this.spawn())
     while (this.tendrils.length > target) this.tendrils.pop()
@@ -181,12 +200,13 @@ export class TendrilsOrganism {
       const base = ti * segPerT
       for (let j = 0; j < segPerT; j++) { this.positions[base + j] = 0; this.colors[base + j] = 0 }
     }
-    this.mesh.geometry.attributes.position.needsUpdate = true
-    this.mesh.geometry.attributes.color.needsUpdate = true
+    this.line.geometry.attributes.position.needsUpdate = true
+    this.line.geometry.attributes.color.needsUpdate = true
   }
 
   dispose() {
-    this.mesh.geometry.dispose()
+    this.line.geometry.dispose()
     this.mat.dispose()
+    this.pointsMat.dispose()
   }
 }
