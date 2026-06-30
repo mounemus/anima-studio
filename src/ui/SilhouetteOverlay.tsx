@@ -2,7 +2,7 @@
  *  color-coded by the obstacle's interaction. Only active when at least one
  *  silhouette obstacle is enabled.
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useSceneStore } from '../store/sceneStore'
 import { getSilhouetteMask } from '../senses/Silhouette'
 import type { ObstacleInteraction } from '../types/scene'
@@ -14,10 +14,23 @@ const INTERACTION_RGBA: Record<ObstacleInteraction, [number, number, number]> = 
   kill: [255, 90, 122],
 }
 
+const EMPTY_ARRAY: any[] = []
+
 export function SilhouetteOverlay({ stageRef }: { stageRef: React.RefObject<HTMLDivElement> }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const obstacles = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId)?.obstacles ?? [])
-  const activeSilhouettes = obstacles.filter((o) => o.enabled && o.kind === 'silhouette')
+  // CRITICAL: the previous code did `... ?? []` inside the Zustand selector which
+  // returned a NEW array reference every render → Zustand's getSnapshot detected
+  // it as a state change → infinite re-render warning, which combined with the
+  // .filter() below feeding useEffect deps caused React to unmount the entire
+  // tree (black screen on scene switch). Use a stable empty reference instead.
+  const obstacles = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId)?.obstacles ?? EMPTY_ARRAY)
+  // Memoize so the useEffect dep list doesn't see a new array every render.
+  // Only re-derive when the underlying obstacles array reference (or relevant
+  // fields) actually change.
+  const activeSilhouettes = useMemo(
+    () => obstacles.filter((o) => o.enabled && o.kind === 'silhouette'),
+    [obstacles],
+  )
 
   useEffect(() => {
     if (activeSilhouettes.length === 0 || !canvasRef.current || !stageRef.current) return

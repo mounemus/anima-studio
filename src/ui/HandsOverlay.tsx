@@ -14,10 +14,12 @@
  * Performance : redraw via innerHTML par frame — économique sur 21 nodes.
  * S'auto-masque quand senseBus.hands.detected = false.
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { senseBus } from '../senses/SenseBus'
 import { useSceneStore } from '../store/sceneStore'
 import type { ObstacleInteraction } from '../types/scene'
+
+const EMPTY_ARRAY: any[] = []
 
 // MediaPipe Hands connections — same skeleton used in their official docs.
 const FINGER_CHAINS: Array<[number, number]> = [
@@ -42,14 +44,19 @@ const INTERACTION_COLOR: Record<ObstacleInteraction, string> = {
 
 export function HandsOverlay({ stageRef, visible }: { stageRef: React.RefObject<HTMLDivElement>; visible: boolean }) {
   const svgRef = useRef<SVGSVGElement>(null)
-  const obstacles = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId)?.obstacles ?? [])
+  // Stable empty fallback so Zustand selector never returns a new [] reference
+  // on each render (caused the infinite-getSnapshot warning + React unmount).
+  const obstacles = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId)?.obstacles ?? EMPTY_ARRAY)
+  const handObstacleMemo = useMemo(
+    () => obstacles.find((o) => o.enabled && o.kind === 'hand'),
+    [obstacles],
+  )
 
   useEffect(() => {
     if (!visible || !stageRef.current || !svgRef.current) return
     const svg = svgRef.current
     let rafId = 0
-    // Find any 'hand' obstacle to color the interaction ring
-    const handObstacle = obstacles.find((o) => o.enabled && o.kind === 'hand')
+    const handObstacle = handObstacleMemo
     const handObsColor = handObstacle ? INTERACTION_COLOR[handObstacle.interaction] : null
 
     const draw = () => {
@@ -103,7 +110,7 @@ export function HandsOverlay({ stageRef, visible }: { stageRef: React.RefObject<
     }
     draw()
     return () => cancelAnimationFrame(rafId)
-  }, [visible, stageRef, obstacles])
+  }, [visible, stageRef, handObstacleMemo])
 
   if (!visible) return null
   return <svg ref={svgRef} className="hands-overlay" />

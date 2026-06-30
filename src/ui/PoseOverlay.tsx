@@ -1,10 +1,12 @@
 /** Pose skeleton overlay. Joints used by active pose obstacles are highlighted with
  *  rings color-coded by interaction (avoid=cyan, attract=pink, bounce=amber, kill=red).
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { senseBus } from '../senses/SenseBus'
 import { useSceneStore } from '../store/sceneStore'
 import type { ObstacleInteraction } from '../types/scene'
+
+const EMPTY_ARRAY: any[] = []
 
 // Complete MediaPipe Pose connections — covers head, face, arms, hands,
 // torso, legs, feet. Matches the canonical 33-landmark MediaPipe topology.
@@ -50,22 +52,30 @@ export function PoseOverlay({ stageRef, visible }: { stageRef: React.RefObject<H
   const svgRef = useRef<SVGSVGElement>(null)
   // We need to read obstacles to know which joints are highlighted, but we don't want to re-render
   // on every store change. The svg is updated imperatively each frame.
-  const obstacles = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId)?.obstacles ?? [])
+  // Stable empty fallback to avoid new [] each render (would loop Zustand + remount overlay)
+  const obstacles = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId)?.obstacles ?? EMPTY_ARRAY)
+  // Memoize the obstacle→interaction map so useEffect deps stays stable.
+  const jointInteractionsMemo = useMemo(() => {
+    const m = new Map<number, ObstacleInteraction[]>()
+    for (const o of obstacles) {
+      if (!o.enabled || o.kind !== 'pose' || !o.pose) continue
+      for (const j of o.pose.joints) {
+        const list = m.get(j) ?? []
+        list.push(o.interaction)
+        m.set(j, list)
+      }
+    }
+    return m
+  }, [obstacles])
 
   useEffect(() => {
     if (!visible || !stageRef.current || !svgRef.current) return
     const svg = svgRef.current
     let rafId = 0
-    // Pre-compute joint → list of active obstacle interactions (for color rings)
-    const jointInteractions = new Map<number, ObstacleInteraction[]>()
-    for (const o of obstacles) {
-      if (!o.enabled || o.kind !== 'pose' || !o.pose) continue
-      for (const j of o.pose.joints) {
-        const list = jointInteractions.get(j) ?? []
-        list.push(o.interaction)
-        jointInteractions.set(j, list)
-      }
-    }
+    // Use the memoized map computed outside the effect — referencing `obstacles`
+    // here directly would re-run the effect on every render and continuously
+    // cancel/rebind the RAF (caused infinite re-mount + black screen).
+    const jointInteractions = jointInteractionsMemo
 
     const draw = () => {
       const r = stageRef.current!.getBoundingClientRect()
@@ -105,7 +115,7 @@ export function PoseOverlay({ stageRef, visible }: { stageRef: React.RefObject<H
     }
     draw()
     return () => cancelAnimationFrame(rafId)
-  }, [visible, stageRef, obstacles])
+  }, [visible, stageRef, jointInteractionsMemo])
 
   if (!visible) return null
   return <svg ref={svgRef} className="pose-overlay" />
