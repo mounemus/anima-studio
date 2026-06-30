@@ -61,6 +61,8 @@ const ORGANISM_PRESETS: Record<OrganismKind, Record<string, number>> = {
   reactiondiffusion: { preset: 'coral', F: 0.029, k: 0.057, du: 1.0, dv: 0.5, resolution: 512, stepsPerFrame: 8, splatSize: 0.04, splatStrength: 0.9, contrast: 1.5 } as any,
   cellularautomata: { rule: 'conway', resolution: 256, ticksPerSec: 12, ageDecay: 0.92, brushSize: 0.03, brushStrength: 0.6, autoReseed: 0.5 } as any,
   hilbert: { order: 5, scale: 1, progress: 1, autoProgress: 0.15, rotation: 0.1, thickness: 0.005, handPull: 0.5, showPoints: 1, hueAlongCurve: 0.5 } as any,
+  menger: { depth: 3, autoOrbitSpeed: 0.4, fov: 55, twistAmount: 0.3, cubeSize: 0.95, ambient: 0.3, bloom: 0.3 } as any,
+  supershape3d: { m1: 6, n1: 0.6, n2: 0.5, n3: 1.5, m2: 8, n4: 0.6, n5: 0.5, n6: 1.5, resolution: 64, scale: 1, autoOrbitSpeed: 0.3, fov: 55, morphSpeed: 0.3, pointSize: 2, wireframe: 1 } as any,
 }
 
 export function ParamPanel() {
@@ -134,6 +136,8 @@ export function ParamPanel() {
               <option value="reactiondiffusion">🪸 Réaction-Diffusion — Gray-Scott (coral, mitosis...)</option>
               <option value="cellularautomata">⬛ Automate cellulaire — Conway, HighLife...</option>
               <option value="hilbert">🌀 Courbe de Hilbert — space-filling fractale</option>
+              <option value="menger">🧊 Éponge de Menger — fractale 3D navigable</option>
+              <option value="supershape3d">🌐 SuperShape 3D — surface morphable (Bourke)</option>
             </select>
 
             <h3>Paramètres</h3>
@@ -340,6 +344,45 @@ export function ParamPanel() {
                 <label style={{ display: 'flex', gap: 6, fontSize: 11, marginTop: 4, cursor: 'pointer' }}>
                   <input type="checkbox" checked={!!v.showPoints} onChange={(e) => patchValues({ showPoints: e.target.checked ? 1 : 0 })} />
                   Afficher les sommets (points sur la courbe)
+                </label>
+              </>
+            )}
+            {current.organism.kind === 'menger' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Éponge de Menger 3D — fractale cubique récursive navigable. La main x change la vitesse d'orbite, la main y le tilt vertical, pinch zoome, audio bass pulse l'échelle, audio high décale la teinte.
+                </p>
+                <Slider label="Profondeur (subdivisions)" value={v.depth} min={1} max={4} step={1} onChange={(x) => patchValues({ depth: Math.round(x) })} format={(x) => `${Math.round(x)} (${Math.pow(20, Math.round(x))} cubes)`} />
+                <Slider label="Vitesse orbite auto" value={v.autoOrbitSpeed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ autoOrbitSpeed: x })} />
+                <Slider label="FOV (deg)" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Torsion" value={v.twistAmount} min={0} max={2} step={0.05} onChange={(x) => patchValues({ twistAmount: x })} />
+                <Slider label="Taille cube (fraction)" value={v.cubeSize} min={0.6} max={1.05} step={0.01} onChange={(x) => patchValues({ cubeSize: x })} />
+                <Slider label="Lumière ambiante" value={v.ambient} min={0} max={1} step={0.05} onChange={(x) => patchValues({ ambient: x })} />
+                <Slider label="Bloom (gain palette)" value={v.bloom} min={0} max={1} step={0.05} onChange={(x) => patchValues({ bloom: x })} />
+              </>
+            )}
+            {current.organism.kind === 'supershape3d' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Surface 3D paramétrique (Paul Bourke). Selon (m1,m2,n1-n6), tu obtiens sphères, étoiles, fleurs, créatures alien. Main x = orbite, main y = morph m1↔m2 en live, audio bass = rondeur, morphSpeed = auto-évolution.
+                </p>
+                <Slider label="m1 (symétrie latitude)" value={v.m1} min={0} max={16} step={0.1} onChange={(x) => patchValues({ m1: x })} format={(x) => x.toFixed(1)} />
+                <Slider label="n1 (rondeur lat)" value={v.n1} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n1: x })} />
+                <Slider label="n2 (étirement lat)" value={v.n2} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n2: x })} />
+                <Slider label="n3 (anti-étirement lat)" value={v.n3} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n3: x })} />
+                <Slider label="m2 (symétrie longitude)" value={v.m2} min={0} max={16} step={0.1} onChange={(x) => patchValues({ m2: x })} format={(x) => x.toFixed(1)} />
+                <Slider label="n4 (rondeur lon)" value={v.n4} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n4: x })} />
+                <Slider label="n5 (étirement lon)" value={v.n5} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n5: x })} />
+                <Slider label="n6 (anti-étirement lon)" value={v.n6} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n6: x })} />
+                <Slider label="Résolution (grille)" value={v.resolution} min={16} max={128} step={4} onChange={(x) => patchValues({ resolution: Math.round(x) })} format={(x) => `${Math.round(x)}²`} />
+                <Slider label="Échelle" value={v.scale} min={0.3} max={2} step={0.05} onChange={(x) => patchValues({ scale: x })} />
+                <Slider label="Orbite caméra" value={v.autoOrbitSpeed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ autoOrbitSpeed: x })} />
+                <Slider label="FOV" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vitesse morph auto" value={v.morphSpeed} min={0} max={2} step={0.05} onChange={(x) => patchValues({ morphSpeed: x })} />
+                <Slider label="Taille points" value={v.pointSize} min={0.5} max={6} step={0.1} onChange={(x) => patchValues({ pointSize: x })} />
+                <label style={{ display: 'flex', gap: 6, fontSize: 11, marginTop: 4, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!v.wireframe} onChange={(e) => patchValues({ wireframe: e.target.checked ? 1 : 0 })} />
+                  Wireframe (lignes entre sommets)
                 </label>
               </>
             )}

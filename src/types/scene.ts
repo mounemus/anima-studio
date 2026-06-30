@@ -1,4 +1,6 @@
-export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores' | 'psychedelic' | 'mandala' | 'fractal' | 'mathcurve' | 'reactiondiffusion' | 'cellularautomata' | 'hilbert'
+export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores' | 'psychedelic' | 'mandala' | 'fractal' | 'mathcurve' | 'reactiondiffusion' | 'cellularautomata' | 'hilbert' | 'menger' | 'supershape3d'
+export interface MengerSpongeParams { depth: number; autoOrbitSpeed: number; fov: number; twistAmount: number; cubeSize: number; ambient: number; bloom: number }
+export interface SuperShape3DParams { m1: number; n1: number; n2: number; n3: number; m2: number; n4: number; n5: number; n6: number; resolution: number; scale: number; autoOrbitSpeed: number; fov: number; morphSpeed: number; pointSize: number; wireframe: number }
 export type RDPreset = 'spots' | 'coral' | 'mitosis' | 'fingerprint' | 'worms' | 'maze' | 'pulse'
 export type CARule = 'conway' | 'highlife' | 'seeds' | 'daedalus' | 'maze' | 'replicator'
 export interface ReactionDiffusionParams { preset: RDPreset; F: number; k: number; du: number; dv: number; resolution: number; stepsPerFrame: number; splatSize: number; splatStrength: number; contrast: number }
@@ -95,6 +97,8 @@ export type OrganismParams =
   | { kind: 'reactiondiffusion'; values: ReactionDiffusionParams }
   | { kind: 'cellularautomata'; values: CellularAutomataParams }
   | { kind: 'hilbert'; values: HilbertCurveParams }
+  | { kind: 'menger'; values: MengerSpongeParams }
+  | { kind: 'supershape3d'; values: SuperShape3DParams }
 
 export interface Palette {
   bg: string

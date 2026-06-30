@@ -52,8 +52,14 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
   }, [mirrorMode])
   // Listen for requests to auto-start the camera (e.g. when a zone selects 'webcam' content
   // or when the user toggles AR — webcam zones are useless without an active MediaStream).
+  // Guarded against re-entry: while toggleHands is in-flight, repeated requests are
+  // dropped. Without this guard, the camera-state event broadcast inside toggleHands
+  // could cause Stage to dispatch another request-camera while we're still starting,
+  // re-entering toggleHands twice in parallel (race + permission re-prompt).
   useEffect(() => {
-    const onReq = () => { if (!handsOn) toggleHands() }
+    const onReq = () => {
+      if (!handsOn && !(window as any).__animaCameraToggling) toggleHands()
+    }
     window.addEventListener('anima:request-camera', onReq)
     return () => window.removeEventListener('anima:request-camera', onReq)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -101,31 +107,47 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
 
   const toggleHands = async () => {
     if (!videoRef.current) return
-    if (handsOn) {
-      // Turning camera off — also exit AR (would be black otherwise)
-      stopHands()
-      stopPose()
-      setHandsOn(false)
-      if (mirrorMode) {
-        onToggleMirror()
-        showToast('Caméra coupée — AR désactivé')
-      }
-      // Stop the underlying MediaStream so the browser shows the camera as released
-      const stream = videoRef.current.srcObject as MediaStream | null
-      if (stream) {
-        stream.getTracks().forEach((t) => t.stop())
-        videoRef.current.srcObject = null
-      }
-      return
-    }
+    // Re-entry guard: prevents double-init when 'anima:request-camera' is dispatched
+    // by Stage while toggleHands is already running.
+    if ((window as any).__animaCameraToggling) return
+    ;(window as any).__animaCameraToggling = true
     try {
-      await createCameraStream(videoRef.current)
-      await startHands(videoRef.current)
-      startPose(videoRef.current).catch((e) => console.warn('Pose start failed', e))
-      setHandsOn(true)
-      showToast('Webcam + tracking main/corps actifs')
-    } catch (e: any) {
-      showToast('Webcam refusée: ' + (e?.message ?? e), true)
+      if (handsOn) {
+        stopHands()
+        stopPose()
+        setHandsOn(false)
+        if (mirrorMode) {
+          onToggleMirror()
+          showToast('Caméra coupée — AR désactivé')
+        }
+        const stream = videoRef.current.srcObject as MediaStream | null
+        if (stream) {
+          stream.getTracks().forEach((t) => t.stop())
+          videoRef.current.srcObject = null
+        }
+        // Browser-internal MediaStream queue can hold the camera "in-use" for ~100ms
+        // after stop(); brief wait so a fast re-toggle doesn't hang on the permission
+        // re-acquisition (mostly a Safari/iOS issue, harmless elsewhere).
+        await new Promise<void>((resolve) => setTimeout(resolve, 100))
+        return
+      }
+      try {
+        await createCameraStream(videoRef.current)
+        await startHands(videoRef.current)
+        await startPose(videoRef.current).catch((e) => console.warn('Pose start failed', e))
+        setHandsOn(true)
+        showToast('Webcam + tracking main/corps actifs')
+      } catch (e: any) {
+        showToast('Webcam refusée: ' + (e?.message ?? e), true)
+        // Make sure we don't leave the system in an inconsistent state (cache lookup
+        // would otherwise return stale binding to a closed MediaStream).
+        try {
+          const { invalidateWebcamCache } = await import('../engine/ContentSources')
+          invalidateWebcamCache()
+        } catch { /* noop */ }
+      }
+    } finally {
+      ;(window as any).__animaCameraToggling = false
     }
   }
 
@@ -162,10 +184,17 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
   const toggleXR = async () => {
     const canvas = canvasGetter()
     if (!canvas) return
-    // We need the THREE renderer; expose via a small hack: window.__animaRenderer is set by Stage
     const r = (window as any).__animaRenderer
     if (!r) { showToast('Renderer non prêt', true); return }
     if (xrOn) { endXR(); setXrOn(false); return }
+    // Mutually exclusive with the CSS Mirror mode — Mirror renders a 2D <video>
+    // behind a transparent canvas, while WebXR rebinds the renderer to the
+    // headset's framebuffer. Keeping both on leaves a stale 2D mirror behind the
+    // XR view + a transparent canvas overlay.
+    if (mirrorMode) {
+      onToggleMirror()
+      showToast('Miroir AR désactivé pour entrer en WebXR')
+    }
     const ok = await startXR(r, () => setXrOn(false))
     if (ok) { setXrOn(true); showToast('Session AR démarrée') }
     else showToast('Impossible d\'entrer en AR sur ce navigateur', true)

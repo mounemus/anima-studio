@@ -116,10 +116,17 @@ export function App() {
     const target = e.target as HTMLElement
     const onCanvas = target.tagName === 'CANVAS' || target === stageRef.current ||
       target.classList.contains('mirror-bg') || target.classList.contains('canvas-wrap')
-    // Allow Alt+click even when the target is an overlay SVG/element — the user clearly
-    // wants to PLACE an obstacle, not select an existing one. Without this, tap-to-place
-    // was silently dead anywhere the overlays covered (i.e., almost everywhere).
-    const isAltPlace = e.altKey && stageRef.current.contains(target)
+    // Allow Alt+click anywhere inside the stage so the user can place obstacles
+    // even when overlays (SVG mapping shapes, obstacle handles) cover the view —
+    // BUT skip when the click hit an interactive control (drag handle, button,
+    // input) so the user can still operate those without accidentally spawning
+    // an obstacle on top of them.
+    const isInteractiveControl =
+      target.tagName === 'BUTTON' ||
+      target.tagName === 'INPUT' ||
+      target.tagName === 'SELECT' ||
+      target.closest('[data-drag-handle]') !== null
+    const isAltPlace = e.altKey && stageRef.current.contains(target) && !isInteractiveControl
     if (!onCanvas && !isAltPlace) return
     const r = stageRef.current.getBoundingClientRect()
     const x = (e.clientX - r.left) / r.width

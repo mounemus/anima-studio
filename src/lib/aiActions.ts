@@ -52,7 +52,7 @@ function safeMelody(raw: any): Melody | undefined {
   return out
 }
 
-const ORG_KINDS: OrganismKind[] = ['boids', 'particles', 'tendrils', 'cells', 'worms', 'spores', 'psychedelic', 'mandala', 'fractal', 'mathcurve', 'reactiondiffusion', 'cellularautomata', 'hilbert']
+const ORG_KINDS: OrganismKind[] = ['boids', 'particles', 'tendrils', 'cells', 'worms', 'spores', 'psychedelic', 'mandala', 'fractal', 'mathcurve', 'reactiondiffusion', 'cellularautomata', 'hilbert', 'menger', 'supershape3d']
 const CURVE_FORMULAS = ['lissajous', 'rose', 'spirograph', 'butterfly', 'lorenz', 'heart'] as const
 const RD_PRESETS = ['spots', 'coral', 'mitosis', 'fingerprint', 'worms', 'maze', 'pulse'] as const
 const CA_RULES = ['conway', 'highlife', 'seeds', 'daedalus', 'maze', 'replicator'] as const
@@ -152,6 +152,16 @@ function safeOrganismValues(kind: OrganismKind, raw: any): Record<string, any> |
       order: [1, 7], scale: [0.1, 1.6], progress: [0, 1], autoProgress: [0, 2],
       rotation: [-3, 3], thickness: [0.0005, 0.025], handPull: [0, 1],
       showPoints: [0, 1], hueAlongCurve: [0, 1],
+    },
+    menger: {
+      depth: [1, 4], autoOrbitSpeed: [0, 3], fov: [25, 100], twistAmount: [0, 3],
+      cubeSize: [0.4, 1.1], ambient: [0, 1], bloom: [0, 1],
+    },
+    supershape3d: {
+      m1: [0, 24], n1: [0.05, 8], n2: [0.05, 8], n3: [0.05, 8],
+      m2: [0, 24], n4: [0.05, 8], n5: [0.05, 8], n6: [0.05, 8],
+      resolution: [16, 128], scale: [0.1, 3], autoOrbitSpeed: [0, 3], fov: [25, 100],
+      morphSpeed: [0, 3], pointSize: [0.3, 8], wireframe: [0, 1],
     },
   }
   const r = ranges[kind]

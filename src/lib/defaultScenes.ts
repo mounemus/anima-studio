@@ -189,6 +189,42 @@ export const defaultScenes: Scene[] = [
     notes: 'Conway Game of Life GPU avec trail âge. La main dessine des cellules, audio bass kick = reseed aléatoire. Essaie les règles HighLife / Daedalus / Replicator.',
   },
   {
+    id: 'menger-sponge',
+    name: '🧊 Éponge de Menger',
+    createdAt: now(),
+    updatedAt: now(),
+    organism: {
+      kind: 'menger',
+      values: { depth: 3, autoOrbitSpeed: 0.4, fov: 55, twistAmount: 0.4, cubeSize: 0.95, ambient: 0.4, bloom: 0.3 },
+    } as any,
+    visual: {
+      palette: { bg: '#02050a', primary: '#00d4ff', secondary: '#7c3aed', glow: '#ffd54f' },
+      bloom: 0.5, feedback: 0.9, blendMode: 'add',
+    },
+    senses: { hands: true, audio: true, light: false, bindings: [] },
+    evolution: { enabled: false, driftSpeed: 0.02, amplitude: 0.1 },
+    mapping: defaultMapping(),
+    notes: 'Fractale cubique 3D (8000 cubes). Bouge la main pour orbiter, pinch pour zoomer, mets du son avec des graves pour pulser. Profondeur 4 = 160k cubes (lent, beau).',
+  },
+  {
+    id: 'alien-flower',
+    name: '🌐 Créature SuperShape',
+    createdAt: now(),
+    updatedAt: now(),
+    organism: {
+      kind: 'supershape3d',
+      values: { m1: 6, n1: 0.6, n2: 0.5, n3: 1.5, m2: 8, n4: 0.6, n5: 0.5, n6: 1.5, resolution: 80, scale: 1, autoOrbitSpeed: 0.4, fov: 55, morphSpeed: 0.4, pointSize: 2, wireframe: 1 },
+    } as any,
+    visual: {
+      palette: { bg: '#06010d', primary: '#ff6ba6', secondary: '#00d4ff', glow: '#ffd54f' },
+      bloom: 0.6, feedback: 0.92, blendMode: 'add',
+    },
+    senses: { hands: true, audio: true, light: false, bindings: [] },
+    evolution: { enabled: false, driftSpeed: 0.02, amplitude: 0.1 },
+    mapping: defaultMapping(),
+    notes: 'Surface 3D paramétrique (Paul Bourke). Bouge la main verticalement pour morpher la symétrie en live → fleurs, étoiles, créatures alien. Audio bass = rondeur, morphSpeed = auto-évolution.',
+  },
+  {
     id: 'hilbert-net',
     name: '🌀 Hilbert Network',
     createdAt: now(),

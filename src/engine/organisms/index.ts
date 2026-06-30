@@ -11,6 +11,8 @@ export { MathCurveOrganism } from './MathCurve'
 export { ReactionDiffusionOrganism } from './ReactionDiffusion'
 export { CellularAutomataOrganism } from './CellularAutomata'
 export { HilbertCurveOrganism } from './HilbertCurve'
+export { MengerSpongeOrganism } from './MengerSponge'
+export { SuperShape3DOrganism } from './SuperShape3D'
 
 export interface OrganismLike {
   mesh: import('three').Object3D

@@ -10,6 +10,8 @@ let video: HTMLVideoElement | null = null
 let rafId = 0
 let running = false
 let lastT = -1
+let lastDetectionTime = 0
+const STALE_TIMEOUT_MS = 400  // pose is slower than hands; allow a longer window
 
 async function ensureLandmarker() {
   if (landmarker) return landmarker
@@ -30,13 +32,28 @@ export async function startPose(videoEl: HTMLVideoElement) {
   video = videoEl
   running = true
   await ensureLandmarker()
+  if (videoEl.readyState < 2) {
+    await new Promise<void>((resolve) => {
+      const onReady = () => { videoEl.removeEventListener('loadeddata', onReady); resolve() }
+      videoEl.addEventListener('loadeddata', onReady)
+      setTimeout(() => { videoEl.removeEventListener('loadeddata', onReady); resolve() }, 1500)
+    })
+  }
   loop()
 }
 
 export function stopPose() {
   running = false
-  if (rafId) cancelAnimationFrame(rafId)
+  if (rafId) { cancelAnimationFrame(rafId); rafId = 0 }
   senseBus.pose.detected = false
+  // Dispose the MediaPipe instance — see Hands.stopHands for the same rationale.
+  if (landmarker) {
+    try { landmarker.close() } catch { /* ignore */ }
+    landmarker = null
+  }
+  video = null
+  lastT = -1
+  lastDetectionTime = 0
 }
 
 function loop() {
@@ -48,10 +65,12 @@ function loop() {
       const lm = res.landmarks[0]
       const dst = senseBus.pose.landmarks
       senseBus.pose.detected = true
+      lastDetectionTime = performance.now()
       for (let i = 0; i < 33; i++) {
         const p = lm[i]
         if (!p) continue
-        // mirror X to match the visually-mirrored webcam display
+        // MediaPipe x mirrored once here (matches the visually-flipped webcam);
+        // downstream code reads as-is, no second flip.
         dst[i].x = 1 - p.x
         dst[i].y = p.y
         dst[i].z = p.z ?? 0
@@ -61,5 +80,8 @@ function loop() {
       senseBus.pose.detected = false
     }
   }
-  rafId = requestAnimationFrame(loop)
+  if (senseBus.pose.detected && performance.now() - lastDetectionTime > STALE_TIMEOUT_MS) {
+    senseBus.pose.detected = false
+  }
+  if (running) rafId = requestAnimationFrame(loop)
 }
