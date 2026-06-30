@@ -6,6 +6,7 @@ import {
   ReactionDiffusionOrganism, CellularAutomataOrganism, HilbertCurveOrganism,
   MengerSpongeOrganism, SuperShape3DOrganism,
   ParticleSwarm3DOrganism, CrystalGrowthOrganism,
+  MurmurationOrganism,
 } from './organisms'
 import type { OrganismLike } from './organisms'
 
@@ -27,6 +28,7 @@ export const ORGANISM_DEFAULTS: Record<OrganismKind, Record<string, number>> = {
   supershape3d: { m1: 6, n1: 0.6, n2: 0.5, n3: 1.5, m2: 8, n4: 0.6, n5: 0.5, n6: 1.5, resolution: 64, scale: 1, autoOrbitSpeed: 0.3, fov: 55, morphSpeed: 0.3, pointSize: 2, wireframe: 1 } as any,
   swarm3d: { count: 600, speed: 1.2, cohesion: 0.6, separation: 0.8, alignment: 0.5, vision: 0.18, bounds: 1, pointSize: 2, autoOrbitSpeed: 0.25, fov: 55, trail: 0.5 } as any,
   crystal: { maxCubes: 1500, growthRate: 12, cubeSize: 0.95, gridResolution: 28, autoOrbitSpeed: 0.3, fov: 55, ambient: 0.4, emissive: 0.2 } as any,
+  murmuration: { count: 3000, cohesion: 0.4, separation: 1.2, alignment: 1.8, swirl: 0.6, speed: 0.9, vision: 0.18, size: 0.015, flapSpeed: 14, flapAmplitude: 0.6, predatorResponse: 1.5, depthSpread: 0.7, trail: 0.92 } as any,
 }
 
 export function createOrganism(kind: OrganismKind, values: any, visual: VisualParams): OrganismLike {
@@ -71,6 +73,10 @@ export function createOrganism(kind: OrganismKind, values: any, visual: VisualPa
     case 'crystal': {
       const v = { maxCubes: 1500, growthRate: 12, cubeSize: 0.95, gridResolution: 28, autoOrbitSpeed: 0.3, fov: 55, ambient: 0.4, emissive: 0.2, ...values }
       return new CrystalGrowthOrganism(v, visual) as OrganismLike
+    }
+    case 'murmuration': {
+      const v = { count: 3000, cohesion: 0.4, separation: 1.2, alignment: 1.8, swirl: 0.6, speed: 0.9, vision: 0.18, size: 0.015, flapSpeed: 14, flapAmplitude: 0.6, predatorResponse: 1.5, depthSpread: 0.7, trail: 0.92, ...values }
+      return new MurmurationOrganism(v, visual) as OrganismLike
     }
   }
 }

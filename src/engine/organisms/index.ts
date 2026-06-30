@@ -13,6 +13,7 @@ export { CellularAutomataOrganism } from './CellularAutomata'
 export { HilbertCurveOrganism } from './HilbertCurve'
 export { MengerSpongeOrganism } from './MengerSponge'
 export { SuperShape3DOrganism } from './SuperShape3D'
+export { MurmurationOrganism } from './Murmuration'
 export { ParticleSwarm3DOrganism } from './ParticleSwarm3D'
 export { CrystalGrowthOrganism } from './CrystalGrowth'
 

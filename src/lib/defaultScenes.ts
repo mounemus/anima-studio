@@ -296,4 +296,22 @@ export const defaultScenes: Scene[] = [
     mapping: defaultMapping(),
     notes: 'Spirograph hypotrochoid — change a/b pour voir les pétales évoluer. La main décale les paramètres en live.',
   },
+  {
+    id: 'starling-murmuration',
+    name: '🦅 Murmuration d\'étourneaux',
+    createdAt: now(),
+    updatedAt: now(),
+    organism: {
+      kind: 'murmuration',
+      values: { count: 3500, cohesion: 0.4, separation: 1.2, alignment: 2.0, swirl: 0.7, speed: 1.1, vision: 0.18, size: 0.016, flapSpeed: 16, flapAmplitude: 0.65, predatorResponse: 1.8, depthSpread: 0.75, trail: 0.94 },
+    } as any,
+    visual: {
+      palette: { bg: '#0a0612', primary: '#ffd54f', secondary: '#ff8c42', glow: '#ff6ba6' },
+      bloom: 0.5, feedback: 0.94, blendMode: 'add',
+    },
+    senses: { hands: true, audio: true, light: false, bindings: [] },
+    evolution: { enabled: false, driftSpeed: 0.02, amplitude: 0.1 },
+    mapping: defaultMapping(),
+    notes: 'Ballet aérien type murmuration d\'étourneaux. 3500 oiseaux avec battement d\'ailes. La main est ton faucon — pinch+mouvement = la nuée fuit dramatiquement. Active la silhouette obstacle pour que ton corps repousse aussi. Idéal au coucher du soleil sur fond de musique ambient.',
+  },
 ]

@@ -52,7 +52,7 @@ function safeMelody(raw: any): Melody | undefined {
   return out
 }
 
-const ORG_KINDS: OrganismKind[] = ['boids', 'particles', 'tendrils', 'cells', 'worms', 'spores', 'psychedelic', 'mandala', 'fractal', 'mathcurve', 'reactiondiffusion', 'cellularautomata', 'hilbert', 'menger', 'supershape3d', 'swarm3d', 'crystal']
+const ORG_KINDS: OrganismKind[] = ['boids', 'particles', 'tendrils', 'cells', 'worms', 'spores', 'psychedelic', 'mandala', 'fractal', 'mathcurve', 'reactiondiffusion', 'cellularautomata', 'hilbert', 'menger', 'supershape3d', 'swarm3d', 'crystal', 'murmuration']
 const CURVE_FORMULAS = ['lissajous', 'rose', 'spirograph', 'butterfly', 'lorenz', 'heart'] as const
 const RD_PRESETS = ['spots', 'coral', 'mitosis', 'fingerprint', 'worms', 'maze', 'pulse'] as const
 const CA_RULES = ['conway', 'highlife', 'seeds', 'daedalus', 'maze', 'replicator'] as const
@@ -172,6 +172,12 @@ function safeOrganismValues(kind: OrganismKind, raw: any): Record<string, any> |
       maxCubes: [200, 4000], growthRate: [1, 30], cubeSize: [0.5, 1.1],
       gridResolution: [16, 64], autoOrbitSpeed: [0, 3], fov: [25, 100],
       ambient: [0, 1], emissive: [0, 0.5],
+    },
+    murmuration: {
+      count: [100, 8000], cohesion: [0, 2], separation: [0, 3], alignment: [0, 3],
+      swirl: [0, 2], speed: [0.1, 3], vision: [0.05, 0.5], size: [0.005, 0.04],
+      flapSpeed: [1, 30], flapAmplitude: [0, 1.2], predatorResponse: [0, 3],
+      depthSpread: [0, 1], trail: [0.5, 0.999],
     },
   }
   const r = ranges[kind]

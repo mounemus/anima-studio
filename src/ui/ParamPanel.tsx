@@ -142,6 +142,7 @@ export function ParamPanel() {
               <option value="supershape3d">🌐 SuperShape 3D — surface morphable (Bourke)</option>
               <option value="swarm3d">🐝 Essaim 3D — boids dans un cube</option>
               <option value="crystal">💎 Cristal — croissance par accrétion</option>
+              <option value="murmuration">🦅 Murmuration — milliers d'oiseaux ballet aérien</option>
             </select>
 
             <h3>Paramètres</h3>
@@ -421,6 +422,26 @@ export function ParamPanel() {
                 <Slider label="FOV" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
                 <Slider label="Lumière ambiante" value={v.ambient} min={0} max={1} step={0.05} onChange={(x) => patchValues({ ambient: x })} />
                 <Slider label="Émissif (glow)" value={v.emissive} min={0} max={0.5} step={0.02} onChange={(x) => patchValues({ emissive: x })} />
+              </>
+            )}
+            {current.organism.kind === 'murmuration' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Ballet aérien de milliers d'oiseaux avec battement d'ailes. La main agit comme un <strong>prédateur</strong> qui fait fuir le banc (pinch = puissance). Audio bass = ampli battement, mid = vitesse, high = nervosité du groupe. Active la <strong>caméra</strong> + un obstacle <strong>silhouette</strong> pour que ton corps repousse le banc.
+                </p>
+                <Slider label="Nombre d'oiseaux" value={v.count} min={200} max={8000} step={100} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Cohésion (rapprochement)" value={v.cohesion} min={0} max={2} step={0.05} onChange={(x) => patchValues({ cohesion: x })} />
+                <Slider label="Séparation (anti-collision)" value={v.separation} min={0} max={3} step={0.05} onChange={(x) => patchValues({ separation: x })} />
+                <Slider label="Alignement (suivi vol)" value={v.alignment} min={0} max={3} step={0.05} onChange={(x) => patchValues({ alignment: x })} />
+                <Slider label="Swirl (tourbillon collectif)" value={v.swirl} min={0} max={2} step={0.05} onChange={(x) => patchValues({ swirl: x })} />
+                <Slider label="Vitesse vol" value={v.speed} min={0.1} max={3} step={0.05} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Vision (rayon)" value={v.vision} min={0.05} max={0.5} step={0.01} onChange={(x) => patchValues({ vision: x })} format={(x) => x.toFixed(2)} />
+                <Slider label="Taille oiseau" value={v.size} min={0.005} max={0.04} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Vitesse battement ailes (Hz)" value={v.flapSpeed} min={1} max={30} step={0.5} onChange={(x) => patchValues({ flapSpeed: x })} format={(x) => x.toFixed(1)} />
+                <Slider label="Amplitude battement" value={v.flapAmplitude} min={0} max={1.2} step={0.02} onChange={(x) => patchValues({ flapAmplitude: x })} />
+                <Slider label="Réponse prédateur (main)" value={v.predatorResponse} min={0} max={3} step={0.05} onChange={(x) => patchValues({ predatorResponse: x })} />
+                <Slider label="Profondeur (étalement Z)" value={v.depthSpread} min={0} max={1} step={0.05} onChange={(x) => patchValues({ depthSpread: x })} />
+                <Slider label="Traînée" value={v.trail} min={0.5} max={0.999} step={0.005} onChange={(x) => patchValues({ trail: x })} format={(x) => x.toFixed(3)} />
               </>
             )}
             {current.organism.kind === 'mathcurve' && (
