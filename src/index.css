@@ -784,6 +784,48 @@ button.ghost.active {
   stroke-linecap: round;
   fill: none;
 }
+
+/* === Hands skeleton overlay === */
+.hands-overlay {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 5;
+  /* Glow effect on bones + joints for visibility over the canvas */
+  filter: drop-shadow(0 0 2px rgba(0, 212, 255, 0.45));
+}
+.hand-bone {
+  stroke: rgba(0, 212, 255, 0.75);
+  stroke-width: 2;
+  stroke-linecap: round;
+  fill: none;
+}
+.hand-joint {
+  fill: rgba(0, 212, 255, 0.9);
+  stroke: rgba(255, 255, 255, 0.7);
+  stroke-width: 1;
+}
+.hand-joint.tip {
+  fill: rgba(255, 255, 255, 1);
+  stroke: rgba(0, 212, 255, 1);
+  stroke-width: 2;
+}
+.hand-anchor {
+  fill: rgba(124, 58, 237, 0.95);
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 2;
+}
+.hand-tip-major {
+  fill: rgba(0, 255, 163, 1);
+  stroke: rgba(255, 255, 255, 1);
+  stroke-width: 2;
+}
+.hand-pinch {
+  fill: none;
+  stroke: rgba(255, 213, 79, 0.95);
+  stroke-width: 2;
+  stroke-dasharray: 3 3;
+}
 .silhouette-overlay {
   position: absolute; inset: 0;
   width: 100%; height: 100%;

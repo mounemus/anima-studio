@@ -2,13 +2,20 @@
  * SenseBus — shared live values updated at 60+ Hz by sensors,
  * read directly by the Engine. Lives outside React state to avoid re-renders.
  */
+export interface HandLandmark { x: number; y: number; z: number }
+
 export interface HandData {
   detected: boolean
-  // normalized 0..1 in clip space (origin top-left)
+  // normalized 0..1 in clip space (origin top-left) — x is ALREADY mirrored
+  // to match the visually-flipped webcam (matches what the user sees).
   indexTip: { x: number; y: number; z: number }
   palm: { x: number; y: number; z: number }
   pinch: number        // 0..1 — 0 = open, 1 = pinched
   openness: number     // 0..1 hand openness
+  /** Full 21 MediaPipe hand landmarks. Same mirrored-x convention as indexTip/palm.
+   *  Indices: 0=wrist, 1-4=thumb (CMC,MCP,IP,TIP), 5-8=index, 9-12=middle,
+   *  13-16=ring, 17-20=pinky. */
+  landmarks: HandLandmark[]
 }
 
 export interface AudioData {
@@ -52,6 +59,8 @@ export const senseBus = {
     palm: { x: 0.5, y: 0.5, z: 0 },
     pinch: 0,
     openness: 0.5,
+    // Pre-allocated 21-entry buffer reused frame-to-frame (no GC pressure)
+    landmarks: Array.from({ length: 21 }, () => ({ x: 0.5, y: 0.5, z: 0 })),
   } as HandData,
   audio: {
     level: 0, bass: 0, mid: 0, high: 0,

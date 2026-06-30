@@ -20,6 +20,7 @@ function MirrorVisibility({ mirrorMode, videoRef }: { mirrorMode: boolean; video
   return <MirrorView videoRef={videoRef} active={mirrorMode && !clipped} />
 }
 import { PoseOverlay } from './ui/PoseOverlay'
+import { HandsOverlay } from './ui/HandsOverlay'
 import { SilhouetteOverlay } from './ui/SilhouetteOverlay'
 import { useSceneStore } from './store/sceneStore'
 import type { Engine } from './engine/Engine'
@@ -194,6 +195,7 @@ export function App() {
             <Stage onEngineReady={(e) => { engineRef.current = e; e.setTransparent(mirrorMode) }} />
             {!outputMode && <SilhouetteOverlay stageRef={stageRef} />}
             <PoseOverlay stageRef={stageRef} visible={!outputMode} />
+            <HandsOverlay stageRef={stageRef} visible={!outputMode} />
             {!outputMode && <SenseMonitor />}
             {!outputMode && <MappingOverlay stageRef={stageRef} />}
             {!outputMode && <ObstaclesOverlay stageRef={stageRef} editing={true} selectedId={selectedObstacle} onSelect={setSelectedObstacle} />}

@@ -94,6 +94,17 @@ function loop() {
       senseBus.hands.palm.z = palm.z ?? 0
       senseBus.hands.pinch = pinch
       senseBus.hands.openness = openness
+      // Mirror + copy all 21 landmarks into the pre-allocated buffer so the
+      // overlay can draw the full hand skeleton. Same mirrored-x convention
+      // as indexTip/palm — downstream readers must NOT apply another flip.
+      const dst = senseBus.hands.landmarks
+      for (let i = 0; i < 21; i++) {
+        const src = lm[i]
+        if (!src) continue
+        dst[i].x = 1 - src.x
+        dst[i].y = src.y
+        dst[i].z = src.z ?? 0
+      }
       lastDetectionTime = performance.now()
     } else {
       senseBus.hands.detected = false
