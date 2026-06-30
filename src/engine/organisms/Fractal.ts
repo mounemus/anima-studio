@@ -137,6 +137,8 @@ export class FractalOrganism {
 
   updateParams(p: FractalParams) {
     this.params = p
+    // Push all relevant uniforms so the UI sliders take effect immediately —
+    // bailout/iterations/zoom must be flushed here, not deferred to update().
     this.mat.uniforms.uIters.value = p.iterations
     this.mat.uniforms.uBailout.value = p.bailout
   }

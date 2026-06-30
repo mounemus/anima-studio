@@ -86,11 +86,15 @@ function round(n: number) { return Math.round(n * 100) / 100 }
 
 async function reflect() {
   const snap = summarize()
-  if (!snap) return
+  if (!snap) {
+    if (onMoodCallback) onMoodCallback('⏳ Pas encore assez de données — patiente quelques secondes')
+    return
+  }
   const sc = useSceneStore.getState().current()
   if (!sc) return
+  let res: Response
   try {
-    const res = await fetch('/api/claude', {
+    res = await fetch('/api/claude', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -98,17 +102,52 @@ async function reflect() {
         scene: sc,
       }),
     })
-    const data = await res.json()
-    if (!res.ok) return
-    const actions = validateActions(data.actions)
-    const store = useSceneStore.getState()
-    if (actions.organismValues) store.patchOrganismValues(actions.organismValues)
-    if (actions.palette) store.updatePalette(actions.palette)
-    if (actions.visual) store.updateVisual(actions.visual)
-    if (actions.flow) store.updateFlow(actions.flow as any)
-    if (onMoodCallback && data.reply) onMoodCallback(data.reply)
-  } catch (e) {
-    console.warn('[MoodEngine] reflect failed', e)
+  } catch (e: any) {
+    // Network unreachable (offline, CORS, etc.)
+    console.warn('[MoodEngine] reflect network error', e)
+    if (onMoodCallback) onMoodCallback('⚠ Mood Engine : réseau indisponible')
+    return
+  }
+  // Read body once as text — robust against non-JSON 404/500 HTML pages (dev env
+  // is the main offender: Vite doesn't serve /api routes, you get an HTML 404).
+  let bodyText = ''
+  try { bodyText = await res.text() } catch { /* empty body */ }
+  if (!res.ok) {
+    let msg = `erreur API (HTTP ${res.status})`
+    if (res.status === 401) msg = '⚠ Mood Engine : authentification requise (admin)'
+    else if (res.status === 429) msg = '⚠ Mood Engine : limite de débit — patiente une minute'
+    else if (res.status === 404) msg = '⚠ Mood Engine : endpoint /api/claude introuvable (mode dev local ?)'
+    console.warn('[MoodEngine]', msg, bodyText.slice(0, 200))
+    if (onMoodCallback) onMoodCallback(msg)
+    return
+  }
+  let data: any
+  try { data = JSON.parse(bodyText) } catch {
+    console.warn('[MoodEngine] reply not valid JSON:', bodyText.slice(0, 200))
+    if (onMoodCallback) onMoodCallback('⚠ Mood Engine : réponse mal formée')
+    return
+  }
+  const actions = validateActions(data.actions)
+  // STRICT MOOD MODE: only allow small per-frame deltas — never let the AI swap
+  // the entire organism kind, blow up the mapping shapes, or push a new melody
+  // mid-show. validateActions accepts those for the AIChat path; here we drop them.
+  const store = useSceneStore.getState()
+  let applied = 0
+  if (actions.organismValues) { store.patchOrganismValues(actions.organismValues); applied++ }
+  if (actions.palette) { store.updatePalette(actions.palette); applied++ }
+  if (actions.visual) { store.updateVisual(actions.visual); applied++ }
+  if (actions.flow) { store.updateFlow(actions.flow as any); applied++ }
+  // Log when the AI returned data we deliberately ignore — helps debugging silent ignores
+  const dropped: string[] = []
+  if (actions.organism) dropped.push('organism (full swap)')
+  if (actions.mappingShapes) dropped.push('mappingShapes')
+  if (actions.melody) dropped.push('melody')
+  if (actions.newScene) dropped.push('newScene')
+  if (dropped.length) console.info('[MoodEngine] dropped non-mood actions:', dropped.join(', '))
+  const reply: string = data.reply ?? ''
+  if (onMoodCallback) {
+    if (applied > 0) onMoodCallback('✨ ' + reply)
+    else onMoodCallback(reply || 'ℹ️ Mood Engine : pas d\'évolution proposée cette fois')
   }
 }
 

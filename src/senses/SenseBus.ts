@@ -127,10 +127,19 @@ export function readSense(path: SenseSource): number {
         const n = parseInt(note[1], 10)
         return n >= 0 && n < 128 ? senseBus.midi.notes[n] : 0
       }
+      // Unknown path : warn ONCE per path so a typo in a binding (e.g. 'midi.cc7x')
+      // surfaces in DevTools instead of silently returning 0 forever.
+      if (!warnedUnknownSources.has(path)) {
+        warnedUnknownSources.add(path)
+        console.warn(`[SenseBus] unknown source "${path}" — returning 0. Check your binding source spelling.`)
+      }
       return 0
     }
   }
 }
+
+// Track-once warnings so a binding with a typo doesn't spam the console.
+const warnedUnknownSources = new Set<string>()
 
 /** Pick a numeric value out of a deep object via dotted path. Returns undefined if missing. */
 export function getDeepPath(obj: any, path: string): any {

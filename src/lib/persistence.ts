@@ -44,7 +44,18 @@ export function migrateScene(s: any): Scene {
       },
     },
     evolution: s.evolution ?? { enabled: false, driftSpeed: 0.1, amplitude: 0.2 },
-    senses: s.senses ?? { hands: true, audio: false, light: false, bindings: [] },
+    senses: (() => {
+      const sn = s.senses ?? { hands: true, audio: false, light: false, bindings: [] }
+      if (!Array.isArray(sn.bindings)) sn.bindings = []
+      return sn
+    })(),
+    // Fields added after launch — preserve when present, default to empty when
+    // missing. Without these, an older scene saved before a feature shipped
+    // would silently lose data on every reload (modifiers vanish, melody gone).
+    modifiers: Array.isArray(s.modifiers) ? s.modifiers : [],
+    timeline: s.timeline,
+    melody: s.melody,
+    notes: typeof s.notes === 'string' ? s.notes : '',
   } as Scene
 }
 

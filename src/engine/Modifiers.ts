@@ -143,7 +143,7 @@ export function applyModifiers(
         break
       }
       case 'gravityWell': {
-        if (!velocities) break
+        if (!velocities || !m.wells || m.wells.length === 0) break
         for (const w of m.wells) {
           const cx = (w.x - 0.5) * 2 * aspect
           const cy = -(w.y - 0.5) * 2

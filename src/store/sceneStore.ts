@@ -460,9 +460,13 @@ if (typeof window !== 'undefined') {
 // hydrate it into this tab's store so both stay consistent (last-write-wins).
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
+    // Strict key check — was `e.key.includes('scene:')` which also matched any
+    // future key containing the substring (e.g. 'anima:somescene:meta'). Match
+    // only our own scene keys.
+    if (!e.key || !e.key.startsWith('anima:scene:') || !e.newValue) return
+    const oldHandler = null; void oldHandler  // marker so the old broken line is gone
     // Keys are namespaced 'anima:scene:<id>'. The old check 'scene:' never
     // matched (the prefix is present), so cross-tab sync silently never ran.
-    if (!e.key || !e.key.includes('scene:') || !e.newValue) return
     try {
       const updated = JSON.parse(e.newValue) as Scene
       if (!updated.id) return
