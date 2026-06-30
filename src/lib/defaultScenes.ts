@@ -207,6 +207,42 @@ export const defaultScenes: Scene[] = [
     notes: 'Fractale cubique 3D (8000 cubes). Bouge la main pour orbiter, pinch pour zoomer, mets du son avec des graves pour pulser. Profondeur 4 = 160k cubes (lent, beau).',
   },
   {
+    id: 'swarm-3d',
+    name: '🐝 Essaim 3D galactique',
+    createdAt: now(),
+    updatedAt: now(),
+    organism: {
+      kind: 'swarm3d',
+      values: { count: 800, speed: 1.3, cohesion: 0.6, separation: 0.8, alignment: 0.5, vision: 0.18, bounds: 1, pointSize: 2.2, autoOrbitSpeed: 0.3, fov: 55, trail: 0.6 },
+    } as any,
+    visual: {
+      palette: { bg: '#000010', primary: '#00d4ff', secondary: '#ffd54f', glow: '#ff6ba6' },
+      bloom: 0.5, feedback: 0.92, blendMode: 'add',
+    },
+    senses: { hands: true, audio: true, light: false, bindings: [] },
+    evolution: { enabled: false, driftSpeed: 0.02, amplitude: 0.1 },
+    mapping: defaultMapping(),
+    notes: 'Boids dans un cube 3D — drag souris pour orbiter, molette zoom. Main x = cohésion, main y = séparation, audio mid = vitesse.',
+  },
+  {
+    id: 'crystal-grow',
+    name: '💎 Cristal en croissance',
+    createdAt: now(),
+    updatedAt: now(),
+    organism: {
+      kind: 'crystal',
+      values: { maxCubes: 2000, growthRate: 14, cubeSize: 0.95, gridResolution: 32, autoOrbitSpeed: 0.4, fov: 55, ambient: 0.5, emissive: 0.25 },
+    } as any,
+    visual: {
+      palette: { bg: '#02050a', primary: '#7c3aed', secondary: '#00d4ff', glow: '#ffd54f' },
+      bloom: 0.5, feedback: 0.9, blendMode: 'add',
+    },
+    senses: { hands: true, audio: true, light: false, bindings: [] },
+    evolution: { enabled: false, driftSpeed: 0.02, amplitude: 0.1 },
+    mapping: defaultMapping(),
+    notes: 'Cristal qui pousse par accrétion. Audio bass = vitesse de cristallisation. Mets de la musique avec des graves pour le voir grandir vite. Drag souris pour orbiter.',
+  },
+  {
     id: 'alien-flower',
     name: '🌐 Créature SuperShape',
     createdAt: now(),

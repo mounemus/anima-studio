@@ -127,6 +127,10 @@ export class MengerSpongeOrganism {
   private c1 = new THREE.Color()
   private c2 = new THREE.Color()
   private _seeded = false
+  /** Mouse-driven orbit additions (applied on top of autoOrbit). */
+  private mouseYaw = 0
+  private mousePitch = 0
+  private mouseDistanceBias = 0   // additive — added to base distance
 
   constructor(params: MengerSpongeParams, visual: VisualParams) {
     this.params = params
@@ -228,14 +232,16 @@ export class MengerSpongeOrganism {
     // Orbit — hand x speeds up; audio high adds rotation jitter
     const orbitSpeed = p.autoOrbitSpeed * (1 + (h.detected ? (h.indexTip.x - 0.5) * 2 : 0))
     this.orbit += dt * orbitSpeed
-    // Vertical tilt — hand y or default slow oscillation
-    const tilt = h.detected ? (h.indexTip.y - 0.5) * 1.2 : Math.sin(this.orbit * 0.3) * 0.4
-    // Camera distance — pinch zooms in
-    const distance = 3 - (h.detected ? h.pinch * 1.5 : 0)
+    // Vertical tilt — hand y, default slow oscillation, plus mouse pitch
+    const tilt = (h.detected ? (h.indexTip.y - 0.5) * 1.2 : Math.sin(this.orbit * 0.3) * 0.4)
+      + this.mousePitch
+    // Camera distance — pinch zooms in, mouse wheel also biases distance
+    const distance = Math.max(1.2, 3 - (h.detected ? h.pinch * 1.5 : 0) + this.mouseDistanceBias)
+    const yaw = this.orbit + this.mouseYaw
     this.innerCamera.position.set(
-      Math.cos(this.orbit) * distance,
+      Math.cos(yaw) * distance,
       Math.sin(tilt) * distance,
-      Math.sin(this.orbit) * distance,
+      Math.sin(yaw) * distance,
     )
     this.innerCamera.lookAt(0, 0, 0)
     // Bass pulses the whole sponge's scale (metamorphosis)
@@ -253,6 +259,17 @@ export class MengerSpongeOrganism {
     // Audio high shifts the palette hue continuously
     this.displayMat.uniforms.uHueShift.value =
       (performance.now() * 0.0001 + (a.high ?? 0) * 0.3) % 1
+  }
+
+  /** Mouse interaction — drag = orbit, wheel = zoom. */
+  mouseInteract(ev: { kind: string; dxNorm?: number; dyNorm?: number; wheelDelta?: number }) {
+    if (ev.kind === 'drag') {
+      this.mouseYaw += (ev.dxNorm ?? 0) * Math.PI
+      this.mousePitch = Math.max(-1.4, Math.min(1.4, this.mousePitch + (ev.dyNorm ?? 0) * 1.5))
+    } else if (ev.kind === 'wheel') {
+      // Positive deltaY = scroll-down = zoom out → increase distance bias
+      this.mouseDistanceBias = Math.max(-2, Math.min(5, this.mouseDistanceBias + (ev.wheelDelta ?? 0) * 0.002))
+    }
   }
 
   dispose() {

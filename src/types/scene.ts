@@ -1,4 +1,6 @@
-export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores' | 'psychedelic' | 'mandala' | 'fractal' | 'mathcurve' | 'reactiondiffusion' | 'cellularautomata' | 'hilbert' | 'menger' | 'supershape3d'
+export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores' | 'psychedelic' | 'mandala' | 'fractal' | 'mathcurve' | 'reactiondiffusion' | 'cellularautomata' | 'hilbert' | 'menger' | 'supershape3d' | 'swarm3d' | 'crystal'
+export interface ParticleSwarm3DParams { count: number; speed: number; cohesion: number; separation: number; alignment: number; vision: number; bounds: number; pointSize: number; autoOrbitSpeed: number; fov: number; trail: number }
+export interface CrystalGrowthParams { maxCubes: number; growthRate: number; cubeSize: number; gridResolution: number; autoOrbitSpeed: number; fov: number; ambient: number; emissive: number }
 export interface MengerSpongeParams { depth: number; autoOrbitSpeed: number; fov: number; twistAmount: number; cubeSize: number; ambient: number; bloom: number }
 export interface SuperShape3DParams { m1: number; n1: number; n2: number; n3: number; m2: number; n4: number; n5: number; n6: number; resolution: number; scale: number; autoOrbitSpeed: number; fov: number; morphSpeed: number; pointSize: number; wireframe: number }
 export type RDPreset = 'spots' | 'coral' | 'mitosis' | 'fingerprint' | 'worms' | 'maze' | 'pulse'
@@ -99,6 +101,8 @@ export type OrganismParams =
   | { kind: 'hilbert'; values: HilbertCurveParams }
   | { kind: 'menger'; values: MengerSpongeParams }
   | { kind: 'supershape3d'; values: SuperShape3DParams }
+  | { kind: 'swarm3d'; values: ParticleSwarm3DParams }
+  | { kind: 'crystal'; values: CrystalGrowthParams }
 
 export interface Palette {
   bg: string
@@ -296,7 +300,7 @@ export interface TimelineConfig { duration: number; loop: boolean; tracks: Timel
 export interface SceneModifier {
   id: string
   enabled: boolean
-  kind: 'vortex' | 'gravityWell' | 'colorCycle' | 'pulseGate' | 'magneticBands'
+  kind: 'vortex' | 'gravityWell' | 'colorCycle' | 'pulseGate' | 'magneticBands' | 'zoneWalls'
   [k: string]: any
 }
 

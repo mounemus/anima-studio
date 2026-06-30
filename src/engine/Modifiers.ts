@@ -15,7 +15,7 @@
  */
 import { senseBus } from '../senses/SenseBus'
 
-export type ModifierKind = 'vortex' | 'gravityWell' | 'colorCycle' | 'pulseGate' | 'magneticBands'
+export type ModifierKind = 'vortex' | 'gravityWell' | 'colorCycle' | 'pulseGate' | 'magneticBands' | 'zoneWalls'
 
 export interface ModifierVortex {
   id: string
@@ -71,12 +71,26 @@ export interface ModifierMagneticBands {
   strength: number
 }
 
+export interface ModifierZoneWalls {
+  id: string
+  enabled: boolean
+  kind: 'zoneWalls'
+  /** Soft margin (world units) around the inner edge of the zone where the
+   *  inward force starts ramping. Larger = smoother bounce, narrower = harder wall. */
+  margin: number
+  /** Spring stiffness when agents push beyond the wall (force per unit overshoot). */
+  stiffness: number
+  /** Velocity damping when an agent crosses the wall (0=elastic bounce, 1=fully absorbed). */
+  damping: number
+}
+
 export type Modifier =
   | ModifierVortex
   | ModifierGravityWell
   | ModifierColorCycle
   | ModifierPulseGate
   | ModifierMagneticBands
+  | ModifierZoneWalls
 
 const newId = () => `mod-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
 
@@ -87,7 +101,36 @@ export function defaultModifier(kind: ModifierKind): Modifier {
     case 'colorCycle': return { id: newId(), enabled: true, kind, speedHz: 0.1, amount: 0.5 }
     case 'pulseGate': return { id: newId(), enabled: true, kind, bpm: 1, intensity: 1.5, width: 0.15 }
     case 'magneticBands': return { id: newId(), enabled: true, kind, bands: 4, strength: 0.3 }
+    case 'zoneWalls': return { id: newId(), enabled: true, kind, margin: 0.08, stiffness: 4, damping: 0.35 }
   }
+}
+
+/** Mapping shape polygon list (in [0,1] uv coords) used by the zoneWalls
+ *  modifier. The Engine writes the latest scene's shapes here each frame so
+ *  modifiers don't need to know about Scene/MappingShape types directly. */
+export const _zonePolygons: { points: { x: number; y: number }[] }[] = []
+
+/** Point-in-polygon (ray cast). Pts in [0,1] uv. */
+function pointInPoly(p: { x: number; y: number }, pts: { x: number; y: number }[]): boolean {
+  let inside = false
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x, yi = pts[i].y
+    const xj = pts[j].x, yj = pts[j].y
+    const intersect = ((yi > p.y) !== (yj > p.y)) && (p.x < (xj - xi) * (p.y - yi) / (yj - yi) + xi)
+    if (intersect) inside = !inside
+  }
+  return inside
+}
+
+/** Squared distance from point P to segment AB. */
+function sqDistToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): { d2: number; cx: number; cy: number } {
+  const dx = bx - ax, dy = by - ay
+  const len2 = dx * dx + dy * dy
+  let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0
+  t = Math.max(0, Math.min(1, t))
+  const cx = ax + t * dx, cy = ay + t * dy
+  const ex = px - cx, ey = py - cy
+  return { d2: ex * ex + ey * ey, cx, cy }
 }
 
 /** Convert hand coords (0..1 with y inverted) into [-1,1] normalized world coords. */
@@ -203,6 +246,90 @@ export function applyModifiers(
         // colorCycle is purely visual — handled in applyVisual hook below
         break
       }
+      case 'zoneWalls': {
+        // Confine agents to the union of mapping zone polygons. If no polygons
+        // are registered for this scene, the modifier no-ops (so it's safe to
+        // leave enabled even outside the mapping module).
+        if (!velocities || _zonePolygons.length === 0) break
+        const margin = Math.max(0.005, m.margin)
+        const stiffness = Math.max(0, m.stiffness)
+        const damping = Math.max(0, Math.min(1, m.damping))
+        for (let i = 0; i < count; i++) {
+          // Convert agent world coord [-aspect,aspect]×[-1,1] back to uv [0,1]
+          const wx = positions[i * 3], wy = positions[i * 3 + 1]
+          const ux = (wx / aspect + 1) * 0.5
+          const uy = 1 - (wy + 1) * 0.5
+          // Find the closest polygon that either contains the point, or the
+          // closest edge if outside ALL polygons.
+          let inside = false
+          let nearestEdgeD2 = Infinity
+          let nearCx = ux, nearCy = uy
+          for (const poly of _zonePolygons) {
+            if (pointInPoly({ x: ux, y: uy }, poly.points)) { inside = true; break }
+          }
+          if (!inside) {
+            for (const poly of _zonePolygons) {
+              for (let k = 0, kp = poly.points.length - 1; k < poly.points.length; kp = k++) {
+                const a = poly.points[kp], b = poly.points[k]
+                const r = sqDistToSegment(ux, uy, a.x, a.y, b.x, b.y)
+                if (r.d2 < nearestEdgeD2) { nearestEdgeD2 = r.d2; nearCx = r.cx; nearCy = r.cy }
+              }
+            }
+            // Push the agent back toward the nearest point on a polygon edge
+            const ndx = nearCx - ux
+            const ndy = nearCy - uy
+            const dist = Math.sqrt(nearestEdgeD2) + 1e-6
+            // Convert the push back to world space (uv→world: ux*2-1)*aspect, (1-uy)*2-1
+            const pushUx = ndx / dist * (dist + margin)
+            const pushUy = ndy / dist * (dist + margin)
+            // World vector
+            const pushWx = pushUx * 2 * aspect
+            const pushWy = -pushUy * 2
+            velocities[i * 2]     += pushWx * stiffness * dt
+            velocities[i * 2 + 1] += pushWy * stiffness * dt
+            // Damp velocity component going OUTWARD
+            const vx = velocities[i * 2], vy = velocities[i * 2 + 1]
+            const outward = vx * (-pushWx) + vy * (-pushWy)  // dot v with outward normal
+            if (outward > 0) {
+              velocities[i * 2]     -= pushWx * 0 // keep
+              velocities[i * 2]     *= (1 - damping)
+              velocities[i * 2 + 1] *= (1 - damping)
+            }
+          } else {
+            // Inside: still apply a soft push when very close to an edge (within margin)
+            for (const poly of _zonePolygons) {
+              for (let k = 0, kp = poly.points.length - 1; k < poly.points.length; kp = k++) {
+                const a = poly.points[kp], b = poly.points[k]
+                const r = sqDistToSegment(ux, uy, a.x, a.y, b.x, b.y)
+                if (r.d2 < margin * margin) {
+                  const d = Math.sqrt(r.d2) + 1e-6
+                  const inwardX = (ux - r.cx) / d
+                  const inwardY = (uy - r.cy) / d
+                  const fall = 1 - d / margin
+                  velocities[i * 2]     += inwardX * 2 * aspect * stiffness * fall * dt * 0.5
+                  velocities[i * 2 + 1] += -inwardY * 2 * stiffness * fall * dt * 0.5
+                }
+              }
+            }
+          }
+        }
+        break
+      }
+    }
+  }
+}
+
+/** Called by the Engine each frame BEFORE applyModifiers to register the active
+ *  mapping shapes (polygons) for the zoneWalls modifier. Pass [] when there are
+ *  none. Keeps modifiers decoupled from the Scene type. */
+export function setZonePolygons(shapes: Array<{ kind?: string; points?: { x: number; y: number }[]; corners?: { x: number; y: number }[]; enabled?: boolean }>) {
+  _zonePolygons.length = 0
+  for (const s of shapes) {
+    if (s.enabled === false) continue
+    if (s.kind === 'polygon' && s.points && s.points.length >= 3) {
+      _zonePolygons.push({ points: s.points })
+    } else if (s.corners && s.corners.length >= 3) {
+      _zonePolygons.push({ points: s.corners })
     }
   }
 }

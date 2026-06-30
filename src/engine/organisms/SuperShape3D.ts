@@ -104,6 +104,10 @@ export class SuperShape3DOrganism {
   private displayMat: THREE.ShaderMaterial
   private orbit = 0
   private t = 0
+  // Mouse-driven additions
+  private mouseYaw = 0
+  private mousePitch = 0
+  private mouseDistanceBias = 0
   // Reusable buffers — recomputed each frame
   private vertexPositions: Float32Array
   private vertexColors: Float32Array
@@ -227,12 +231,14 @@ export class SuperShape3DOrganism {
     // Orbit — hand x speeds up
     const orbitSpeed = p.autoOrbitSpeed * (1 + (h.detected ? (h.indexTip.x - 0.5) * 1.6 : 0))
     this.orbit += dt * orbitSpeed
-    // Pinch zooms in by pulling camera closer
-    const distance = 3.5 - (h.detected ? h.pinch * 1.8 : 0)
+    // Pinch + mouse-wheel zoom
+    const distance = Math.max(1.4, 3.5 - (h.detected ? h.pinch * 1.8 : 0) + this.mouseDistanceBias)
+    const yaw = this.orbit + this.mouseYaw
+    const pitch = Math.sin(this.orbit * 0.4) * 0.3 + this.mousePitch
     this.innerCamera.position.set(
-      Math.cos(this.orbit) * distance,
-      Math.sin(this.orbit * 0.4) * distance * 0.3,
-      Math.sin(this.orbit) * distance,
+      Math.cos(yaw) * distance,
+      Math.sin(pitch) * distance,
+      Math.sin(yaw) * distance,
     )
     this.innerCamera.lookAt(0, 0, 0)
     // Param morphing
@@ -285,6 +291,15 @@ export class SuperShape3DOrganism {
     // Audio high shifts the palette hue continuously
     this.displayMat.uniforms.uHueShift.value =
       (performance.now() * 0.0001 + (a.high ?? 0) * 0.4) % 1
+  }
+
+  mouseInteract(ev: { kind: string; dxNorm?: number; dyNorm?: number; wheelDelta?: number }) {
+    if (ev.kind === 'drag') {
+      this.mouseYaw += (ev.dxNorm ?? 0) * Math.PI
+      this.mousePitch = Math.max(-1.3, Math.min(1.3, this.mousePitch + (ev.dyNorm ?? 0) * 1.5))
+    } else if (ev.kind === 'wheel') {
+      this.mouseDistanceBias = Math.max(-2.5, Math.min(5, this.mouseDistanceBias + (ev.wheelDelta ?? 0) * 0.002))
+    }
   }
 
   dispose() {

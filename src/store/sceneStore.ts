@@ -36,7 +36,7 @@ interface SceneStoreState {
   updateBindings: (bindings: SenseBinding[]) => void
   updateTimeline: (patch: Partial<TimelineConfig>) => void
   setMelody: (m: Melody | null) => void
-  addModifier: (kind: 'vortex' | 'gravityWell' | 'colorCycle' | 'pulseGate' | 'magneticBands') => void
+  addModifier: (kind: 'vortex' | 'gravityWell' | 'colorCycle' | 'pulseGate' | 'magneticBands' | 'zoneWalls') => void
   removeModifier: (id: string) => void
   updateModifier: (id: string, patch: any) => void
   setTexture: (tex: AITexture | null) => void
@@ -375,6 +375,7 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
       colorCycle: { id, enabled: true, kind, speedHz: 0.1, amount: 0.5 },
       pulseGate: { id, enabled: true, kind, bpm: 1, intensity: 1.5, width: 0.15 },
       magneticBands: { id, enabled: true, kind, bands: 4, strength: 0.3 },
+      zoneWalls: { id, enabled: true, kind, margin: 0.08, stiffness: 4, damping: 0.35 },
     }
     set((st) => {
       const next = st.scenes.map((s) => {

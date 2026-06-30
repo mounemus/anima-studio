@@ -15,7 +15,7 @@ import { startMaskedWebcam, stopMaskedWebcam } from './MaskedWebcam'
 import { createOrganism, ORGANISM_DEFAULTS } from './OrganismFactory'
 import { tick as timelineTick, loadTimeline } from './Timeline'
 import { tick as melodyTick, loadMelody } from './MelodyEngine'
-import { applyModifiers, getColorCycleShift, rotateHueHex, type Modifier } from './Modifiers'
+import { applyModifiers, getColorCycleShift, rotateHueHex, setZonePolygons, type Modifier } from './Modifiers'
 
 export class Engine {
   private renderer: THREE.WebGLRenderer
@@ -135,8 +135,62 @@ export class Engine {
 
     this.resize()
     window.addEventListener('resize', this.resize)
+    this.attachMouseControls(canvas)
     this.loop()
   }
+
+  /** Pointer + wheel listeners on the canvas — forwarded to the current organism
+   *  only if it implements mouseInteract (3D organisms : Menger, SuperShape3D, etc.).
+   *  2D organisms ignore — their interaction is hand/audio/MIDI based. */
+  private mouseDragActive = false
+  private lastMouseX = 0
+  private lastMouseY = 0
+  private attachMouseControls(canvas: HTMLCanvasElement) {
+    const onDown = (e: PointerEvent) => {
+      // Only react when the click is on the canvas (not when bubbling from an overlay
+      // SVG/HTML control). The Stage handler does Alt+click for tap-to-place — we
+      // only take over for plain drag (no modifier keys).
+      if (e.button !== 0 || e.altKey || e.ctrlKey || e.metaKey) return
+      if (!(this.organism as any)?.mouseInteract) return
+      this.mouseDragActive = true
+      this.lastMouseX = e.clientX
+      this.lastMouseY = e.clientY
+      canvas.setPointerCapture?.(e.pointerId)
+      canvas.style.cursor = 'grabbing'
+    }
+    const onMove = (e: PointerEvent) => {
+      if (!this.mouseDragActive) return
+      const dx = (e.clientX - this.lastMouseX) / canvas.clientWidth
+      const dy = (e.clientY - this.lastMouseY) / canvas.clientHeight
+      this.lastMouseX = e.clientX
+      this.lastMouseY = e.clientY
+      ;(this.organism as any)?.mouseInteract?.({ kind: 'drag', dxNorm: dx, dyNorm: dy })
+    }
+    const onUp = (e: PointerEvent) => {
+      this.mouseDragActive = false
+      canvas.releasePointerCapture?.(e.pointerId)
+      canvas.style.cursor = ''
+    }
+    const onWheel = (e: WheelEvent) => {
+      if (!(this.organism as any)?.mouseInteract) return
+      e.preventDefault()
+      ;(this.organism as any).mouseInteract({ kind: 'wheel', wheelDelta: e.deltaY })
+    }
+    canvas.addEventListener('pointerdown', onDown)
+    canvas.addEventListener('pointermove', onMove)
+    canvas.addEventListener('pointerup', onUp)
+    canvas.addEventListener('pointercancel', onUp)
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    // Saved for cleanup
+    this._mouseCleanup = () => {
+      canvas.removeEventListener('pointerdown', onDown)
+      canvas.removeEventListener('pointermove', onMove)
+      canvas.removeEventListener('pointerup', onUp)
+      canvas.removeEventListener('pointercancel', onUp)
+      canvas.removeEventListener('wheel', onWheel as EventListener)
+    }
+  }
+  private _mouseCleanup: (() => void) | null = null
 
   resize = () => {
     const r = this.container.getBoundingClientRect()
@@ -458,6 +512,11 @@ export class Engine {
           separateAgentArrays = { px: o.px, py: o.py, vx: o.vx, vy: o.vy }
         }
         if (positions && count > 0) {
+          // Register the active mapping zone polygons so the 'zoneWalls' modifier
+          // (if enabled) can use them as confinement colliders. Cheap : just
+          // points the module-global pointer; cleared automatically when the
+          // shapes list is empty.
+          setZonePolygons(this.currentScene.mapping?.shapes ?? [])
           applyModifiers(positions, velocities, count, dt, this.width / this.height, mods)
           if (separateAgentArrays) {
             // Copy modifier-mutated values back into the organism's storage
@@ -647,6 +706,7 @@ export class Engine {
     stopMaskedWebcam()
     stopColorTracking()
     disposeAllContentSources()
+    this._mouseCleanup?.()
     this.renderer.dispose()
     this.renderer.domElement.remove()
   }

@@ -63,6 +63,8 @@ const ORGANISM_PRESETS: Record<OrganismKind, Record<string, number>> = {
   hilbert: { order: 5, scale: 1, progress: 1, autoProgress: 0.15, rotation: 0.1, thickness: 0.005, handPull: 0.5, showPoints: 1, hueAlongCurve: 0.5 } as any,
   menger: { depth: 3, autoOrbitSpeed: 0.4, fov: 55, twistAmount: 0.3, cubeSize: 0.95, ambient: 0.3, bloom: 0.3 } as any,
   supershape3d: { m1: 6, n1: 0.6, n2: 0.5, n3: 1.5, m2: 8, n4: 0.6, n5: 0.5, n6: 1.5, resolution: 64, scale: 1, autoOrbitSpeed: 0.3, fov: 55, morphSpeed: 0.3, pointSize: 2, wireframe: 1 } as any,
+  swarm3d: { count: 600, speed: 1.2, cohesion: 0.6, separation: 0.8, alignment: 0.5, vision: 0.18, bounds: 1, pointSize: 2, autoOrbitSpeed: 0.25, fov: 55, trail: 0.5 } as any,
+  crystal: { maxCubes: 1500, growthRate: 12, cubeSize: 0.95, gridResolution: 28, autoOrbitSpeed: 0.3, fov: 55, ambient: 0.4, emissive: 0.2 } as any,
 }
 
 export function ParamPanel() {
@@ -138,6 +140,8 @@ export function ParamPanel() {
               <option value="hilbert">🌀 Courbe de Hilbert — space-filling fractale</option>
               <option value="menger">🧊 Éponge de Menger — fractale 3D navigable</option>
               <option value="supershape3d">🌐 SuperShape 3D — surface morphable (Bourke)</option>
+              <option value="swarm3d">🐝 Essaim 3D — boids dans un cube</option>
+              <option value="crystal">💎 Cristal — croissance par accrétion</option>
             </select>
 
             <h3>Paramètres</h3>
@@ -384,6 +388,39 @@ export function ParamPanel() {
                   <input type="checkbox" checked={!!v.wireframe} onChange={(e) => patchValues({ wireframe: e.target.checked ? 1 : 0 })} />
                   Wireframe (lignes entre sommets)
                 </label>
+              </>
+            )}
+            {current.organism.kind === 'swarm3d' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Boids en 3D — main x = cohésion, main y = séparation, audio mid = vitesse, audio high = alignement. <strong>Glisse la souris</strong> pour orbiter, <strong>molette</strong> pour zoomer.
+                </p>
+                <Slider label="Population" value={v.count} min={50} max={3000} step={50} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vitesse max" value={v.speed} min={0.1} max={3} step={0.05} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Cohésion" value={v.cohesion} min={0} max={2} step={0.05} onChange={(x) => patchValues({ cohesion: x })} />
+                <Slider label="Séparation" value={v.separation} min={0} max={2} step={0.05} onChange={(x) => patchValues({ separation: x })} />
+                <Slider label="Alignement" value={v.alignment} min={0} max={2} step={0.05} onChange={(x) => patchValues({ alignment: x })} />
+                <Slider label="Rayon perception" value={v.vision} min={0.05} max={0.5} step={0.01} onChange={(x) => patchValues({ vision: x })} format={(x) => x.toFixed(2)} />
+                <Slider label="Taille cube" value={v.bounds} min={0.6} max={1.5} step={0.05} onChange={(x) => patchValues({ bounds: x })} />
+                <Slider label="Taille points" value={v.pointSize} min={0.5} max={6} step={0.1} onChange={(x) => patchValues({ pointSize: x })} />
+                <Slider label="Orbite caméra" value={v.autoOrbitSpeed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ autoOrbitSpeed: x })} />
+                <Slider label="FOV" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Opacité (trail)" value={v.trail} min={0} max={1} step={0.05} onChange={(x) => patchValues({ trail: x })} />
+              </>
+            )}
+            {current.organism.kind === 'crystal' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Cristal qui pousse par accrétion. Audio bass = vitesse de cristallisation, audio high = nouveaux nucléi, main = position des prochains cubes. <strong>Glisse la souris</strong> pour orbiter.
+                </p>
+                <Slider label="Cubes max" value={v.maxCubes} min={200} max={4000} step={100} onChange={(x) => patchValues({ maxCubes: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vitesse croissance" value={v.growthRate} min={1} max={30} step={0.5} onChange={(x) => patchValues({ growthRate: x })} />
+                <Slider label="Résolution grille" value={v.gridResolution} min={16} max={64} step={2} onChange={(x) => patchValues({ gridResolution: Math.round(x) })} format={(x) => `${Math.round(x)}³`} />
+                <Slider label="Taille cube (fraction)" value={v.cubeSize} min={0.6} max={1.05} step={0.02} onChange={(x) => patchValues({ cubeSize: x })} />
+                <Slider label="Orbite caméra" value={v.autoOrbitSpeed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ autoOrbitSpeed: x })} />
+                <Slider label="FOV" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Lumière ambiante" value={v.ambient} min={0} max={1} step={0.05} onChange={(x) => patchValues({ ambient: x })} />
+                <Slider label="Émissif (glow)" value={v.emissive} min={0} max={0.5} step={0.02} onChange={(x) => patchValues({ emissive: x })} />
               </>
             )}
             {current.organism.kind === 'mathcurve' && (
@@ -990,6 +1027,7 @@ function BehaviorModifiers() {
     colorCycle: { name: 'Cycle de couleurs', emoji: '🌈', help: 'Décale la teinte de la palette.' },
     pulseGate: { name: 'Battement', emoji: '💓', help: 'Pulse rythmique sur la vitesse.' },
     magneticBands: { name: 'Bandes magnétiques', emoji: '〰️', help: 'Aligne les agents en bandes horizontales.' },
+    zoneWalls: { name: 'Parois de zones', emoji: '🧱', help: 'Les zones du mapping deviennent des murs : les agents rebondissent dedans.' },
   }
   return (
     <div style={{ marginTop: 20 }}>
@@ -1063,6 +1101,16 @@ function BehaviorModifiers() {
               <>
                 <Slider label="Nombre de bandes" value={m.bands} min={2} max={12} step={1} onChange={(v) => update(m.id, { bands: Math.round(v) })} format={(v) => String(Math.round(v))} />
                 <Slider label="Force" value={m.strength} min={-2} max={2} step={0.05} onChange={(v) => update(m.id, { strength: v })} format={(v) => v.toFixed(2)} />
+              </>
+            )}
+            {m.kind === 'zoneWalls' && (
+              <>
+                <p style={{ fontSize: 10, color: 'var(--text-mute)', marginBottom: 6 }}>
+                  Les zones polygones du <strong>mapping</strong> deviennent des murs. Crée des zones (onglet Map) pour activer le confinement.
+                </p>
+                <Slider label="Marge" value={m.margin ?? 0.08} min={0.005} max={0.2} step={0.005} onChange={(v) => update(m.id, { margin: v })} format={(v) => v.toFixed(3)} />
+                <Slider label="Rigidité" value={m.stiffness ?? 4} min={0.2} max={20} step={0.2} onChange={(v) => update(m.id, { stiffness: v })} format={(v) => v.toFixed(1)} />
+                <Slider label="Amortissement" value={m.damping ?? 0.35} min={0} max={1} step={0.02} onChange={(v) => update(m.id, { damping: v })} format={(v) => v.toFixed(2)} />
               </>
             )}
             {m.kind === 'gravityWell' && (

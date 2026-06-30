@@ -13,6 +13,8 @@ export { CellularAutomataOrganism } from './CellularAutomata'
 export { HilbertCurveOrganism } from './HilbertCurve'
 export { MengerSpongeOrganism } from './MengerSponge'
 export { SuperShape3DOrganism } from './SuperShape3D'
+export { ParticleSwarm3DOrganism } from './ParticleSwarm3D'
+export { CrystalGrowthOrganism } from './CrystalGrowth'
 
 export interface OrganismLike {
   mesh: import('three').Object3D
@@ -22,4 +24,19 @@ export interface OrganismLike {
   updateParams(p: any): void
   setTexture?(tex: import('three').Texture | null): void
   dispose(): void
+  /** Optional mouse interaction — only implemented by 3D organisms (Menger,
+   *  SuperShape3D, ParticleSwarm3D, CrystalGrowth). Engine forwards normalized
+   *  mouse events from the stage canvas. dxNorm/dyNorm are in [-1,1] per drag,
+   *  wheelDelta is in standard wheel units (positive = zoom out). */
+  mouseInteract?(ev: MouseInteractEvent): void
+}
+
+export interface MouseInteractEvent {
+  /** 'drag' = pointer moved while button down ; 'wheel' = scroll wheel. */
+  kind: 'drag' | 'wheel' | 'pinch-end'
+  /** Drag deltas in normalized screen units (-1 .. 1). */
+  dxNorm?: number
+  dyNorm?: number
+  /** Wheel delta (positive = zoom out). */
+  wheelDelta?: number
 }
