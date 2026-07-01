@@ -12,6 +12,7 @@ import { defaultShape } from '../types/scene'
 import { SHAPE_TEMPLATES } from '../lib/shapeTemplates'
 import { MidiMonitor } from './MidiMonitor'
 import { VirtualMidi } from './VirtualMidi'
+import { oscEngine } from '../engine/OscEngine'
 
 function hsvToCss(h: number, s: number, v: number): string {
   // HSV → HSL: l = v - vs/2, s_hsl = (v - l) / min(l, 1 - l)
@@ -634,6 +635,7 @@ function SensesTab() {
       <MidiMonitor />
       <VirtualMidi />
 
+      <OscPanel />
       <BindingsManager />
 
       <FlowControl />
@@ -670,10 +672,70 @@ function SensesTab() {
   )
 }
 
+function OscPanel() {
+  const [, rerender] = useState(0)
+  const [url, setUrl] = useState(oscEngine.config.url)
+  useEffect(() => {
+    const on = () => rerender((x) => x + 1)
+    window.addEventListener('anima:osc-state', on)
+    const iv = setInterval(on, 500)  // refresh incoming values readout
+    return () => { window.removeEventListener('anima:osc-state', on); clearInterval(iv) }
+  }, [])
+  const cfg = oscEngine.config
+  const st = oscEngine.status
+  const dot = st === 'connected' ? 'var(--accent)' : st === 'connecting' ? 'orange' : st === 'error' ? 'crimson' : 'var(--text-mute)'
+  const busy = st === 'connected' || st === 'connecting'
+  return (
+    <div style={{ marginTop: 18 }}>
+      <h3 style={{ marginTop: 0 }}>🛰️ OSC — Resolume / TouchDesigner</h3>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', lineHeight: 1.5 }}>
+        Via un pont local WebSocket↔UDP (<code>bridge/osc-bridge.js</code>, voir README). IN : les adresses reçues
+        deviennent des sources bindables (<code>osc:/adresse</code>). OUT : envoie <code>/anima/audio/*</code>, <code>/anima/agents</code>.
+      </p>
+      <div style={{ display: 'flex', gap: 4 }}>
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="ws://localhost:8080"
+          style={{ flex: 1, fontSize: 11 }} />
+        {busy
+          ? <button onClick={() => oscEngine.disconnect()} style={{ fontSize: 11 }}>Déconnecter</button>
+          : <button onClick={() => oscEngine.connect(url)} style={{ fontSize: 11 }}>Connecter</button>}
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, fontSize: 11 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, display: 'inline-block' }} />
+        <span style={{ color: 'var(--text-mute)' }}>{st}</span>
+        <label style={{ marginLeft: 'auto', display: 'flex', gap: 3, cursor: 'pointer' }}>
+          <input type="checkbox" checked={cfg.enabledIn} onChange={(e) => oscEngine.setConfig({ enabledIn: e.target.checked })} /> IN
+        </label>
+        <label style={{ display: 'flex', gap: 3, cursor: 'pointer' }}>
+          <input type="checkbox" checked={cfg.enabledOut} onChange={(e) => oscEngine.setConfig({ enabledOut: e.target.checked })} /> OUT
+        </label>
+      </div>
+      {oscEngine.addresses.length > 0 && (
+        <div style={{ marginTop: 6, fontSize: 10, color: 'var(--text-mute)', maxHeight: 90, overflow: 'auto', fontFamily: 'var(--mono)' }}>
+          {oscEngine.addresses.map((a) => (
+            <div key={a}>{a} = {(oscEngine.values[a] ?? 0).toFixed(3)}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function BindingsManager() {
   const current = useSceneStore((s) => s.scenes.find((x) => x.id === s.currentId))!
   const updateBindings = useSceneStore((s) => s.updateBindings)
   const bindings = current.senses?.bindings ?? []
+  const [, rerender] = useState(0)
+  useEffect(() => {
+    const on = () => rerender((x) => x + 1)
+    window.addEventListener('anima:osc-state', on)
+    return () => window.removeEventListener('anima:osc-state', on)
+  }, [])
+
+  // OSC sources : discovered incoming addresses + any already used in a binding.
+  const oscAddrs = Array.from(new Set([
+    ...oscEngine.addresses,
+    ...bindings.map((b) => b.source).filter((s) => s.startsWith('osc:')).map((s) => s.slice(4)),
+  ]))
 
   const SOURCES: { value: string; label: string }[] = [
     { value: 'hand.index.y', label: 'Main — index y' },
@@ -691,6 +753,7 @@ function BindingsManager() {
     { value: 'midi.cc74', label: 'MIDI — Filtre (CC74)' },
     { value: 'midi.notes.any', label: 'MIDI — Vélocité max notes actives' },
     { value: 'midi.note60', label: 'MIDI — Note C4 (60)' },
+    ...oscAddrs.map((a) => ({ value: `osc:${a}`, label: `OSC — ${a}` })),
   ]
 
   const TARGETS: { value: string; label: string }[] = [

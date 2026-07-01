@@ -78,6 +78,9 @@ export const senseBus = {
     detected: false,
     landmarks: Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, vis: 0 })),
   } as PoseData,
+  /** OSC input — latest numeric value per received address (filled by OscEngine).
+   *  Bindable as a sense source via `osc:/address`. */
+  osc: { connected: false, values: {} as Record<string, number> },
 }
 
 /**
@@ -117,6 +120,10 @@ export function sanitizeSenses() {
   const p = senseBus.pose
   if (p.detected && p.landmarks.some((j) => !Number.isFinite(j.x) || !Number.isFinite(j.y))) p.detected = false
   for (const j of p.landmarks) { j.x = c01(j.x, 0.5); j.y = c01(j.y, 0.5); j.z = fin(j.z); j.vis = c01(j.vis) }
+
+  // OSC : a malformed packet must not push NaN into a bound parameter.
+  const ov = senseBus.osc.values
+  for (const k in ov) if (!Number.isFinite(ov[k])) ov[k] = 0
 }
 
 /** MediaPipe pose joint indices, named for readability. */
@@ -164,6 +171,8 @@ export function readSense(path: SenseSource): number {
       return m
     }
     default: {
+      // OSC : `osc:/some/address` -> latest received value
+      if (path.startsWith('osc:')) return senseBus.osc.values[path.slice(4)] ?? 0
       // midi.cc<N>  /  midi.note<N>
       const cc = /^midi\.cc(\d{1,3})$/.exec(path)
       if (cc) {

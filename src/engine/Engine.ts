@@ -6,7 +6,8 @@ import { senseBus, readSense, sanitizeSenses } from '../senses/SenseBus'
 import { getSilhouetteMask } from '../senses/Silhouette'
 import { loadTexture } from '../lib/textureLoader'
 import type { Obstacle } from '../types/scene'
-import { resetCounters } from './Obstacles'
+import { resetCounters, obstacleCounters } from './Obstacles'
+import { oscEngine } from './OscEngine'
 import { soundEngine } from './SoundEngine'
 import { setFlow } from './Flow'
 import { setTrackers, stopColorTracking } from './ColorTracker'
@@ -135,6 +136,8 @@ export class Engine {
     this.feedbackQuadScene.add(fbMesh)
 
     this.resize()
+    // Reconnect OSC if the user had IN/OUT enabled last session.
+    oscEngine.autostart()
     window.addEventListener('resize', this.resize)
     // Window 'resize' alone is not enough: the flex/grid container gets its real
     // dimensions AFTER the Engine constructs, with no window event to catch the
@@ -587,6 +590,8 @@ export class Engine {
     }
     // After organisms moved, push counters → audio
     soundEngine.tick()
+    // OSC OUT — stream audio levels + agent count + obstacle hit counters (~30 Hz)
+    oscEngine.tickOut(now, senseBus.audio, (this.currentScene.organism.values as any).count ?? 0, obstacleCounters)
     // AI-generated melody sequencer — fires virtual notes; the polysynth
     // tick that follows turns them into audio in the same frame.
     melodyTick()
