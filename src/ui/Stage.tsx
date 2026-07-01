@@ -120,7 +120,7 @@ export function Stage({ onEngineReady }: Props) {
   // SelfieSegmenter output → mask shader sees uMaskValid=0 → 'all' fallback).
   useEffect(() => {
     const needsForZones = !!(
-      current?.mapping?.shapes?.some((sh) => sh.content?.type === 'webcam' && sh.enabled)
+      current?.mapping?.shapes?.some((sh) => (sh.content?.type === 'webcam' || sh.chromaKey) && sh.enabled)
     )
     const filterNeedsCamera = current?.webcamFilter?.kind && current.webcamFilter.kind !== 'none'
     const orgMaskNeedsCamera = current?.organismMask && current.organismMask.mode !== 'all'

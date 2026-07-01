@@ -44,6 +44,7 @@ export function App() {
   const [pickFlash, setPickFlash] = useState<{ x: number; y: number; color: string } | null>(null)
   const addObstacle = useSceneStore((s) => s.addObstacle)
   const updateObstacle = useSceneStore((s) => s.updateObstacle)
+  const updateMappingShape = useSceneStore((s) => s.updateMappingShape)
   const currentSceneId = useSceneStore((s) => s.currentId)
 
   // Listen for the pipette request from the obstacle UI
@@ -138,17 +139,29 @@ export function App() {
       const hsv = pickColorAt(videoRef.current, x, y)
       if (hsv) {
         const scene = useSceneStore.getState().scenes.find((s) => s.id === currentSceneId)
-        const obs = scene?.obstacles?.find((o) => o.id === pickingForObstacle)
-        if (obs?.tracker) {
-          updateObstacle(pickingForObstacle, {
-            tracker: { ...obs.tracker, h: hsv.h, s: hsv.s, v: hsv.v },
-          })
-          // Reset spatial lock then pre-seed at the click point so the search window
-          // starts centered on what the user actually selected.
-          resetTracker(pickingForObstacle)
-          trackerStates.set(pickingForObstacle, { x, y, vx: 0, vy: 0, confidence: 0.5, lastSeen: performance.now() })
+        const flash = () => {
           setPickFlash({ x, y, color: `hsl(${Math.round(hsv.h * 360)} ${Math.round(hsv.s * 100)}% ${Math.round(hsv.v * 100)}%)` })
           setTimeout(() => setPickFlash(null), 700)
+        }
+        if (pickingForObstacle.startsWith('shape:')) {
+          // Chroma-key color pick for a mapping zone
+          const sid = pickingForObstacle.slice(6)
+          const shape = scene?.mapping?.shapes?.find((sh) => sh.id === sid)
+          const prev = (shape as any)?.chromaKey ?? { tolerance: 0.25, feather: 0.08, invert: false }
+          updateMappingShape(sid, { chromaKey: { ...prev, h: hsv.h, s: hsv.s, v: hsv.v } } as any)
+          flash()
+        } else {
+          const obs = scene?.obstacles?.find((o) => o.id === pickingForObstacle)
+          if (obs?.tracker) {
+            updateObstacle(pickingForObstacle, {
+              tracker: { ...obs.tracker, h: hsv.h, s: hsv.s, v: hsv.v },
+            })
+            // Reset spatial lock then pre-seed at the click point so the search window
+            // starts centered on what the user actually selected.
+            resetTracker(pickingForObstacle)
+            trackerStates.set(pickingForObstacle, { x, y, vx: 0, vy: 0, confidence: 0.5, size: 0.1, lastSeen: performance.now() })
+            flash()
+          }
         }
       } else {
         console.warn('pickColorAt returned null — camera not ready?')

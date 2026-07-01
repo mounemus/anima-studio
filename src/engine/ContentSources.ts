@@ -93,6 +93,25 @@ function bindWebcam(useMaskedBody: boolean): WebcamEntry {
 let useMaskedBody = false
 export function setUseMaskedBody(v: boolean) { useMaskedBody = v }
 
+/** Shared raw-webcam VideoTexture for chroma-key (sampled in the mapping shader).
+ *  Rebinds automatically when the underlying <video> / MediaStream changes. Returns
+ *  null when no camera stream is live. */
+let chromaTex: THREE.VideoTexture | null = null
+let chromaVideo: HTMLVideoElement | null = null
+export function getWebcamTexture(): THREE.VideoTexture | null {
+  const cam = (document.querySelector('video.mirror-bg') as HTMLVideoElement | null)
+    ?? (document.querySelector('video') as HTMLVideoElement | null)
+  if (!cam || !cam.srcObject) { chromaTex = null; chromaVideo = null; return null }
+  if (chromaVideo !== cam || !chromaTex) {
+    chromaVideo = cam
+    chromaTex = new THREE.VideoTexture(cam)
+    chromaTex.colorSpace = THREE.SRGBColorSpace
+    chromaTex.minFilter = THREE.LinearFilter
+    chromaTex.magFilter = THREE.LinearFilter
+  }
+  return chromaTex
+}
+
 export function resolveShapeTexture(shapeId: string, content: ShapeContent | undefined): THREE.Texture | null {
   if (!content || content.type === 'organism') {
     const existing = cache.get(cacheKey(shapeId))

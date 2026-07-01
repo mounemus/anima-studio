@@ -7,6 +7,34 @@ const VERT = `
   void main() { vUv = uv; gl_Position = vec4(position, 1.0); }
 `
 
+// Chroma-key (green screen) : mask content by a live-webcam color match, sampled
+// at the fragment's SCREEN position (webcam shown full-frame, mirrored in X to
+// match the AR mirror). Matches ColorTracker's HSV metric. Declared + used in all
+// three zone fragment shaders.
+const CHROMA_GLSL = `
+  uniform sampler2D uWebcam;
+  uniform float uKeyOn;
+  uniform vec3  uKeyHSV;
+  uniform float uKeyTol;
+  uniform float uKeyFeather;
+  uniform float uKeyInvert;
+  vec3 _rgb2hsv(vec3 c){
+    float mx=max(max(c.r,c.g),c.b), mn=min(min(c.r,c.g),c.b), d=mx-mn; float h=0.0;
+    if(d>0.0){ if(mx==c.r) h=mod((c.g-c.b)/d,6.0); else if(mx==c.g) h=(c.b-c.r)/d+2.0; else h=(c.r-c.g)/d+4.0; h/=6.0; if(h<0.0) h+=1.0; }
+    return vec3(h, mx==0.0?0.0:d/mx, mx);
+  }
+  float chromaMask(vec2 uv){
+    if (uKeyOn < 0.5) return 1.0;
+    vec3 cam = _rgb2hsv(texture2D(uWebcam, vec2(1.0 - uv.x, uv.y)).rgb);
+    if (cam.z < 0.08) return uKeyInvert > 0.5 ? 1.0 : 0.0;   // too dark to trust
+    float dh = abs(cam.x - uKeyHSV.x); if (dh > 0.5) dh = 1.0 - dh;
+    float rel = min(cam.y, uKeyHSV.y);
+    float dist = dh * 2.5 * (0.4 + rel * 0.6) + abs(cam.y - uKeyHSV.y) * 0.7 + abs(cam.z - uKeyHSV.z) * 0.5;
+    float m = 1.0 - smoothstep(uKeyTol, uKeyTol + max(0.001, uKeyFeather), dist);
+    return uKeyInvert > 0.5 ? 1.0 - m : m;
+  }
+`
+
 const FRAG = `
   precision highp float;
   varying vec2 vUv;
@@ -19,6 +47,7 @@ const FRAG = `
   uniform vec3 uTint;                  // overall tint multiplier
   uniform float uTransparent;          // 0 = opaque (normal), 1 = content-based alpha (AR mirror)
   uniform float uOpacity;              // per-shape opacity 0..1
+  ${CHROMA_GLSL}
 
   // Newton iteration WITHOUT clamping (else outside-quad detection is dead code).
   vec2 invQuadMap(vec2 p) {
@@ -128,7 +157,8 @@ const FRAG = `
     if (uBlend.w > 0.0) bl *= pow(smoothstep(0.0, uBlend.w, 1.0 - uv.y), uGamma);
     vec3 outCol = col * bl;
     float a = mix(1.0, max(max(outCol.r, outCol.g), outCol.b), uTransparent);
-    gl_FragColor = vec4(outCol * uOpacity, a * uOpacity);
+    float _cm = chromaMask(vUv);
+    gl_FragColor = vec4(outCol * uOpacity * _cm, a * uOpacity * _cm);
   }
 `
 
@@ -158,6 +188,7 @@ const FRAG_POLYGON = `
   uniform float uTransparent;
   uniform float uOpacity;
 
+  ${CHROMA_GLSL}
   // Ray-casting point-in-polygon.
   // O(N) — we walk consecutive pairs (prev, current) by carrying prev across
   // iterations instead of the old O(N^2) inner-loop hack to read uPoints[jj].
@@ -220,7 +251,8 @@ const FRAG_POLYGON = `
     if (uBlend.w > 0.0) bl *= pow(smoothstep(0.0, uBlend.w, 1.0 - local.y), uGamma);
     vec3 outCol = col * bl;
     float a = mix(1.0, max(max(outCol.r, outCol.g), outCol.b), uTransparent);
-    gl_FragColor = vec4(outCol * uOpacity, a * uOpacity);
+    float _cm = chromaMask(vUv);
+    gl_FragColor = vec4(outCol * uOpacity * _cm, a * uOpacity * _cm);
   }
 `
 
@@ -256,6 +288,7 @@ const MESH_FRAG = `
     if (uPattern == 6) return vec3(uv.x, uv.y, 0.5);
     return vec3(0.0);
   }
+  ${CHROMA_GLSL}
   void main() {
     vec2 uv = clamp(vUv, 0.0, 1.0);
     vec3 col;
@@ -272,7 +305,8 @@ const MESH_FRAG = `
     if (uBlend.w > 0.0) bl *= pow(smoothstep(0.0, uBlend.w, 1.0 - uv.y), uGamma);
     vec3 outCol = col * bl;
     float a = mix(1.0, max(max(outCol.r, outCol.g), outCol.b), uTransparent);
-    gl_FragColor = vec4(outCol * uOpacity, a * uOpacity);
+    float _cm = chromaMask(vUv);
+    gl_FragColor = vec4(outCol * uOpacity * _cm, a * uOpacity * _cm);
   }
 `
 
@@ -325,6 +359,17 @@ const PATTERN_INDEX: Record<TestPattern, number> = {
   none: 0, grid: 1, white: 2, black: 3, colorbars: 4, crosshair: 5, gradient: 6,
 }
 
+function chromaUniforms(): Record<string, THREE.IUniform> {
+  return {
+    uWebcam: { value: null },
+    uKeyOn: { value: 0 },
+    uKeyHSV: { value: new THREE.Vector3(0, 0, 0) },
+    uKeyTol: { value: 0.25 },
+    uKeyFeather: { value: 0.08 },
+    uKeyInvert: { value: 0 },
+  }
+}
+
 const resolveKind = (k?: string): 'quad' | 'polygon' | 'mesh' =>
   k === 'polygon' ? 'polygon' : k === 'mesh' ? 'mesh' : 'quad'
 
@@ -336,6 +381,8 @@ export class MappingPass {
   private transparent = 0
   /** Per-shape texture override. If absent, the shape uses the default sourceTex. */
   private perShapeTex = new Map<string, THREE.Texture | null>()
+  /** Live webcam texture for chroma-key (bound each frame by the Engine). */
+  private chromaWebcam: THREE.Texture | null = null
 
   constructor() {}
 
@@ -354,6 +401,7 @@ export class MappingPass {
         uTint: { value: new THREE.Vector3(1, 1, 1) },
         uTransparent: { value: this.transparent },
         uOpacity: { value: 1.0 },
+        ...chromaUniforms(),
       }
       mat = new THREE.ShaderMaterial({
         uniforms, vertexShader: MESH_VERT, fragmentShader: MESH_FRAG,
@@ -378,6 +426,7 @@ export class MappingPass {
         uTint: { value: new THREE.Vector3(1, 1, 1) },
         uTransparent: { value: this.transparent },
         uOpacity: { value: 1.0 },
+        ...chromaUniforms(),
       }
       mat = new THREE.ShaderMaterial({
         uniforms,
@@ -401,6 +450,7 @@ export class MappingPass {
         uTint: { value: new THREE.Vector3(1, 1, 1) },
         uTransparent: { value: this.transparent },
         uOpacity: { value: 1.0 },
+        ...chromaUniforms(),
       }
       mat = new THREE.ShaderMaterial({
         uniforms,
@@ -419,6 +469,16 @@ export class MappingPass {
   }
 
   private applyToShape(sm: ShapeMesh, cfg: MappingConfig) {
+    // Chroma-key (green screen) — applies to all zone kinds.
+    const ck = sm.shape.chromaKey
+    sm.uniforms.uKeyOn.value = ck ? 1 : 0
+    if (ck) {
+      ;(sm.uniforms.uKeyHSV.value as THREE.Vector3).set(ck.h, ck.s, ck.v)
+      sm.uniforms.uKeyTol.value = ck.tolerance
+      sm.uniforms.uKeyFeather.value = ck.feather
+      sm.uniforms.uKeyInvert.value = ck.invert ? 1 : 0
+    }
+    sm.uniforms.uWebcam.value = this.chromaWebcam
     if (sm.kind === 'mesh') {
       const grid = sm.shape.mesh ?? { cols: 3, rows: 3, points: [] }
       const key = `${grid.cols}x${grid.rows}`
@@ -516,6 +576,12 @@ export class MappingPass {
     ;(sm.uniforms.uC1.value as THREE.Vector2).set(corners[1].x, 1 - corners[1].y)
     ;(sm.uniforms.uC2.value as THREE.Vector2).set(corners[2].x, 1 - corners[2].y)
     ;(sm.uniforms.uC3.value as THREE.Vector2).set(corners[3].x, 1 - corners[3].y)
+  }
+
+  /** Bind the live webcam texture for chroma-key zones (called each frame). */
+  setChromaWebcam(tex: THREE.Texture | null) {
+    this.chromaWebcam = tex
+    for (const sm of this.shapes) sm.uniforms.uWebcam.value = tex
   }
 
   setTransparent(t: boolean) {

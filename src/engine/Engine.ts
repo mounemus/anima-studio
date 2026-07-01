@@ -10,8 +10,8 @@ import { resetCounters, obstacleCounters } from './Obstacles'
 import { oscEngine } from './OscEngine'
 import { soundEngine } from './SoundEngine'
 import { setFlow } from './Flow'
-import { setTrackers, stopColorTracking, trackerStates } from './ColorTracker'
-import { resolveShapeTexture, pruneShapeTextures, setUseMaskedBody, disposeAllContentSources } from './ContentSources'
+import { setTrackers, stopColorTracking } from './ColorTracker'
+import { resolveShapeTexture, pruneShapeTextures, setUseMaskedBody, disposeAllContentSources, getWebcamTexture } from './ContentSources'
 import { startMaskedWebcam, stopMaskedWebcam } from './MaskedWebcam'
 import { createOrganism, ORGANISM_DEFAULTS } from './OrganismFactory'
 import { tick as timelineTick, loadTimeline } from './Timeline'
@@ -654,9 +654,11 @@ export class Engine {
     this.feedbackRT = this.feedbackRT2
     this.feedbackRT2 = tmp
 
-    // Color-follow zones : re-center (and optionally scale) any zone bound to a
-    // color tracker onto the tracked object, live (visual-only, no store write).
-    this.updateFollowZones()
+    // Chroma-key (green screen) : bind the live webcam so zones with a color key
+    // mask their content to the matching object, per-pixel, following it live.
+    this.mapping.setChromaWebcam(
+      this.currentScene.mapping?.shapes?.some((s) => s.chromaKey) ? getWebcamTexture() : null,
+    )
 
     // final draw: mapping (always-on; identity quad if no mapping)
     this.mapping.setSource(this.feedbackRT.texture)
@@ -664,30 +666,6 @@ export class Engine {
     this.renderer.setClearColor(0x000000, this.bgAlpha)
     this.renderer.clear()
     this.renderer.render(this.mapping.scene, this.mapping.camera)
-  }
-
-  /** Move/scale zones bound to a color tracker onto the tracked object each frame. */
-  private updateFollowZones() {
-    const m = this.currentScene?.mapping
-    if (!m?.enabled || !m.shapes) return
-    for (const s of m.shapes) {
-      if (!s.enabled || !s.follow?.trackerId) continue
-      const st = trackerStates.get(s.follow.trackerId)
-      if (!st || st.confidence < 0.15) continue   // lost → leave the zone where it was
-      // Authored half-size from the zone's own corners (so the user sizes it by editing corners).
-      let minX = 1, minY = 1, maxX = 0, maxY = 0
-      for (const c of s.corners) { if (c.x < minX) minX = c.x; if (c.x > maxX) maxX = c.x; if (c.y < minY) minY = c.y; if (c.y > maxY) maxY = c.y }
-      let hw = Math.max(0.02, (maxX - minX) / 2), hh = Math.max(0.02, (maxY - minY) / 2)
-      if (s.follow.scaleWithSize) {
-        const scale = Math.max(0.4, Math.min(3, st.size / 0.15))  // 0.15 ≈ reference blob spread
-        hw *= scale; hh *= scale
-      }
-      const cx = st.x, cy = st.y
-      this.mapping.setShapeCorners(s.id, [
-        { x: cx - hw, y: cy - hh }, { x: cx + hw, y: cy - hh },
-        { x: cx + hw, y: cy + hh }, { x: cx - hw, y: cy + hh },
-      ])
-    }
   }
 
   /** Bounding box (world coords) of the enabled mapping zones, or null when

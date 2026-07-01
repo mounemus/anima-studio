@@ -2075,37 +2075,40 @@ function MappingTab() {
         )
       })()}
       {(() => {
-        // "Follow a color tracker" — map a quad zone onto a moving object (t-shirt)
+        // Chroma-key (green screen) : the zone's content shows only where the live
+        // webcam matches the picked color → it sticks to & follows a colored object.
         const sel = shapes[current.mapping.selectedShape ?? 0]
-        if (!sel || (sel.kind && sel.kind !== 'quad')) return null
-        const trackers = (current.obstacles ?? []).filter((o) => o.kind === 'tracker')
-        const follow = (sel as any).follow as { trackerId: string; scaleWithSize?: boolean } | undefined
+        if (!sel) return null
+        const ck = (sel as any).chromaKey as { h: number; s: number; v: number; tolerance: number; feather: number; invert?: boolean } | undefined
         return (
           <div style={{ marginTop: 8, padding: 6, background: 'var(--bg-elev-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)' }}>
             <label style={{ display: 'flex', gap: 6, fontSize: 12, cursor: 'pointer', alignItems: 'center' }}>
-              <input type="checkbox" checked={!!follow}
-                onChange={(e) => updateShape(sel.id, { follow: e.target.checked ? { trackerId: trackers[0]?.id ?? '', scaleWithSize: true } : undefined } as any)} />
-              🎯 Suivre un objet (tracker couleur)
+              <input type="checkbox" checked={!!ck}
+                onChange={(e) => updateShape(sel.id, { chromaKey: e.target.checked ? { h: 0, s: 0, v: 1, tolerance: 0.25, feather: 0.08, invert: false } : undefined } as any)} />
+              🟢 Chroma-key couleur (green screen)
             </label>
-            {follow && (
+            {ck && (
               <>
-                {trackers.length === 0 ? (
-                  <p style={{ fontSize: 11, color: 'var(--warn, orange)', marginTop: 4 }}>
-                    Ajoute d'abord un obstacle <strong>Tracker couleur</strong> (onglet Obs.) et prends la couleur (ex. t-shirt blanc) à la pipette.
-                  </p>
-                ) : (
-                  <>
-                    <select value={follow.trackerId} onChange={(e) => updateShape(sel.id, { follow: { ...follow, trackerId: e.target.value } } as any)}
-                      style={{ width: '100%', fontSize: 12, marginTop: 4 }}>
-                      {trackers.map((t) => <option key={t.id} value={t.id}>{(t as any).name ?? t.id}</option>)}
-                    </select>
-                    <label style={{ display: 'flex', gap: 6, fontSize: 11, marginTop: 4, cursor: 'pointer' }}>
-                      <input type="checkbox" checked={!!follow.scaleWithSize}
-                        onChange={(e) => updateShape(sel.id, { follow: { ...follow, scaleWithSize: e.target.checked } } as any)} />
-                      Grandir/rétrécir avec l'objet
-                    </label>
-                  </>
-                )}
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', margin: '4px 0', lineHeight: 1.5 }}>
+                  Active la <strong>caméra</strong>, puis <strong>Pipette</strong> → clique sur l'objet (ex. t-shirt blanc).
+                  Le contenu de la zone n'apparaît que sur cette couleur et suit l'objet au pixel près.
+                </p>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 4, border: '1px solid var(--line)', background: hsvToCss(ck.h, ck.s, ck.v) }} />
+                  <button onClick={() => window.dispatchEvent(new CustomEvent('anima:pick-color', { detail: `shape:${sel.id}` }))}
+                    style={{ fontSize: 11, flex: 1, justifyContent: 'center' }}>
+                    <Pipette size={12} /> Pipette → cliquer sur l'objet
+                  </button>
+                </div>
+                <Slider label="Tolérance" value={ck.tolerance} min={0.05} max={0.6} step={0.01}
+                  onChange={(t) => updateShape(sel.id, { chromaKey: { ...ck, tolerance: t } } as any)} />
+                <Slider label="Contour (feather)" value={ck.feather} min={0} max={0.3} step={0.01}
+                  onChange={(f) => updateShape(sel.id, { chromaKey: { ...ck, feather: f } } as any)} />
+                <label style={{ display: 'flex', gap: 6, fontSize: 11, marginTop: 4, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!ck.invert}
+                    onChange={(e) => updateShape(sel.id, { chromaKey: { ...ck, invert: e.target.checked } } as any)} />
+                  Inverser (partout SAUF la couleur)
+                </label>
               </>
             )}
           </div>

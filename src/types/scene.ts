@@ -209,11 +209,11 @@ export interface MappingShape {
   points?: Vec2[]
   /** Used when kind === 'mesh' — subdivided control-point grid. */
   mesh?: MeshGrid
-  /** Make this zone FOLLOW a color-tracker obstacle (mapping onto a moving
-   *  object, e.g. a white t-shirt). trackerId = id of a 'tracker' obstacle.
-   *  The zone re-centers on the tracked blob each frame; scaleWithSize also
-   *  grows/shrinks it with the blob. */
-  follow?: { trackerId: string; scaleWithSize?: boolean }
+  /** Chroma-key (green screen) : the zone's content is shown only where the LIVE
+   *  webcam matches this color (per-pixel), so it sticks to and moves with a
+   *  colored object (e.g. a white t-shirt). Pick the color with the pipette.
+   *  invert = show everywhere EXCEPT the color. */
+  chromaKey?: { h: number; s: number; v: number; tolerance: number; feather: number; invert?: boolean }
   /** 0..1 — how much to smooth the polygon with Catmull-Rom subdivision (polygon kind only). */
   smooth?: number
   /** Rotation in radians around the shape's centroid (applied at render time only, points stay clean) */
