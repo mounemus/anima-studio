@@ -18,6 +18,7 @@ import * as THREE from 'three'
 import type { VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
 import { flowState } from '../Flow'
+import { OBSTACLE_GLSL, makeObstacleUniforms, packObstacles } from '../GPUObstacles'
 
 export interface ParticlesGPUParams {
   count: number
@@ -72,6 +73,7 @@ const SIM_FRAG = `
   uniform vec2 uFlow; uniform float uFlowTurb;
   uniform float uWrap, uSpread, uLifePeriod;
   ${HASH}
+  ${OBSTACLE_GLSL}
   void main(){
     float idx = floor(vUv.y*uTexDim)*uTexDim + floor(vUv.x*uTexDim);
     if (idx >= uCount) { gl_FragColor = vec4(999.0,999.0,0.0,0.0); return; }
@@ -102,6 +104,10 @@ const SIM_FRAG = `
     flow.x += sin(pos.x*2.0 + t*0.4) * uFlowTurb * 0.6;
     flow.y += cos(pos.y*2.3 - t*0.3) * uFlowTurb * 0.6;
     vel += flow * uDt;
+    // Physical obstacles + map walls
+    float _kill; vec2 _of = obstacleForce(pos, _kill);
+    if (_kill > 0.5) { gl_FragColor = vec4(spawnPos(idx), spawnVel(idx)); return; }
+    vel += _of * uDt;
     vel *= pow(0.985, uDt*60.0);           // dt-independent damping
     float aBoost = 1.0 + uAudioMid*1.5;
     pos += vel * uSpeed * aBoost * uDt;
@@ -150,6 +156,7 @@ export class ParticlesGPUOrganism {
   mesh: THREE.Points
   count = 0
   obstacles: Obstacle[] | undefined
+  mapBounds: [number, number, number, number] | null = null
   renderer: THREE.WebGLRenderer | null = null
 
   private params: ParticlesGPUParams
@@ -194,6 +201,7 @@ export class ParticlesGPUOrganism {
         uFlow: { value: new THREE.Vector2(0, 0) }, uFlowTurb: { value: 0 },
         uWrap: { value: wrap }, uSpread: { value: params.spread ?? 0.5 },
         uLifePeriod: { value: 4.0 },
+        ...makeObstacleUniforms(),
       },
       depthTest: false, depthWrite: false,
     })
@@ -308,6 +316,7 @@ export class ParticlesGPUOrganism {
     }
 
     // sim ping-pong (single pass — no field)
+    packObstacles(this.simMat.uniforms, this.obstacles, this.aspect, this.mapBounds)
     const src = this.current
     const dst = src === this.stateA ? this.stateB : this.stateA
     this.simMat.uniforms.uPrev.value = src.texture

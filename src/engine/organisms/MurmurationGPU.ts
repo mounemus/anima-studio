@@ -26,6 +26,7 @@
 import * as THREE from 'three'
 import type { VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
+import { OBSTACLE_GLSL, makeObstacleUniforms, packObstacles } from '../GPUObstacles'
 
 export interface MurmurationParams {
   count: number
@@ -140,6 +141,7 @@ const SIM_FRAG = `
   uniform float uPredator;
   uniform float uDanger;
   ${CURL}
+  ${OBSTACLE_GLSL}
 
   vec2 worldToFieldUv(vec2 w) { return vec2(w.x / uAspect, w.y) * 0.5 + 0.5; }
   vec4 fieldAt(vec2 w) { return texture2D(uField, worldToFieldUv(w)); }
@@ -215,6 +217,11 @@ const SIM_FRAG = `
         dir += (hd / d) * uPredator * fall * 6.0;
       }
     }
+
+    // Physical obstacles (circles/polygon) + map-zone walls
+    float _kill; vec2 _of = obstacleForce(pos, _kill);
+    if (_kill > 0.5) { gl_FragColor = vec4(0.0, 0.0, uSpeed, 0.0); return; }
+    dir += _of * 2.5;
 
     // Desired unit direction (fallback : keep current heading)
     float dm = length(dir);
@@ -308,6 +315,7 @@ export class MurmurationGPUOrganism {
   mesh: THREE.Mesh
   count = 0
   obstacles: Obstacle[] | undefined
+  mapBounds: [number, number, number, number] | null = null
   renderer: THREE.WebGLRenderer | null = null
 
   private params: MurmurationParams
@@ -372,6 +380,7 @@ export class MurmurationGPUOrganism {
         uHandActive: { value: 0 },
         uPredator: { value: params.predatorResponse },
         uDanger: { value: 0.4 },
+        ...makeObstacleUniforms(),
       },
       depthTest: false, depthWrite: false,
     })
@@ -556,6 +565,7 @@ export class MurmurationGPUOrganism {
     this.renderer.render(this.fieldScene, this.simCam)
 
     // 2) SIM — advance state, ping-pong
+    packObstacles(this.simMat.uniforms, this.obstacles, this.aspect, this.mapBounds)
     const src = this.current
     const dst = src === this.stateA ? this.stateB : this.stateA
     this.simMat.uniforms.uPrev.value = src.texture

@@ -491,6 +491,10 @@ export class Engine {
     }
 
     if (this.organism) {
+      // Feed the GPU organisms the bounding box of the enabled mapping zones so
+      // they can keep agents inside the projection surface ("map walls"). null
+      // when mapping is off → no confinement. CPU organisms ignore this field.
+      ;(this.organism as any).mapBounds = this.computeMapBounds()
       this.organism.update(dt)
       // Layer behavior modifiers on top of the base organism update.
       // The organism owns its position/velocity Float32Arrays; we expose them via
@@ -651,6 +655,34 @@ export class Engine {
     this.renderer.setClearColor(0x000000, this.bgAlpha)
     this.renderer.clear()
     this.renderer.render(this.mapping.scene, this.mapping.camera)
+  }
+
+  /** Bounding box (world coords) of the enabled mapping zones, or null when
+   *  mapping is off / has no shapes. Used by GPU organisms as soft "walls". */
+  private computeMapBounds(): [number, number, number, number] | null {
+    const m = this.currentScene?.mapping
+    if (!m?.enabled) return null
+    const shapes = m.shapes ?? []
+    if (shapes.length === 0) return null
+    const aspect = this.width / this.height
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    let any = false
+    const add = (nx: number, ny: number) => {
+      const wx = (nx - 0.5) * 2 * aspect, wy = -(ny - 0.5) * 2
+      if (wx < minX) minX = wx; if (wx > maxX) maxX = wx
+      if (wy < minY) minY = wy; if (wy > maxY) maxY = wy
+      any = true
+    }
+    for (const s of shapes) {
+      if (!s.enabled) continue
+      if (s.kind === 'polygon' && s.points) for (const p of s.points) add(p.x, p.y)
+      else if (s.kind === 'mesh' && s.mesh) for (const p of s.mesh.points) add(p.x, p.y)
+      else for (const c of s.corners) add(c.x, c.y)
+    }
+    if (!any) return null
+    // A near-fullscreen zone shouldn't act as a wall (nothing to confine).
+    if (minX <= -aspect * 0.98 && maxX >= aspect * 0.98 && minY <= -0.98 && maxY >= 0.98) return null
+    return [minX, minY, maxX, maxY]
   }
 
   getStats() { return { fps: this.stats.fps, sense: { ...senseBus.hands } } }

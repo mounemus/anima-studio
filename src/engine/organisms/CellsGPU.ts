@@ -16,6 +16,7 @@ import * as THREE from 'three'
 import type { VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
 import { flowState } from '../Flow'
+import { OBSTACLE_GLSL, makeObstacleUniforms, packObstacles } from '../GPUObstacles'
 
 export interface CellsGPUParams {
   count: number
@@ -86,6 +87,7 @@ const SIM_FRAG = `
   vec2 fUv(vec2 w){ return vec2(w.x/uAspect, w.y)*0.5 + 0.5; }
   vec4 fld(vec2 w){ return texture2D(uField, fUv(w)); }
   vec2 sn(vec2 g){ float m=length(g); return m>1e-4 ? g/m : vec2(0.0); }
+  ${OBSTACLE_GLSL}
 
   void main(){
     float idx = floor(vUv.y*uTexDim)*uTexDim + floor(vUv.x*uTexDim);
@@ -125,6 +127,10 @@ const SIM_FRAG = `
     flow.x += sin(pos.x*2.0 + uTime*0.4)*uFlowTurb*0.6;
     flow.y += cos(pos.y*2.3 - uTime*0.3)*uFlowTurb*0.6;
     force += flow*0.5;
+    // Physical obstacles + map walls
+    float _kill; vec2 _of = obstacleForce(pos, _kill);
+    if (_kill > 0.5) { gl_FragColor = vec4((fract(idx*0.013)-0.5)*uAspect, (fract(idx*0.071)-0.5), 0.0, 0.0); return; }
+    force += _of;
 
     vel = vel * pow(0.9, uDt*60.0) + force * uDt;
     float maxSp = 1.2;
@@ -187,6 +193,7 @@ export class CellsGPUOrganism {
   mesh: THREE.Points
   count = 0
   obstacles: Obstacle[] | undefined
+  mapBounds: [number, number, number, number] | null = null
   renderer: THREE.WebGLRenderer | null = null
 
   private params: CellsGPUParams
@@ -243,6 +250,7 @@ export class CellsGPUOrganism {
         uHand: { value: new THREE.Vector2(0, 0) }, uHandForce: { value: 0 },
         uFlow: { value: new THREE.Vector2(0, 0) }, uFlowTurb: { value: 0 },
         uWrap: { value: wrap },
+        ...makeObstacleUniforms(),
       },
       depthTest: false, depthWrite: false,
     })
@@ -382,6 +390,7 @@ export class CellsGPUOrganism {
     this.renderer.clear(true, false, false)
     this.renderer.render(this.fieldScene, this.simCam)
     // 2) sim
+    packObstacles(this.simMat.uniforms, this.obstacles, this.aspect, this.mapBounds)
     const src = this.current
     const dst = src === this.stateA ? this.stateB : this.stateA
     this.simMat.uniforms.uPrev.value = src.texture
