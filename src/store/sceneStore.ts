@@ -92,7 +92,15 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
       })
       return
     }
-    let existing = await loadAllScenes()
+    // Boot MUST NEVER fail — wrap every step in try/catch so a corrupt
+    // localStorage entry can't prevent the app from booting. Worst case we
+    // fall back to the default scenes and surface a warning in the topbar.
+    let existing: Scene[] = []
+    try { existing = await loadAllScenes() } catch (e) {
+      console.error('[sceneStore] loadAllScenes failed — falling back to defaults', e)
+      existing = []
+      set({ dbError: 'Scènes corrompues — chargement des défauts (ouvre la console pour le détail)' })
+    }
     if (existing.length === 0) {
       // Try one-shot migration from a pre-existing IndexedDB (legacy users).
       const migrated = await migrateFromIndexedDB()
