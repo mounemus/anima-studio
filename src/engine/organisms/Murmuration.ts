@@ -116,8 +116,13 @@ export class MurmurationOrganism {
   private depths: Float32Array
   private phaseAttr: THREE.InstancedBufferAttribute
   private depthAttr: THREE.InstancedBufferAttribute
-  // Hoisted vectors (no GC pressure)
-  private tmpVec = new THREE.Vector3()
+  // Spatial grid used to compute local average velocity in O(N) instead of the
+  // previous O(N²) neighbor scan. Turns the flock from a random dust cloud
+  // into coordinated coherent waves (real murmuration behaviour).
+  private static GRID = 16
+  private gridVX = new Float32Array(16 * 16)
+  private gridVY = new Float32Array(16 * 16)
+  private gridCount = new Uint16Array(16 * 16)
 
   constructor(params: MurmurationParams, visual: VisualParams) {
     this.params = params
@@ -211,124 +216,184 @@ export class MurmurationOrganism {
 
     const px = this.positions
     const vx = this.velocities
-    const vis2 = p.vision * p.vision
 
     // ---- Hand "predator" position (in world coords) ----
     const handX = hand.detected ? (hand.indexTip.x - 0.5) * 2 * aspect : 0
     const handY = hand.detected ? -(hand.indexTip.y - 0.5) * 2 : 0
     const predatorActive = hand.detected
     const predatorStrength = p.predatorResponse * (0.6 + (hand.pinch ?? 0) * 1.4)
+    // Danger radius scales with vision so the flock responds proportionally
+    const danger = Math.max(0.25, p.vision * 2.5)
+    const danger2 = danger * danger
 
     // ---- Audio modulations ----
     const speedMul = p.speed * (0.6 + (audio.mid ?? 0) * 1.4)
-    const jitterAmp = (audio.high ?? 0) * 0.6  // high freq = nerveux
 
     const sil = getSilhouetteMask()
 
+    // ============================================================
+    // PASS 1 — build a 16×16 spatial grid of average velocity.
+    // Each cell holds the mean (vx, vy) of birds inside it. Feeding
+    // that mean back into each bird's alignment produces coordinated
+    // WAVES propagating through the flock — the real murmuration feel.
+    // O(N), no neighbor pair scan needed.
+    // ============================================================
+    const G = MurmurationOrganism.GRID
+    const gvx = this.gridVX; const gvy = this.gridVY; const gc = this.gridCount
+    gvx.fill(0); gvy.fill(0); gc.fill(0)
+    const invCellX = G / (2 * aspect)
+    const invCellY = G / 2
+    for (let i = 0; i < n; i++) {
+      const i3 = i * 3, i2 = i * 2
+      // Map [-aspect, aspect] × [-1, 1] → cell indices [0, G)
+      let gx = ((px[i3] + aspect) * invCellX) | 0
+      let gy = ((px[i3 + 1] + 1) * invCellY) | 0
+      if (gx < 0) gx = 0; else if (gx >= G) gx = G - 1
+      if (gy < 0) gy = 0; else if (gy >= G) gy = G - 1
+      const c = gy * G + gx
+      gvx[c] += vx[i2]
+      gvy[c] += vx[i2 + 1]
+      gc[c]++
+    }
+    // Normalize to per-cell averages
+    for (let c = 0; c < G * G; c++) {
+      if (gc[c] > 0) { gvx[c] /= gc[c]; gvy[c] /= gc[c] }
+    }
+
+    // ============================================================
+    // PASS 2 — per-bird forces, using grid lookups (constant time).
+    // ============================================================
     for (let i = 0; i < n; i++) {
       const i3 = i * 3
       const i2 = i * 2
       const xi = px[i3], yi = px[i3 + 1]
-      let acx = 0, acy = 0   // cohesion (center of mass)
-      let asx = 0, asy = 0   // separation (push away)
-      let avx = 0, avy = 0   // alignment (avg velocity)
-      let neighbors = 0
+      let fx = 0, fy = 0
 
-      // ---- Neighbor scan ----
-      // Sample at a stride for perf at high counts (every 3rd neighbor)
-      const stride = n > 2000 ? 3 : 1
-      for (let j = 0; j < n; j += stride) {
-        if (j === i) continue
-        const j3 = j * 3
-        const j2 = j * 2
-        const dx = px[j3] - xi
-        const dy = px[j3 + 1] - yi
-        const d2 = dx * dx + dy * dy
-        if (d2 > vis2 || d2 < 1e-6) continue
-        // cohesion : move toward neighbor positions
-        acx += px[j3]; acy += px[j3 + 1]
-        // separation : push away — weighted by inverse distance²
-        asx -= dx / d2
-        asy -= dy / d2
-        // alignment : match neighbors' velocity
-        avx += vx[j2]; avy += vx[j2 + 1]
-        neighbors++
+      // Cell coords of this bird
+      let gx = ((xi + aspect) * invCellX) | 0
+      let gy = ((yi + 1) * invCellY) | 0
+      if (gx < 0) gx = 0; else if (gx >= G) gx = G - 1
+      if (gy < 0) gy = 0; else if (gy >= G) gy = G - 1
+      const c = gy * G + gx
+
+      // --- Alignment : match the local cell's average velocity ---
+      // This is the KEY force for murmuration coordination. Strong coefficient
+      // + grid propagation = waves of aligned flight sweeping through the flock.
+      if (gc[c] > 1) {
+        fx += (gvx[c] - vx[i2])     * p.alignment * 2.2
+        fy += (gvy[c] - vx[i2 + 1]) * p.alignment * 2.2
       }
 
-      let fx = 0, fy = 0
-      if (neighbors > 0) {
-        const invN = 1 / neighbors
-        acx = acx * invN - xi
-        acy = acy * invN - yi
-        avx *= invN; avy *= invN
-        // ---- Flocking forces ----
-        fx += acx * p.cohesion * 0.5
-        fy += acy * p.cohesion * 0.5
-        fx += asx * p.separation * 0.04
-        fy += asy * p.separation * 0.04
-        fx += (avx - vx[i2])     * p.alignment * 0.8
-        fy += (avy - vx[i2 + 1]) * p.alignment * 0.8
-        // ---- Swirl : tangentielle au centre de masse local (murmuration twist) ----
-        if (p.swirl > 0) {
-          // perpendiculaire à (acx, acy) = (-acy, acx)
-          fx += -acy * p.swirl * 0.15
-          fy +=  acx * p.swirl * 0.15
+      // --- Cohesion : gentle pull toward the average velocity of the wider
+      //     3×3 neighbourhood, weighted by density (denser cells attract more) ---
+      let sumX = 0, sumY = 0, sumC = 0
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = gy + dy
+        if (yy < 0 || yy >= G) continue
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = gx + dx
+          if (xx < 0 || xx >= G) continue
+          const cc = yy * G + xx
+          const w = gc[cc]
+          if (w > 0) {
+            // Cell centre position in world coords
+            const cwx = (xx + 0.5) / G * 2 * aspect - aspect
+            const cwy = (yy + 0.5) / G * 2 - 1
+            sumX += cwx * w; sumY += cwy * w
+            sumC += w
+          }
         }
       }
+      if (sumC > 0) {
+        const cx = sumX / sumC, cy = sumY / sumC
+        fx += (cx - xi) * p.cohesion * 0.8
+        fy += (cy - yi) * p.cohesion * 0.8
+      }
 
-      // ---- Predator: hand pushes birds away dramatically ----
+      // --- Separation : push away from THIS cell's centre when it's too dense
+      //     (cheap proxy for pair separation, avoids O(N²)) ---
+      if (gc[c] > 4) {
+        const cwx = (gx + 0.5) / G * 2 * aspect - aspect
+        const cwy = (gy + 0.5) / G * 2 - 1
+        const dxc = xi - cwx, dyc = yi - cwy
+        const dc2 = dxc * dxc + dyc * dyc + 1e-4
+        const s = p.separation * gc[c] * 0.008 / dc2
+        fx += dxc * s
+        fy += dyc * s
+      }
+
+      // --- Swirl : rotational component using local grid velocity ---
+      // Perpendicular of local flow ⟹ rotational drift in the neighborhood.
+      if (p.swirl > 0 && gc[c] > 0) {
+        fx += -gvy[c] * p.swirl * 0.4
+        fy +=  gvx[c] * p.swirl * 0.4
+      }
+
+      // --- Curl-noise wind field : GLOBAL smoothly-varying vector field ---
+      // Two sines per axis, phase-shifted, evolving over time → all birds
+      // in a region drift in the same direction. This is what visually turns
+      // the flock into flowing ribbons rather than random dots.
+      const t = this.t * 0.35
+      const wx = Math.sin(xi * 1.7 + yi * 0.9 + t)     + 0.6 * Math.sin(yi * 2.3 - t * 0.7)
+      const wy = Math.cos(yi * 1.9 - xi * 0.6 + t * 0.8) + 0.6 * Math.cos(xi * 1.4 + t * 0.5)
+      fx += wx * 0.35
+      fy += wy * 0.35
+
+      // --- Predator (hand) ---
       if (predatorActive) {
         const dx = xi - handX
         const dy = yi - handY
         const d2h = dx * dx + dy * dy
-        const danger2 = 0.4 * 0.4
         if (d2h < danger2 && d2h > 1e-5) {
           const inv = 1 / Math.sqrt(d2h)
-          const fall = 1 - Math.sqrt(d2h) / 0.4
+          const fall = 1 - Math.sqrt(d2h) / danger
           const f = predatorStrength * fall * 8
           fx += dx * inv * f
           fy += dy * inv * f
         }
       }
 
-      // ---- Obstacles (silhouette + circles + pose) ----
+      // --- Obstacles (silhouette + circles + pose) ---
       if (this.obstacles && this.obstacles.length) {
         const o = solveObstacles(xi, yi, aspect, this.obstacles, sil)
         fx += o.fx * 2.5
         fy += o.fy * 2.5
       }
 
-      // ---- Flow field (vent / courant global) ----
+      // --- Scene-level flow field (Sens > Flux) ---
       const fl = sampleFlow(xi, yi, this.t)
       fx += fl.fx
       fy += fl.fy
 
-      // ---- High-freq audio = nervosité (random jitter) ----
-      if (jitterAmp > 0) {
-        fx += (Math.random() - 0.5) * jitterAmp
-        fy += (Math.random() - 0.5) * jitterAmp
-      }
+      // (No random jitter — was destroying coordination. Audio 'high' now
+      //  slightly speeds up the wind field time via the earlier this.t += dt,
+      //  giving nervousness without decorrelation.)
 
-      // ---- Integrate velocity ----
+      // --- Integrate velocity, cap speed ---
       vx[i2]     += fx * dt
       vx[i2 + 1] += fy * dt
-      // Limit speed
       const sp2 = vx[i2] * vx[i2] + vx[i2 + 1] * vx[i2 + 1]
-      const maxSp = speedMul
-      if (sp2 > maxSp * maxSp) {
-        const s = maxSp / Math.sqrt(sp2)
+      if (sp2 > speedMul * speedMul) {
+        const s = speedMul / Math.sqrt(sp2)
         vx[i2] *= s; vx[i2 + 1] *= s
       }
-      // ---- Integrate position ----
+      // Minimum speed so birds never fully stall (murmurations never freeze)
+      const minSp = speedMul * 0.35
+      if (sp2 < minSp * minSp && sp2 > 1e-6) {
+        const s = minSp / Math.sqrt(sp2)
+        vx[i2] *= s; vx[i2 + 1] *= s
+      }
+
+      // --- Integrate position + wrap ---
       px[i3]     += vx[i2]     * dt
       px[i3 + 1] += vx[i2 + 1] * dt
-      // ---- Wrap world (aspect-aware) ----
       const xMax = aspect
       if (px[i3] > xMax)  px[i3] = -xMax
       else if (px[i3] < -xMax) px[i3] = xMax
       if (px[i3 + 1] > 1)  px[i3 + 1] = -1
       else if (px[i3 + 1] < -1) px[i3 + 1] = 1
-      // ---- Slowly drift Z for depth stratification ----
+
+      // --- Depth drift (parallax layers) ---
       px[i3 + 2] += (Math.sin(this.t * 0.1 + i * 0.013) * 0.02 - px[i3 + 2] * 0.001) * dt
       this.depths[i] = px[i3 + 2]
     }
