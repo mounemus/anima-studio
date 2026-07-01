@@ -293,13 +293,14 @@ const RENDER_FRAG = `
   uniform vec3 uColorNear;
   uniform vec3 uColorFar;
   uniform vec3 uColorGlow;
+  uniform float uAlpha;
   varying float vWing;
   varying float vDepth;
   void main() {
     float t = (vDepth + 1.0) * 0.5;
     vec3 col = mix(uColorFar, uColorNear, t);
     col = mix(col, uColorGlow, vWing * 0.45);
-    gl_FragColor = vec4(col, 0.95);
+    gl_FragColor = vec4(col, uAlpha);
   }
 `
 
@@ -428,6 +429,7 @@ export class MurmurationGPUOrganism {
         uColorNear: { value: new THREE.Color(visual.palette.primary) },
         uColorFar: { value: new THREE.Color(visual.palette.secondary) },
         uColorGlow: { value: new THREE.Color(visual.palette.glow) },
+        uAlpha: { value: 0.95 },
       },
       transparent: true, blending: THREE.AdditiveBlending,
       depthWrite: false, side: THREE.DoubleSide,
@@ -567,6 +569,9 @@ export class MurmurationGPUOrganism {
     this.renderMat.uniforms.uState.value = this.current.texture
     this.renderMat.uniforms.uTime.value = this.t
     this.renderMat.uniforms.uAudioBass.value = audio.bass ?? 0
+    // density-adaptive alpha → clean look up to 100k (triangles overlap less than
+    // points, so a gentler curve than the points organisms)
+    this.renderMat.uniforms.uAlpha.value = Math.max(0.15, Math.min(0.95, 120 / Math.sqrt(this.count)))
   }
 
   dispose() {
