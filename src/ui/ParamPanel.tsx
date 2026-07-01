@@ -436,9 +436,9 @@ export function ParamPanel() {
             {current.organism.kind === 'murmuration' && (
               <>
                 <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Ballet aérien de milliers d'oiseaux avec battement d'ailes. La main agit comme un <strong>prédateur</strong> qui fait fuir le banc (pinch = puissance). Audio bass = ampli battement, mid = vitesse, high = nervosité du groupe. Active la <strong>caméra</strong> + un obstacle <strong>silhouette</strong> pour que ton corps repousse le banc.
+                  Ballet aérien d'oiseaux (simulation <strong>GPU</strong> — jusqu'à 100 000). La main agit comme un <strong>prédateur</strong> qui fait fuir le banc (pinch = puissance). Audio bass = ampli battement, mid = vitesse, high = nervosité du groupe. Active la <strong>caméra</strong> + un obstacle <strong>silhouette</strong> pour que ton corps repousse le banc.
                 </p>
-                <Slider label="Nombre d'oiseaux" value={v.count} min={200} max={8000} step={100} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Nombre d'oiseaux" value={v.count} min={500} max={100000} step={500} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
                 <Slider label="Cohésion (rapprochement)" value={v.cohesion} min={0} max={2} step={0.05} onChange={(x) => patchValues({ cohesion: x })} />
                 <Slider label="Séparation (anti-collision)" value={v.separation} min={0} max={3} step={0.05} onChange={(x) => patchValues({ separation: x })} />
                 <Slider label="Alignement (suivi vol)" value={v.alignment} min={0} max={3} step={0.05} onChange={(x) => patchValues({ alignment: x })} />
