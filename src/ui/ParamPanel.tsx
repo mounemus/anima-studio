@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX, Wand2, Bone, Pipette, Wind, Navigation, Bug, Palette, Activity, Map as MapIcon, StickyNote, Film, Image as ImageIcon, Camera as CameraIcon } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
+import { ORGANISM_DEFAULTS } from '../engine/OrganismFactory'
 import type { OrganismKind, TestPattern, ObstacleInteraction, Waveform, SoundConfig } from '../types/scene'
 import { LiveImg2Img } from '../lib/liveImg2Img'
 import { soundEngine } from '../engine/SoundEngine'
@@ -65,6 +66,7 @@ const ORGANISM_PRESETS: Record<OrganismKind, Record<string, number>> = {
   supershape3d: { m1: 6, n1: 0.6, n2: 0.5, n3: 1.5, m2: 8, n4: 0.6, n5: 0.5, n6: 1.5, resolution: 64, scale: 1, autoOrbitSpeed: 0.3, fov: 55, morphSpeed: 0.3, pointSize: 2, wireframe: 1 } as any,
   swarm3d: { count: 600, speed: 1.2, cohesion: 0.6, separation: 0.8, alignment: 0.5, vision: 0.18, bounds: 1, pointSize: 2, autoOrbitSpeed: 0.25, fov: 55, trail: 0.5 } as any,
   crystal: { maxCubes: 1500, growthRate: 12, cubeSize: 0.95, gridResolution: 28, autoOrbitSpeed: 0.3, fov: 55, ambient: 0.4, emissive: 0.2 } as any,
+  murmuration: { count: 3000, cohesion: 0.4, separation: 1.2, alignment: 1.8, swirl: 0.6, speed: 0.9, vision: 0.18, size: 0.015, flapSpeed: 14, flapAmplitude: 0.6, predatorResponse: 1.5, depthSpread: 0.7, trail: 0.92 } as any,
 }
 
 export function ParamPanel() {
@@ -80,10 +82,17 @@ export function ParamPanel() {
   if (!current) return <div className="right-panel"><div className="ai-empty">Aucune scène sélectionnée</div></div>
 
   const changeKind = (k: OrganismKind) => {
-    updateOrganism({ kind: k, values: ORGANISM_PRESETS[k] } as any)
+    // Fall back to the engine's canonical defaults if a preset is missing for this
+    // kind — otherwise `values` would be undefined and the panel (and Engine) would
+    // crash on the first `values.count` read. (This is exactly what happened when
+    // 'murmuration' had no ORGANISM_PRESETS entry.)
+    const values = { ...(ORGANISM_PRESETS[k] ?? ORGANISM_DEFAULTS[k]) }
+    updateOrganism({ kind: k, values } as any)
   }
 
-  const v = current.organism.values as unknown as Record<string, number>
+  // Never dereference undefined values — a scene saved before its kind had a
+  // preset (or any malformed import) would otherwise throw "reading 'count'".
+  const v = (current.organism.values ?? ORGANISM_DEFAULTS[current.organism.kind] ?? {}) as unknown as Record<string, number>
 
   return (
     <div className="right-panel">

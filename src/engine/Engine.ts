@@ -41,6 +41,7 @@ export class Engine {
   private lastT = performance.now()
   private rafId = 0
   private container: HTMLElement
+  private resizeObserver: ResizeObserver | null = null
   private width = 1; private height = 1
   private bg = new THREE.Color(0x06070d)
   private bgAlpha = 1
@@ -135,6 +136,14 @@ export class Engine {
 
     this.resize()
     window.addEventListener('resize', this.resize)
+    // Window 'resize' alone is not enough: the flex/grid container gets its real
+    // dimensions AFTER the Engine constructs, with no window event to catch the
+    // layout settling — so the first resize() runs at 0×0, clamps to 2×2, and the
+    // drawing buffer stays stuck tiny (canvas stretched by CSS to full size but
+    // rendering 2×2 px). A ResizeObserver fires on that first layout pass and on
+    // any later container-only resize (panel toggles, splitter drags).
+    this.resizeObserver = new ResizeObserver(this.resize)
+    this.resizeObserver.observe(container)
     this.attachMouseControls(canvas)
     this.loop()
   }
@@ -689,6 +698,8 @@ export class Engine {
   destroy() {
     cancelAnimationFrame(this.rafId)
     window.removeEventListener('resize', this.resize)
+    this.resizeObserver?.disconnect()
+    this.resizeObserver = null
     this.organism?.dispose()
     for (const e of this.zoneOrganisms.values()) { e.organism.dispose(); e.rt.dispose() }
     this.zoneOrganisms.clear()
