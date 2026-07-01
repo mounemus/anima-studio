@@ -386,6 +386,11 @@ export class Engine {
         }
         const org = createOrganism(params.kind, params.values, visual)
         org.setAspect(1)
+        // GPU organisms (boids/particles/cells/murmuration now, + reaction-diffusion
+        // / cellular-automata) run offscreen sim passes and need the renderer — the
+        // main organism gets it in loadScene(), zone organisms must too or they'd
+        // render black.
+        ;(org as any).renderer = this.renderer
         sc.add(org.mesh)
         entry = { kind: params.kind, organism: org, rt, scene: sc }
         this.zoneOrganisms.set(id, entry)

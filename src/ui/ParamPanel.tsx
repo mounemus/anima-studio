@@ -2365,6 +2365,18 @@ function ShapeContentEditor({ shape, update }: { shape: import('../types/scene')
             <option value="cells">🧫 Cellules (instance dédiée)</option>
             <option value="worms">🐍 Worms (instance dédiée)</option>
             <option value="spores">🌸 Spores (instance dédiée)</option>
+            <option value="psychedelic">🌀 Psychédélique (instance dédiée)</option>
+            <option value="mandala">🪷 Mandala (instance dédiée)</option>
+            <option value="fractal">🌌 Fractale (instance dédiée)</option>
+            <option value="mathcurve">📐 Courbe math (instance dédiée)</option>
+            <option value="reactiondiffusion">🪸 Réaction-Diffusion (instance dédiée)</option>
+            <option value="cellularautomata">⬛ Automate cellulaire (instance dédiée)</option>
+            <option value="hilbert">🌀 Courbe de Hilbert (instance dédiée)</option>
+            <option value="menger">🧊 Éponge de Menger (instance dédiée)</option>
+            <option value="supershape3d">🌐 SuperShape 3D (instance dédiée)</option>
+            <option value="swarm3d">🐝 Essaim 3D (instance dédiée)</option>
+            <option value="crystal">💎 Cristal (instance dédiée)</option>
+            <option value="murmuration">🦅 Murmuration (instance dédiée)</option>
           </select>
           <p style={{ fontSize: 10, color: 'var(--text-mute)', marginTop: 5, lineHeight: 1.4 }}>
             <strong>Partagé</strong> : la zone affiche l'organisme principal de la scène.<br />
