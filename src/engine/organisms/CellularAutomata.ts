@@ -188,7 +188,7 @@ export class CellularAutomataOrganism {
     this.rtA = new THREE.WebGLRenderTarget(this.res, this.res, rtOpts)
     this.rtB = new THREE.WebGLRenderTarget(this.res, this.res, rtOpts)
     this.currentRT = this.rtA
-    const rule = RULES[params.rule]
+    const rule = RULES[params.rule] ?? RULES.conway
     this.simMat = new THREE.ShaderMaterial({
       vertexShader: VERT, fragmentShader: SIM_FRAG,
       uniforms: {
@@ -255,7 +255,7 @@ export class CellularAutomataOrganism {
     const ruleChanged = p.rule !== this.params.rule
     this.params = p
     if (ruleChanged) {
-      const r = RULES[p.rule]
+      const r = RULES[p.rule] ?? RULES.conway   // fall back if a scene carries a bad/missing rule
       ;(this.simMat.uniforms.uBornBits.value as THREE.Vector3).copy(packRule(r.born))
       ;(this.simMat.uniforms.uSurviveBits.value as THREE.Vector3).copy(packRule(r.survive))
     }

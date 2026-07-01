@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { Scene as ArtScene, VisualParams, MappingShape, OrganismKind } from '../types/scene'
 import type { OrganismLike } from './organisms'
 import { MappingPass } from './MappingPass'
-import { senseBus, readSense } from '../senses/SenseBus'
+import { senseBus, readSense, sanitizeSenses } from '../senses/SenseBus'
 import { getSilhouetteMask } from '../senses/Silhouette'
 import { loadTexture } from '../lib/textureLoader'
 import type { Obstacle } from '../types/scene'
@@ -411,6 +411,11 @@ export class Engine {
     }
 
     if (!this.currentScene) return
+
+    // Sanitize sensor inputs BEFORE anything reads them. Sensors glitch (NaN
+    // landmarks, NaN FFT bins) and a single NaN would permanently poison an
+    // organism's position buffer. One guard here protects every organism.
+    sanitizeSenses()
 
     // SENSE MASK : the "Capteurs actifs" checkboxes used to be dead — toggled
     // a boolean in the scene but nothing consumed it, so the user couldn't

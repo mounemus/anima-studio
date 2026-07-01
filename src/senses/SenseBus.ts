@@ -80,6 +80,45 @@ export const senseBus = {
   } as PoseData,
 }
 
+/**
+ * Sanitize the whole SenseBus in place: replace any non-finite value (NaN /
+ * Infinity) with a safe default and clamp normalized fields to [0,1].
+ *
+ * Sensors DO glitch — MediaPipe can emit NaN landmarks on a lost track, an
+ * AudioContext can hand back NaN bins, a MIDI CC can arrive malformed. A single
+ * NaN read by an organism (e.g. `pos += vel * audio.bass`) permanently poisons
+ * its whole buffer → frozen / black organism. Guarding here, once per frame,
+ * makes EVERY organism robust without each re-implementing the same defense.
+ */
+export function sanitizeSenses() {
+  const fin = (v: number, d = 0) => (Number.isFinite(v) ? v : d)
+  const c01 = (v: number, d = 0) => { const n = Number.isFinite(v) ? v : d; return n < 0 ? 0 : n > 1 ? 1 : n }
+
+  const h = senseBus.hands
+  // If any core hand coordinate is non-finite, the track is unreliable → drop it.
+  const coords = [h.indexTip.x, h.indexTip.y, h.indexTip.z, h.palm.x, h.palm.y, h.palm.z, h.pinch, h.openness]
+  if (h.detected && coords.some((v) => !Number.isFinite(v))) h.detected = false
+  h.indexTip.x = c01(h.indexTip.x, 0.5); h.indexTip.y = c01(h.indexTip.y, 0.5); h.indexTip.z = fin(h.indexTip.z)
+  h.palm.x = c01(h.palm.x, 0.5); h.palm.y = c01(h.palm.y, 0.5); h.palm.z = fin(h.palm.z)
+  h.pinch = c01(h.pinch); h.openness = c01(h.openness, 0.5)
+  for (const lm of h.landmarks) { lm.x = c01(lm.x, 0.5); lm.y = c01(lm.y, 0.5); lm.z = fin(lm.z) }
+
+  const a = senseBus.audio
+  a.level = c01(a.level); a.bass = c01(a.bass); a.mid = c01(a.mid); a.high = c01(a.high)
+
+  const l = senseBus.light
+  l.brightness = c01(l.brightness, 0.5); l.warmth = c01(l.warmth, 0.5)
+
+  const m = senseBus.midi
+  m.mod = c01(m.mod)
+  for (let i = 0; i < m.cc.length; i++) if (!Number.isFinite(m.cc[i])) m.cc[i] = 0
+  for (let i = 0; i < m.notes.length; i++) if (!Number.isFinite(m.notes[i])) m.notes[i] = 0
+
+  const p = senseBus.pose
+  if (p.detected && p.landmarks.some((j) => !Number.isFinite(j.x) || !Number.isFinite(j.y))) p.detected = false
+  for (const j of p.landmarks) { j.x = c01(j.x, 0.5); j.y = c01(j.y, 0.5); j.z = fin(j.z); j.vis = c01(j.vis) }
+}
+
 /** MediaPipe pose joint indices, named for readability. */
 export const JOINT = {
   NOSE: 0,
