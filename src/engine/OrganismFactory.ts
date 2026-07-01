@@ -34,7 +34,7 @@ export const ORGANISM_DEFAULTS: Record<OrganismKind, Record<string, number>> = {
 export function createOrganism(kind: OrganismKind, values: any, visual: VisualParams): OrganismLike {
   switch (kind) {
     case 'boids': {
-      const v = { count: 1500, cohesion: 0.5, separation: 0.5, alignment: 0.5, speed: 0.7, vision: 0.4, size: 0.015, trail: 0.92, gpu: 1, ...values }
+      const v = { count: 1500, cohesion: 0.5, separation: 0.5, alignment: 0.5, speed: 0.7, vision: 0.4, size: 0.015, trail: 0.92, gpu: 1, edges: 'wrap', ...values }
       // GPU path (continuum flocking, 100k+) unless gpu:0. Fallback CPU keeps the
       // physical-obstacle response (solveObstacles/silhouette) the GPU path omits.
       if (v.gpu !== 0) return new BoidsGPUOrganism(v, visual) as OrganismLike
@@ -91,7 +91,7 @@ export function createOrganism(kind: OrganismKind, values: any, visual: VisualPa
       return new CrystalGrowthOrganism(v, visual) as OrganismLike
     }
     case 'murmuration': {
-      const v = { count: 3000, cohesion: 0.6, separation: 1.0, alignment: 2.2, swirl: 0.4, speed: 1.2, vision: 0.18, size: 0.015, flapSpeed: 14, flapAmplitude: 0.6, predatorResponse: 1.5, depthSpread: 0.7, trail: 0.92, gpu: 1, ...values }
+      const v = { count: 3000, cohesion: 0.6, separation: 1.0, alignment: 2.2, swirl: 0.4, speed: 1.2, vision: 0.18, size: 0.015, flapSpeed: 14, flapAmplitude: 0.6, predatorResponse: 1.5, depthSpread: 0.7, trail: 0.92, gpu: 1, edges: 'wall', ...values }
       // GPU path (continuum flocking, scales to 100k+) unless explicitly disabled
       // with gpu:0. The GPU organism runs its sim in shaders using the engine
       // renderer (attached after construction), like ReactionDiffusion.

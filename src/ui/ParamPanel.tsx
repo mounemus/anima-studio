@@ -165,6 +165,14 @@ export function ParamPanel() {
                 <Slider label="Vitesse" value={v.speed} min={0.1} max={3} onChange={(x) => patchValues({ speed: x })} />
                 <Slider label="Vision" value={v.vision} min={0.1} max={1} onChange={(x) => patchValues({ vision: x })} />
                 <Slider label="Taille" value={v.size} min={0.005} max={0.05} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>Bords</label>
+                  <select value={(v as any).edges ?? 'wrap'} onChange={(e) => patchValues({ edges: e.target.value } as any)} style={{ width: '100%', fontSize: 12, marginTop: 2 }}>
+                    <option value="wrap">🔁 Wrap (traverse les bords)</option>
+                    <option value="wall">🧱 Mur (rebond)</option>
+                    <option value="free">🕊️ Libre (aucun bord)</option>
+                  </select>
+                </div>
               </>
             )}
             {current.organism.kind === 'particles' && (
@@ -452,6 +460,14 @@ export function ParamPanel() {
                 <Slider label="Réponse prédateur (main)" value={v.predatorResponse} min={0} max={3} step={0.05} onChange={(x) => patchValues({ predatorResponse: x })} />
                 <Slider label="Profondeur (étalement Z)" value={v.depthSpread} min={0} max={1} step={0.05} onChange={(x) => patchValues({ depthSpread: x })} />
                 <Slider label="Traînée" value={v.trail} min={0.5} max={0.999} step={0.005} onChange={(x) => patchValues({ trail: x })} format={(x) => x.toFixed(3)} />
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>Bords</label>
+                  <select value={(v as any).edges ?? 'wall'} onChange={(e) => patchValues({ edges: e.target.value } as any)} style={{ width: '100%', fontSize: 12, marginTop: 2 }}>
+                    <option value="wrap">🔁 Wrap (traverse les bords)</option>
+                    <option value="wall">🧱 Mur (rebond)</option>
+                    <option value="free">🕊️ Libre (aucun bord)</option>
+                  </select>
+                </div>
               </>
             )}
             {current.organism.kind === 'mathcurve' && (
@@ -2055,6 +2071,43 @@ function MappingTab() {
             <button onClick={() => resize(g.cols, g.rows - 1)} style={{ padding: '2px 8px' }}>−</button>
             <span style={{ minWidth: 16, textAlign: 'center' }}>{g.rows}</span>
             <button onClick={() => resize(g.cols, g.rows + 1)} style={{ padding: '2px 8px' }}>+</button>
+          </div>
+        )
+      })()}
+      {(() => {
+        // "Follow a color tracker" — map a quad zone onto a moving object (t-shirt)
+        const sel = shapes[current.mapping.selectedShape ?? 0]
+        if (!sel || (sel.kind && sel.kind !== 'quad')) return null
+        const trackers = (current.obstacles ?? []).filter((o) => o.kind === 'tracker')
+        const follow = (sel as any).follow as { trackerId: string; scaleWithSize?: boolean } | undefined
+        return (
+          <div style={{ marginTop: 8, padding: 6, background: 'var(--bg-elev-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)' }}>
+            <label style={{ display: 'flex', gap: 6, fontSize: 12, cursor: 'pointer', alignItems: 'center' }}>
+              <input type="checkbox" checked={!!follow}
+                onChange={(e) => updateShape(sel.id, { follow: e.target.checked ? { trackerId: trackers[0]?.id ?? '', scaleWithSize: true } : undefined } as any)} />
+              🎯 Suivre un objet (tracker couleur)
+            </label>
+            {follow && (
+              <>
+                {trackers.length === 0 ? (
+                  <p style={{ fontSize: 11, color: 'var(--warn, orange)', marginTop: 4 }}>
+                    Ajoute d'abord un obstacle <strong>Tracker couleur</strong> (onglet Obs.) et prends la couleur (ex. t-shirt blanc) à la pipette.
+                  </p>
+                ) : (
+                  <>
+                    <select value={follow.trackerId} onChange={(e) => updateShape(sel.id, { follow: { ...follow, trackerId: e.target.value } } as any)}
+                      style={{ width: '100%', fontSize: 12, marginTop: 4 }}>
+                      {trackers.map((t) => <option key={t.id} value={t.id}>{(t as any).name ?? t.id}</option>)}
+                    </select>
+                    <label style={{ display: 'flex', gap: 6, fontSize: 11, marginTop: 4, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={!!follow.scaleWithSize}
+                        onChange={(e) => updateShape(sel.id, { follow: { ...follow, scaleWithSize: e.target.checked } } as any)} />
+                      Grandir/rétrécir avec l'objet
+                    </label>
+                  </>
+                )}
+              </>
+            )}
           </div>
         )
       })()}

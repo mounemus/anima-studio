@@ -209,6 +209,11 @@ export interface MappingShape {
   points?: Vec2[]
   /** Used when kind === 'mesh' — subdivided control-point grid. */
   mesh?: MeshGrid
+  /** Make this zone FOLLOW a color-tracker obstacle (mapping onto a moving
+   *  object, e.g. a white t-shirt). trackerId = id of a 'tracker' obstacle.
+   *  The zone re-centers on the tracked blob each frame; scaleWithSize also
+   *  grows/shrinks it with the blob. */
+  follow?: { trackerId: string; scaleWithSize?: boolean }
   /** 0..1 — how much to smooth the polygon with Catmull-Rom subdivision (polygon kind only). */
   smooth?: number
   /** Rotation in radians around the shape's centroid (applied at render time only, points stay clean) */

@@ -507,6 +507,17 @@ export class MappingPass {
     if (sm) sm.uniforms.uTex.value = tex ?? this.sourceTex
   }
 
+  /** Live-update a quad zone's 4 corners (canvas 0..1) without a store write —
+   *  used by the color-follow feature to move a zone onto a tracked object each frame. */
+  setShapeCorners(shapeId: string, corners: [{ x: number; y: number }, { x: number; y: number }, { x: number; y: number }, { x: number; y: number }]) {
+    const sm = this.shapes.find((s) => s.shape.id === shapeId)
+    if (!sm || sm.kind !== 'quad') return
+    ;(sm.uniforms.uC0.value as THREE.Vector2).set(corners[0].x, 1 - corners[0].y)
+    ;(sm.uniforms.uC1.value as THREE.Vector2).set(corners[1].x, 1 - corners[1].y)
+    ;(sm.uniforms.uC2.value as THREE.Vector2).set(corners[2].x, 1 - corners[2].y)
+    ;(sm.uniforms.uC3.value as THREE.Vector2).set(corners[3].x, 1 - corners[3].y)
+  }
+
   setTransparent(t: boolean) {
     this.transparent = t ? 1 : 0
     for (const sm of this.shapes) sm.uniforms.uTransparent.value = this.transparent

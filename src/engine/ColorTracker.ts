@@ -11,6 +11,7 @@ interface TrackerState {
   vx: number         // normalized units per ms
   vy: number
   confidence: number // 0..1, fades when no match
+  size: number       // 0..1 normalized blob radius (RMS spread of matched pixels)
   lastSeen: number   // ms timestamp
 }
 
@@ -123,16 +124,16 @@ function loop() {
         minY = Math.max(0, Math.floor(cyp - winSize - expandY))
         maxY = Math.min(SAMPLE_H, Math.ceil(cyp + winSize + expandY))
       }
-      let sx = 0, sy = 0, n = 0
+      let sx = 0, sy = 0, sxx = 0, syy = 0, n = 0
       for (let py = minY; py < maxY; py += 2) {
         for (let px = minX; px < maxX; px += 2) {
           const i = (py * SAMPLE_W + px) * 4
           const hsv = rgbToHsv(data[i], data[i + 1], data[i + 2])
           const d = colorDist(hsv.h, hsv.s, hsv.v, c.h, c.s, c.v)
-          if (d < c.tolerance) { sx += px; sy += py; n++ }
+          if (d < c.tolerance) { sx += px; sy += py; sxx += px * px; syy += py * py; n++ }
         }
       }
-      const nextPrev: TrackerState = prev ?? { x: 0.5, y: 0.5, vx: 0, vy: 0, confidence: 0, lastSeen: 0 }
+      const nextPrev: TrackerState = prev ?? { x: 0.5, y: 0.5, vx: 0, vy: 0, confidence: 0, size: 0.1, lastSeen: 0 }
       if (n >= MIN_MATCH) {
         const cx = 1 - (sx / n) / SAMPLE_W   // mirror X
         const cy = (sy / n) / SAMPLE_H
@@ -150,6 +151,10 @@ function loop() {
         nextPrev.vx = nextPrev.vx * 0.6 + newVx * 0.4
         nextPrev.vy = nextPrev.vy * 0.6 + newVy * 0.4
         nextPrev.confidence = Math.max(nextPrev.confidence * 0.5, newConf)
+        // Blob size = RMS spread of matched pixels (normalized), smoothed.
+        const mx = sx / n, my = sy / n
+        const spread = Math.sqrt(Math.max(0, (sxx / n - mx * mx) + (syy / n - my * my))) / SAMPLE_W
+        nextPrev.size = nextPrev.confidence > 0.3 ? nextPrev.size * 0.6 + spread * 0.4 : spread
         nextPrev.lastSeen = now
         lostCount.set(c.id, 0)
       } else {

@@ -27,6 +27,7 @@ import * as THREE from 'three'
 import type { VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
 import { OBSTACLE_GLSL, makeObstacleUniforms, packObstacles } from '../GPUObstacles'
+import { edgeCode } from './BoidsGPU'
 
 export interface MurmurationParams {
   count: number
@@ -42,6 +43,7 @@ export interface MurmurationParams {
   predatorResponse: number
   depthSpread: number
   trail: number
+  edges?: 'wrap' | 'wall' | 'free'
 }
 
 const MAX_BIRDS = 262144      // 512×512 texture cap
@@ -140,6 +142,7 @@ const SIM_FRAG = `
   uniform float uHandActive;
   uniform float uPredator;
   uniform float uDanger;
+  uniform float uEdge;
   ${CURL}
   ${OBSTACLE_GLSL}
 
@@ -200,12 +203,14 @@ const SIM_FRAG = `
     // Coherent wind
     dir += curlWind(pos, uTime) * 0.28;
 
-    // Soft edge repulsion
-    float xMax = uAspect - 0.15;
-    if (pos.x >  xMax) dir.x -= 3.5 * (pos.x - xMax);
-    if (pos.x < -xMax) dir.x -= 3.5 * (pos.x + xMax);
-    if (pos.y >  0.85) dir.y -= 3.5 * (pos.y - 0.85);
-    if (pos.y < -0.85) dir.y -= 3.5 * (pos.y + 0.85);
+    // Soft edge repulsion — only in 'wall' mode (uEdge==1)
+    if (uEdge > 0.5 && uEdge < 1.5) {
+      float xMax = uAspect - 0.15;
+      if (pos.x >  xMax) dir.x -= 3.5 * (pos.x - xMax);
+      if (pos.x < -xMax) dir.x -= 3.5 * (pos.x + xMax);
+      if (pos.y >  0.85) dir.y -= 3.5 * (pos.y - 0.85);
+      if (pos.y < -0.85) dir.y -= 3.5 * (pos.y + 0.85);
+    }
 
     // Predator (hand) — collective flee
     if (uHandActive > 0.5) {
@@ -245,6 +250,12 @@ const SIM_FRAG = `
     }
     vec2 nvel = nd * uSpeed;
     vec2 npos = pos + nvel * uDt;
+    // Toroidal wrap in 'wrap' mode (uEdge==0); wall repulsion handled above; free = nothing.
+    if (uEdge < 0.5) {
+      float ax = uAspect;
+      if (npos.x >  ax) npos.x -= 2.0 * ax; else if (npos.x < -ax) npos.x += 2.0 * ax;
+      if (npos.y >  1.0) npos.y -= 2.0;     else if (npos.y < -1.0) npos.y += 2.0;
+    }
     gl_FragColor = vec4(npos, nvel);
   }
 `
@@ -380,6 +391,7 @@ export class MurmurationGPUOrganism {
         uHandActive: { value: 0 },
         uPredator: { value: params.predatorResponse },
         uDanger: { value: 0.4 },
+        uEdge: { value: edgeCode(params.edges ?? 'wall') },
         ...makeObstacleUniforms(),
       },
       depthTest: false, depthWrite: false,
@@ -488,6 +500,7 @@ export class MurmurationGPUOrganism {
     this.simMat.uniforms.uSpeed.value = p.speed
     this.simMat.uniforms.uPredator.value = p.predatorResponse
     this.simMat.uniforms.uDanger.value = Math.max(0.25, p.vision * 2.5)
+    this.simMat.uniforms.uEdge.value = edgeCode(p.edges ?? 'wall')
     this.fieldMat.uniforms.uCount.value = newCount
     this.renderMat.uniforms.uSize.value = p.size
     this.renderMat.uniforms.uFlapSpeed.value = p.flapSpeed

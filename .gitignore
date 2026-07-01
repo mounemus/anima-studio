@@ -29,3 +29,8 @@ dist-ssr
 
 .vercel
 gemini-code-*.html
+
+# Large recorded media (never commit)
+video/
+*.mp4
+*.webm

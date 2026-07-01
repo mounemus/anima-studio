@@ -28,7 +28,11 @@ export interface BoidsGPUParams {
   vision: number
   size: number
   trail: number
+  edges?: 'wrap' | 'wall' | 'free'
 }
+
+/** wrap=0 (toroïdal) · wall=1 (rebond) · free=2 (aucun) */
+export const edgeCode = (e?: string): number => (e === 'wall' ? 1 : e === 'free' ? 2 : 0)
 
 const MAX_BOIDS = 262144
 const FIELD_RES = 128
@@ -101,6 +105,7 @@ const SIM_FRAG = `
   uniform float uHandForce;
   uniform vec2  uFlow;
   uniform float uFlowTurb;
+  uniform float uEdge;
 
   vec2 worldToFieldUv(vec2 w) { return vec2(w.x / uAspect, w.y) * 0.5 + 0.5; }
   vec4 fieldAt(vec2 w) { return texture2D(uField, worldToFieldUv(w)); }
@@ -156,11 +161,16 @@ const SIM_FRAG = `
 
     pos += vel * uDt * uSpeed;
 
-    // Toroidal wrap
+    // Edge behaviour : wrap (0) / wall bounce (1) / free (2)
     float ax = uAspect;
-    if (pos.x >  ax) pos.x -= 2.0 * ax; else if (pos.x < -ax) pos.x += 2.0 * ax;
-    if (pos.y >  1.0) pos.y -= 2.0;      else if (pos.y < -1.0) pos.y += 2.0;
-
+    if (uEdge < 0.5) {
+      if (pos.x >  ax) pos.x -= 2.0 * ax; else if (pos.x < -ax) pos.x += 2.0 * ax;
+      if (pos.y >  1.0) pos.y -= 2.0;     else if (pos.y < -1.0) pos.y += 2.0;
+    } else if (uEdge < 1.5) {
+      if (pos.x >  ax) { pos.x =  ax; vel.x = -abs(vel.x) * 0.6; } else if (pos.x < -ax) { pos.x = -ax; vel.x = abs(vel.x) * 0.6; }
+      if (pos.y >  1.0) { pos.y =  1.0; vel.y = -abs(vel.y) * 0.6; } else if (pos.y < -1.0) { pos.y = -1.0; vel.y = abs(vel.y) * 0.6; }
+    }
+    // free (2) : no boundary handling
     gl_FragColor = vec4(pos, vel);
   }
 `
@@ -256,6 +266,7 @@ export class BoidsGPUOrganism {
         uFieldRes: { value: FIELD_RES },
         uHand: { value: new THREE.Vector2(0, 0) }, uHandForce: { value: 0 },
         uFlow: { value: new THREE.Vector2(0, 0) }, uFlowTurb: { value: 0 },
+        uEdge: { value: edgeCode(params.edges) },
         ...makeObstacleUniforms(),
       },
       depthTest: false, depthWrite: false,
@@ -333,6 +344,7 @@ export class BoidsGPUOrganism {
     this.simMat.uniforms.uCohesion.value = p.cohesion
     this.simMat.uniforms.uSeparation.value = p.separation
     this.simMat.uniforms.uSpeed.value = p.speed
+    this.simMat.uniforms.uEdge.value = edgeCode(p.edges)
     this.fieldMat.uniforms.uCount.value = newCount
     this.renderMat.uniforms.uCount.value = newCount
   }
