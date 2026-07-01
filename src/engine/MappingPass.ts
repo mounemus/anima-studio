@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import type { MappingConfig, MappingShape, TestPattern } from '../types/scene'
+import type { MappingConfig, MappingShape, TestPattern, MeshGrid } from '../types/scene'
 import { smoothPolygon, centroid, rotateAround } from '../lib/curve'
 
 const VERT = `
@@ -136,7 +136,9 @@ interface ShapeMesh {
   shape: MappingShape
   mesh: THREE.Mesh
   uniforms: Record<string, THREE.IUniform>
-  kind: 'quad' | 'polygon'
+  kind: 'quad' | 'polygon' | 'mesh'
+  /** For mesh shapes: `${cols}x${rows}` — triggers a geometry rebuild when it changes. */
+  meshKey?: string
 }
 
 const MAX_POLY_POINTS = 64
@@ -222,9 +224,109 @@ const FRAG_POLYGON = `
   }
 `
 
+// ---- MESH WARP ----
+// The geometry itself is deformed (vertices placed at the control points, already
+// in clip space), so the vertex shader just passes the grid UV through and the
+// rasterizer interpolates the warp across triangles. Curved surfaces = more subdivs.
+const MESH_VERT = `
+  varying vec2 vUv;
+  void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
+`
+const MESH_FRAG = `
+  precision highp float;
+  varying vec2 vUv;
+  uniform sampler2D uTex;
+  uniform vec4 uSourceRect;
+  uniform vec4 uBlend;
+  uniform float uGamma;
+  uniform int uPattern;
+  uniform vec3 uTint;
+  uniform float uTransparent;
+  uniform float uOpacity;
+  vec3 patternColor(vec2 uv) {
+    if (uPattern == 1) {
+      vec2 g = abs(fract(uv * 10.0) - 0.5);
+      float line = step(0.48, max(g.x, g.y));
+      vec2 c = abs(uv - 0.5);
+      float cross = step(0.498, 1.0 - max(c.x, c.y) * 2.0);
+      return mix(vec3(0.05), vec3(0.0, 1.0, 0.6), max(line, cross));
+    }
+    if (uPattern == 2) return vec3(1.0);
+    if (uPattern == 3) return vec3(0.0);
+    if (uPattern == 6) return vec3(uv.x, uv.y, 0.5);
+    return vec3(0.0);
+  }
+  void main() {
+    vec2 uv = clamp(vUv, 0.0, 1.0);
+    vec3 col;
+    if (uPattern > 0) col = patternColor(uv);
+    else {
+      vec2 srcUv = vec2(uSourceRect.x + uv.x * uSourceRect.z, 1.0 - (uSourceRect.y + uv.y * uSourceRect.w));
+      col = texture2D(uTex, srcUv).rgb;
+    }
+    col *= uTint;
+    float bl = 1.0;
+    if (uBlend.x > 0.0) bl *= pow(smoothstep(0.0, uBlend.x, uv.x), uGamma);
+    if (uBlend.y > 0.0) bl *= pow(smoothstep(0.0, uBlend.y, 1.0 - uv.x), uGamma);
+    if (uBlend.z > 0.0) bl *= pow(smoothstep(0.0, uBlend.z, uv.y), uGamma);
+    if (uBlend.w > 0.0) bl *= pow(smoothstep(0.0, uBlend.w, 1.0 - uv.y), uGamma);
+    vec3 outCol = col * bl;
+    float a = mix(1.0, max(max(outCol.r, outCol.g), outCol.b), uTransparent);
+    gl_FragColor = vec4(outCol * uOpacity, a * uOpacity);
+  }
+`
+
+/** Build the subdivided grid geometry (UVs + indices fixed; positions filled by
+ *  writeMeshPositions). */
+function buildMeshGeometry(m: MeshGrid): THREE.BufferGeometry {
+  const cols = Math.max(1, m.cols), rows = Math.max(1, m.rows)
+  const vc = (cols + 1) * (rows + 1)
+  const pos = new Float32Array(vc * 3)
+  const uv = new Float32Array(vc * 2)
+  for (let r = 0; r <= rows; r++) {
+    for (let c = 0; c <= cols; c++) {
+      const i = r * (cols + 1) + c
+      uv[i * 2] = c / cols
+      uv[i * 2 + 1] = r / rows
+    }
+  }
+  const idx: number[] = []
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const a = r * (cols + 1) + c, b = a + 1, d = a + (cols + 1), e = d + 1
+      idx.push(a, d, b, b, d, e)
+    }
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+  g.setIndex(idx)
+  writeMeshPositions(g, m)
+  return g
+}
+
+/** Write control-point positions (canvas 0..1 → clip space) into the geometry. */
+function writeMeshPositions(g: THREE.BufferGeometry, m: MeshGrid) {
+  const cols = Math.max(1, m.cols), rows = Math.max(1, m.rows)
+  const pos = g.attributes.position.array as Float32Array
+  for (let r = 0; r <= rows; r++) {
+    for (let c = 0; c <= cols; c++) {
+      const i = r * (cols + 1) + c
+      const p = m.points[i] ?? { x: 0, y: 0 }
+      pos[i * 3] = p.x * 2 - 1
+      pos[i * 3 + 1] = 1 - 2 * p.y
+      pos[i * 3 + 2] = 0
+    }
+  }
+  g.attributes.position.needsUpdate = true
+}
+
 const PATTERN_INDEX: Record<TestPattern, number> = {
   none: 0, grid: 1, white: 2, black: 3, colorbars: 4, crosshair: 5, gradient: 6,
 }
+
+const resolveKind = (k?: string): 'quad' | 'polygon' | 'mesh' =>
+  k === 'polygon' ? 'polygon' : k === 'mesh' ? 'mesh' : 'quad'
 
 export class MappingPass {
   scene = new THREE.Scene()
@@ -238,9 +340,31 @@ export class MappingPass {
   constructor() {}
 
   private makeShape(shape: MappingShape, cfg: MappingConfig): ShapeMesh {
-    const kind = shape.kind === 'polygon' ? 'polygon' : 'quad'
+    const kind = resolveKind(shape.kind)
     let uniforms: Record<string, THREE.IUniform>
     let mat: THREE.ShaderMaterial
+    if (kind === 'mesh') {
+      const grid = shape.mesh ?? { cols: 3, rows: 3, points: [] }
+      uniforms = {
+        uTex: { value: this.sourceTex },
+        uSourceRect: { value: new THREE.Vector4(0, 0, 1, 1) },
+        uBlend: { value: new THREE.Vector4(0, 0, 0, 0) },
+        uGamma: { value: 2.2 },
+        uPattern: { value: 0 },
+        uTint: { value: new THREE.Vector3(1, 1, 1) },
+        uTransparent: { value: this.transparent },
+        uOpacity: { value: 1.0 },
+      }
+      mat = new THREE.ShaderMaterial({
+        uniforms, vertexShader: MESH_VERT, fragmentShader: MESH_FRAG,
+        transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+      })
+      const geo = buildMeshGeometry(grid)
+      const mesh = new THREE.Mesh(geo, mat)
+      const sm: ShapeMesh = { shape, mesh, uniforms, kind, meshKey: `${grid.cols}x${grid.rows}` }
+      this.applyToShape(sm, cfg)
+      return sm
+    }
     if (kind === 'polygon') {
       uniforms = {
         uTex: { value: this.sourceTex },
@@ -295,6 +419,30 @@ export class MappingPass {
   }
 
   private applyToShape(sm: ShapeMesh, cfg: MappingConfig) {
+    if (sm.kind === 'mesh') {
+      const grid = sm.shape.mesh ?? { cols: 3, rows: 3, points: [] }
+      const key = `${grid.cols}x${grid.rows}`
+      if (key !== sm.meshKey) {
+        // Subdivisions changed → rebuild the geometry (keep the same mesh/material)
+        sm.mesh.geometry.dispose()
+        sm.mesh.geometry = buildMeshGeometry(grid)
+        sm.meshKey = key
+      } else {
+        writeMeshPositions(sm.mesh.geometry, grid)
+      }
+      const sr = sm.shape.source
+      ;(sm.uniforms.uSourceRect.value as THREE.Vector4).set(sr.x, sr.y, sr.w, sr.h)
+      const b = cfg.edgeBlend
+      ;(sm.uniforms.uBlend.value as THREE.Vector4).set(b.left, b.right, b.top, b.bottom)
+      sm.uniforms.uGamma.value = b.gamma
+      sm.uniforms.uPattern.value = PATTERN_INDEX[cfg.testPattern ?? 'none']
+      sm.uniforms.uTransparent.value = this.transparent
+      sm.uniforms.uOpacity.value = sm.shape.content?.opacity ?? 1.0
+      const custom = this.perShapeTex.get(sm.shape.id)
+      sm.uniforms.uTex.value = custom ?? this.sourceTex
+      sm.mesh.visible = sm.shape.enabled
+      return
+    }
     if (sm.kind === 'quad') {
       const c = sm.shape.corners
       ;(sm.uniforms.uC0.value as THREE.Vector2).set(c[0].x, 1 - c[0].y)
@@ -387,7 +535,7 @@ export class MappingPass {
 
     // Diff: rebuild if shape count or kind changed; otherwise update in place
     const needRebuild = this.shapes.length !== targetShapes.length ||
-      this.shapes.some((sm, i) => sm.kind !== (targetShapes[i].kind === 'polygon' ? 'polygon' : 'quad'))
+      this.shapes.some((sm, i) => sm.kind !== resolveKind(targetShapes[i].kind))
     if (needRebuild) {
       for (const sm of this.shapes) {
         this.scene.remove(sm.mesh)

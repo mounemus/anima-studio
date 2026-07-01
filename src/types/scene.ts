@@ -184,18 +184,31 @@ export interface ShapeContent {
   organismPalette?: Palette
 }
 
-export type ShapeKind = 'quad' | 'polygon'
+export type ShapeKind = 'quad' | 'polygon' | 'mesh'
+
+/** Warp mesh : a (cols+1)×(rows+1) grid of control points (canvas 0..1, row-major).
+ *  The source texture is subdivided across the grid; dragging interior points bends
+ *  it onto curved surfaces (domes, cylinders, corners) that a flat 4-corner quad
+ *  can't follow. */
+export interface MeshGrid {
+  cols: number
+  rows: number
+  points: Vec2[]
+}
 
 export interface MappingShape {
   id: string
   name: string
   /** 'quad' = 4 corners with perspective inverse-bilinear warp.
-   *  'polygon' = N points polygon mask (no warp, just shape clip + bbox UV). */
+   *  'polygon' = N points polygon mask (no warp, just shape clip + bbox UV).
+   *  'mesh' = subdivided grid warp for curved surfaces. */
   kind?: ShapeKind
   /** Used when kind === 'quad' (default) */
   corners: [Vec2, Vec2, Vec2, Vec2]
   /** Used when kind === 'polygon' — list of vertices in canvas 0..1 space, CCW order. */
   points?: Vec2[]
+  /** Used when kind === 'mesh' — subdivided control-point grid. */
+  mesh?: MeshGrid
   /** 0..1 — how much to smooth the polygon with Catmull-Rom subdivision (polygon kind only). */
   smooth?: number
   /** Rotation in radians around the shape's centroid (applied at render time only, points stay clean) */
@@ -402,6 +415,19 @@ export const defaultObstacle = (kind: ObstacleKind, i = 0): Obstacle => {
   return base
 }
 
+/** Build an evenly-spaced control-point grid spanning ~[0.15, 0.85] of the canvas. */
+export const defaultMeshGrid = (cols = 3, rows = 3, off = 0): MeshGrid => {
+  const x0 = 0.15 + off * 0.03, x1 = 0.85 + off * 0.03
+  const y0 = 0.15 + off * 0.03, y1 = 0.85 + off * 0.03
+  const points: Vec2[] = []
+  for (let r = 0; r <= rows; r++) {
+    for (let c = 0; c <= cols; c++) {
+      points.push({ x: x0 + (x1 - x0) * (c / cols), y: y0 + (y1 - y0) * (r / rows) })
+    }
+  }
+  return { cols, rows, points }
+}
+
 export const defaultShape = (i = 0, kind: ShapeKind = 'quad'): MappingShape => {
   const base: MappingShape = {
     id: `shape-${Date.now().toString(36)}-${i}`,
@@ -424,6 +450,8 @@ export const defaultShape = (i = 0, kind: ShapeKind = 'quad'): MappingShape => {
       const a = (k / 6) * Math.PI * 2 - Math.PI / 2
       return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r }
     })
+  } else if (kind === 'mesh') {
+    base.mesh = defaultMeshGrid(3, 3, i)
   }
   return base
 }

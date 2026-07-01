@@ -1945,14 +1945,56 @@ function MappingTab() {
           </div>
         ))}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
         <button onClick={() => addShape('quad')} style={{ justifyContent: 'center', fontSize: 12 }}>
           <Plus size={12} /> Quad
         </button>
         <button onClick={() => addShape('polygon')} style={{ justifyContent: 'center', fontSize: 12 }}>
           <Pentagon size={12} /> Polygone
         </button>
+        <button onClick={() => addShape('mesh')} style={{ justifyContent: 'center', fontSize: 12 }} title="Grille de warp — surfaces courbes (dômes, cylindres, angles)">
+          <Plus size={12} /> Grille
+        </button>
       </div>
+      {(() => {
+        // Subdivision stepper for the selected mesh zone
+        const sel = shapes[current.mapping.selectedShape ?? 0]
+        if (!sel || sel.kind !== 'mesh' || !sel.mesh) return null
+        const g = sel.mesh
+        const resize = (cols: number, rows: number) => {
+          cols = Math.max(1, Math.min(12, cols)); rows = Math.max(1, Math.min(12, rows))
+          // Resample the grid to the new resolution by bilinear-interpolating the
+          // current control points, so a re-subdivide keeps the current warp shape.
+          const at = (c: number, r: number) => {
+            const fx = (c / cols) * g.cols, fy = (r / rows) * g.rows
+            const x0 = Math.min(g.cols, Math.floor(fx)), y0 = Math.min(g.rows, Math.floor(fy))
+            const x1 = Math.min(g.cols, x0 + 1), y1 = Math.min(g.rows, y0 + 1)
+            const tx = fx - x0, ty = fy - y0
+            const P = (cc: number, rr: number) => g.points[rr * (g.cols + 1) + cc] ?? { x: 0, y: 0 }
+            const a = P(x0, y0), b = P(x1, y0), c2 = P(x0, y1), d = P(x1, y1)
+            return {
+              x: (a.x * (1 - tx) + b.x * tx) * (1 - ty) + (c2.x * (1 - tx) + d.x * tx) * ty,
+              y: (a.y * (1 - tx) + b.y * tx) * (1 - ty) + (c2.y * (1 - tx) + d.y * tx) * ty,
+            }
+          }
+          const points = []
+          for (let r = 0; r <= rows; r++) for (let c = 0; c <= cols; c++) points.push(at(c, r))
+          updateShape(sel.id, { mesh: { cols, rows, points } })
+        }
+        return (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, fontSize: 12, color: 'var(--text-dim)' }}>
+            <span>Subdivisions</span>
+            <span>colonnes</span>
+            <button onClick={() => resize(g.cols - 1, g.rows)} style={{ padding: '2px 8px' }}>−</button>
+            <span style={{ minWidth: 16, textAlign: 'center' }}>{g.cols}</span>
+            <button onClick={() => resize(g.cols + 1, g.rows)} style={{ padding: '2px 8px' }}>+</button>
+            <span>lignes</span>
+            <button onClick={() => resize(g.cols, g.rows - 1)} style={{ padding: '2px 8px' }}>−</button>
+            <span style={{ minWidth: 16, textAlign: 'center' }}>{g.rows}</span>
+            <button onClick={() => resize(g.cols, g.rows + 1)} style={{ padding: '2px 8px' }}>+</button>
+          </div>
+        )
+      })()}
       <button onClick={() => svgInputRef.current?.click()} style={{ width: '100%', justifyContent: 'center', fontSize: 12, marginTop: 4 }}>
         <Download size={12} style={{ transform: 'rotate(180deg)' }} /> Importer SVG (paths / polygones)
       </button>

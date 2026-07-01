@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSceneStore } from '../store/sceneStore'
-import type { Vec2 } from '../types/scene'
+import type { Vec2, MeshGrid } from '../types/scene'
 import { smoothPolygon, centroid, rotateAround } from '../lib/curve'
 
 interface DragInfo {
   shapeId: string
-  kind: 'corner' | 'point' | 'translate' | 'rotate'
+  kind: 'corner' | 'point' | 'translate' | 'rotate' | 'mesh'
   index: number
   /** For translate: starting points + cursor at drag begin */
   startPts?: Vec2[]
   startCorners?: [Vec2, Vec2, Vec2, Vec2]
+  startMeshPts?: Vec2[]
   startCx?: number
   startCy?: number
   /** For rotate: initial angle from center to cursor */
@@ -56,10 +57,16 @@ export function MappingOverlay({ stageRef }: { stageRef: React.RefObject<HTMLDiv
         const pts = [...shape.points]
         pts[d.index] = { x, y }
         updateShape(d.shapeId, { points: pts })
+      } else if (d.kind === 'mesh' && shape.mesh) {
+        const pts = [...shape.mesh.points]
+        pts[d.index] = { x, y }
+        updateShape(d.shapeId, { mesh: { ...shape.mesh, points: pts } })
       } else if (d.kind === 'translate') {
         const dx = x - (d.startCx ?? 0)
         const dy = y - (d.startCy ?? 0)
-        if (shape.kind === 'polygon' && d.startPts) {
+        if (shape.kind === 'mesh' && shape.mesh && d.startMeshPts) {
+          updateShape(d.shapeId, { mesh: { ...shape.mesh, points: d.startMeshPts.map((p) => ({ x: p.x + dx, y: p.y + dy })) } })
+        } else if (shape.kind === 'polygon' && d.startPts) {
           updateShape(d.shapeId, { points: d.startPts.map((p) => ({ x: p.x + dx, y: p.y + dy })) })
         } else if (d.startCorners) {
           updateShape(d.shapeId, {
@@ -111,26 +118,31 @@ export function MappingOverlay({ stageRef }: { stageRef: React.RefObject<HTMLDiv
     id: string
     name: string
     enabled: boolean
-    kind: 'quad' | 'polygon'
+    kind: 'quad' | 'polygon' | 'mesh'
     vertices: Vec2[]
+    grid?: MeshGrid
   }
 
   // For display we apply rotation + smoothing here to mirror what the shader does
   const shapes: DisplayShape[] = current.mapping.shapes && current.mapping.shapes.length > 0
     ? current.mapping.shapes.map((s) => {
         let verts: Vec2[]
+        let grid: MeshGrid | undefined
         if (s.kind === 'polygon' && s.points) {
           let pts = s.points
           if (s.rotation) pts = rotateAround(pts, centroid(pts), s.rotation)
           if (s.smooth && s.smooth > 0) pts = smoothPolygon(pts, s.smooth)
           verts = pts
+        } else if (s.kind === 'mesh' && s.mesh) {
+          grid = s.mesh
+          verts = s.mesh.points
         } else {
           verts = s.corners
         }
         return {
           id: s.id, name: s.name, enabled: s.enabled,
-          kind: s.kind === 'polygon' ? 'polygon' : 'quad',
-          vertices: verts,
+          kind: s.kind === 'polygon' ? 'polygon' : s.kind === 'mesh' ? 'mesh' : 'quad',
+          vertices: verts, grid,
         }
       })
     : [{ id: '__legacy__', name: 'Zone', enabled: true, kind: 'quad', vertices: current.mapping.corners }]
@@ -141,14 +153,41 @@ export function MappingOverlay({ stageRef }: { stageRef: React.RefObject<HTMLDiv
     <div className="mapping-overlay" style={{ pointerEvents: 'none' }}>
       <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
         {shapes.map((s, idx) => {
+          const isSelected = idx === selectedIdx
+          const stroke = isSelected ? 'var(--accent)' : 'var(--text-mute)'
+          // Mesh: draw the deformed grid lines instead of a boundary polyline
+          if (s.kind === 'mesh' && s.grid) {
+            const { cols, rows, points: gp } = s.grid
+            const lines: string[] = []
+            for (let r = 0; r <= rows; r++) {
+              const row: string[] = []
+              for (let c = 0; c <= cols; c++) { const p = gp[r * (cols + 1) + c]; if (p) row.push(`${p.x * W},${p.y * H}`) }
+              lines.push(row.join(' '))
+            }
+            for (let c = 0; c <= cols; c++) {
+              const col: string[] = []
+              for (let r = 0; r <= rows; r++) { const p = gp[r * (cols + 1) + c]; if (p) col.push(`${p.x * W},${p.y * H}`) }
+              lines.push(col.join(' '))
+            }
+            return (
+              <g key={s.id} onClick={() => selectShape(idx)} style={{ pointerEvents: 'auto', cursor: 'pointer' }}>
+                {lines.map((pts, li) => (
+                  <polyline key={li} points={pts} stroke={stroke} strokeWidth={isSelected ? 1.2 : 0.8}
+                    strokeDasharray={isSelected ? '0' : '4 4'} fill="none" opacity={s.enabled ? 0.7 : 0.25} />
+                ))}
+                <text x={(gp[0]?.x ?? 0) * W + 12} y={(gp[0]?.y ?? 0) * H - 6} fill={stroke} fontSize="11" fontFamily="var(--mono)">
+                  {s.name} · grille {cols}×{rows}
+                </text>
+              </g>
+            )
+          }
           const points = s.vertices.map((c) => `${c.x * W},${c.y * H}`).join(' ')
             + ` ${s.vertices[0].x * W},${s.vertices[0].y * H}`
-          const isSelected = idx === selectedIdx
           return (
             <g key={s.id} onClick={() => s.id !== '__legacy__' && selectShape(idx)} style={{ pointerEvents: 'auto', cursor: s.id === '__legacy__' ? 'default' : 'pointer' }}>
               <polyline
                 points={points}
-                stroke={isSelected ? 'var(--accent)' : 'var(--text-mute)'}
+                stroke={stroke}
                 strokeWidth={isSelected ? 1.5 : 1}
                 strokeDasharray={isSelected ? '0' : '4 4'}
                 fill={isSelected ? 'rgba(0,255,163,0.04)' : 'none'}
@@ -201,6 +240,7 @@ export function MappingOverlay({ stageRef }: { stageRef: React.RefObject<HTMLDiv
                   shapeId: s.id, kind: 'translate', index: 0,
                   startPts: realShape?.points ? [...realShape.points] : undefined,
                   startCorners: realShape?.corners ? [...realShape.corners] as [Vec2, Vec2, Vec2, Vec2] : undefined,
+                  startMeshPts: realShape?.mesh ? [...realShape.mesh.points] : undefined,
                   startCx: (e.clientX - rect.left) / rect.width,
                   startCy: (e.clientY - rect.top) / rect.height,
                 }
@@ -231,19 +271,21 @@ export function MappingOverlay({ stageRef }: { stageRef: React.RefObject<HTMLDiv
             {editPoints.map((p, i) => (
               <div
                 key={`${s.id}-${i}`}
-                className={`mapping-corner ${s.kind === 'polygon' ? 'poly-point' : ''}`}
+                className={`mapping-corner ${s.kind === 'polygon' || s.kind === 'mesh' ? 'poly-point' : ''}`}
                 style={{ left: p.x * W, top: p.y * H }}
                 onPointerDown={(e) => {
                   ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
                   dragRef.current = {
                     shapeId: s.id,
-                    kind: s.kind === 'polygon' ? 'point' : 'corner',
+                    kind: s.kind === 'polygon' ? 'point' : s.kind === 'mesh' ? 'mesh' : 'corner',
                     index: i,
                   }
                 }}
                 onContextMenu={(e) => s.kind === 'polygon' && onPointContextMenu(s.id, i, e)}
                 title={s.kind === 'polygon'
                   ? `Sommet ${i + 1} · clic-droit pour supprimer`
+                  : s.kind === 'mesh'
+                  ? `Point grille ${i + 1}`
                   : ['Haut-gauche', 'Haut-droite', 'Bas-droite', 'Bas-gauche'][i]}
               />
             ))}
