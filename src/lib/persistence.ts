@@ -1,5 +1,6 @@
-import type { Scene } from '../types/scene'
+import type { Scene, OrganismKind } from '../types/scene'
 import { defaultMapping, defaultFlow } from '../types/scene'
+import { ORGANISM_DEFAULTS } from '../engine/OrganismFactory'
 import { getItem, setItem, removeItem, listKeys } from './storage'
 
 const KEY = (id: string) => `scene:${id}`
@@ -23,12 +24,29 @@ function sanitizeForSave(s: Scene): Scene {
   return next
 }
 
+/** Return a safe organism {kind, values} even if the input is missing or malformed.
+ *  Backfills missing `values` from ORGANISM_DEFAULTS for the declared kind, so a
+ *  scene serialized with just `{ organism: { kind: 'boids' } }` (no values) doesn't
+ *  crash the Engine which reads e.g. `values.count`. */
+function safeOrganism(rawOrg: any): { kind: OrganismKind; values: Record<string, number> } {
+  const kind: OrganismKind = (rawOrg?.kind && (ORGANISM_DEFAULTS as any)[rawOrg.kind])
+    ? rawOrg.kind
+    : 'boids'
+  const defaults = ORGANISM_DEFAULTS[kind]
+  // Merge : defaults first (so every expected field exists), then the incoming
+  // values (so user edits win). Non-numeric fields (formula, preset, rule…) pass
+  // through untouched from the raw values.
+  const values = { ...defaults, ...(rawOrg?.values ?? {}) }
+  return { kind, values }
+}
+
 /** Forward-migrate older saved scenes (add missing fields with sane defaults).
  *  Exported so the import path can reuse the exact same hardening as load. */
 export function migrateScene(s: any): Scene {
   const v = s.visual ?? {}
   return {
     ...s,
+    organism: safeOrganism(s.organism),
     mapping: { ...defaultMapping(), ...(s.mapping ?? {}) },
     obstacles: Array.isArray(s.obstacles) ? s.obstacles : [],
     flow: s.flow ?? defaultFlow(),
