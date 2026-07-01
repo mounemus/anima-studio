@@ -50,7 +50,7 @@ function Slider({ label, value, min, max, step = 0.01, onChange, format }: Slide
 
 const ORGANISM_PRESETS: Record<OrganismKind, Record<string, number>> = {
   boids: { count: 1500, cohesion: 0.5, separation: 0.5, alignment: 0.5, speed: 0.7, vision: 0.4, size: 0.015, trail: 0.92, gpu: 1 },
-  particles: { count: 3000, speed: 0.6, size: 1.0, spread: 1.0, trail: 0.88, gravity: 0, turbulence: 0.5 },
+  particles: { count: 3000, speed: 0.6, size: 1.0, spread: 1.0, trail: 0.88, gravity: 0, turbulence: 0.5, gpu: 1 },
   tendrils: { count: 30, length: 48, speed: 0.5, twist: 1.5, thickness: 0.01, trail: 0.95 },
   cells: { count: 50, pulse: 1.0, size: 1.2, attraction: 0.5, repulsion: 0.5, trail: 0.85 },
   worms: { count: 18, segments: 36, speed: 0.7, twist: 1.3, thickness: 0.01, trail: 0.93, segLen: 0.025 },
@@ -168,7 +168,7 @@ export function ParamPanel() {
             )}
             {current.organism.kind === 'particles' && (
               <>
-                <Slider label="Population" value={v.count} min={500} max={8000} step={100} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Population" value={v.count} min={500} max={100000} step={500} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
                 <Slider label="Vitesse" value={v.speed} min={0.1} max={3} onChange={(x) => patchValues({ speed: x })} />
                 <Slider label="Taille de la poussière" value={v.size} min={0.2} max={8} step={0.1} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(1)} />
                 <Slider label="Dispersion" value={v.spread} min={0.2} max={2} onChange={(x) => patchValues({ spread: x })} />

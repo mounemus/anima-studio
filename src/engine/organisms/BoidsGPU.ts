@@ -179,12 +179,13 @@ const RENDER_VERT = `
 `
 const RENDER_FRAG = `
   precision highp float;
+  uniform float uAlpha;
   varying vec3 vColor;
   void main() {
     vec2 c = gl_PointCoord - 0.5;
     float d2 = dot(c, c);
     if (d2 > 0.25) discard;
-    float a = smoothstep(0.25, 0.02, d2) * 0.95;
+    float a = smoothstep(0.25, 0.02, d2) * uAlpha;
     gl_FragColor = vec4(vColor, a);
   }
 `
@@ -280,7 +281,7 @@ export class BoidsGPUOrganism {
       vertexShader: RENDER_VERT, fragmentShader: RENDER_FRAG,
       uniforms: {
         uState: { value: this.stateA.texture }, uTexDim: { value: this.texDim },
-        uCount: { value: this.count }, uPointPx: { value: 6 },
+        uCount: { value: this.count }, uPointPx: { value: 6 }, uAlpha: { value: 0.9 },
         uColorA: { value: new THREE.Color(visual.palette.primary) },
         uColorB: { value: new THREE.Color(visual.palette.secondary) },
       },
@@ -413,6 +414,8 @@ export class BoidsGPUOrganism {
     const pxPerWorld = (this._sizeV2.y * dpr) / 2
     const worldDiam = p.size * (1.2 + (audio.bass ?? 0) * 2.5) * 2.0
     this.renderMat.uniforms.uPointPx.value = Math.max(1, Math.min(64, worldDiam * pxPerWorld))
+    // density-adaptive alpha → no additive white-out at high counts
+    this.renderMat.uniforms.uAlpha.value = Math.max(0.06, Math.min(0.9, 45 / Math.sqrt(this.count)))
     this.renderMat.uniforms.uState.value = this.current.texture
   }
 
