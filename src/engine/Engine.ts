@@ -8,6 +8,7 @@ import { loadTexture } from '../lib/textureLoader'
 import type { Obstacle } from '../types/scene'
 import { resetCounters, obstacleCounters } from './Obstacles'
 import { oscEngine } from './OscEngine'
+import { setGPUSilhouette } from './GPUObstacles'
 import { soundEngine } from './SoundEngine'
 import { setFlow } from './Flow'
 import { setTrackers, stopColorTracking } from './ColorTracker'
@@ -498,6 +499,10 @@ export class Engine {
       this.applyTimelinePatches(patches)
     }
 
+    // Publish the silhouette body mask to the GPU obstacle module (once per frame,
+    // consumed by every organism's packObstacles). null when no silhouette obstacle.
+    this.updateGPUSilhouette()
+
     if (this.organism) {
       // Feed the GPU organisms the bounding box of the enabled mapping zones so
       // they can keep agents inside the projection surface ("map walls"). null
@@ -673,6 +678,31 @@ export class Engine {
     this.renderer.render(this.mapping.scene, this.mapping.camera)
   }
 
+  private silObsTex: THREE.DataTexture | null = null
+  private silObsW = 0; private silObsH = 0
+  /** Upload the SelfieSegmenter body mask to a texture and hand it to the GPU
+   *  obstacle module so GPU organisms (boids/particles/cells/murmuration) avoid /
+   *  bounce off / are killed by the body — same behaviour the CPU solver gives. */
+  private updateGPUSilhouette() {
+    const obs = this.currentScene?.obstacles?.find((o) => o.enabled && o.kind === 'silhouette')
+    const mask = obs ? getSilhouetteMask() : null
+    if (!obs || !mask) { setGPUSilhouette(null); return }
+    if (!this.silObsTex || this.silObsW !== mask.w || this.silObsH !== mask.h) {
+      this.silObsTex?.dispose()
+      this.silObsTex = new THREE.DataTexture(new Uint8Array(mask.w * mask.h * 4), mask.w, mask.h)
+      this.silObsTex.minFilter = THREE.LinearFilter
+      this.silObsTex.magFilter = THREE.LinearFilter
+      this.silObsW = mask.w; this.silObsH = mask.h
+    }
+    const rgba = this.silObsTex.image.data as Uint8Array
+    for (let i = 0; i < mask.data.length; i++) {
+      const v = mask.data[i]
+      rgba[i * 4] = v; rgba[i * 4 + 1] = v; rgba[i * 4 + 2] = v; rgba[i * 4 + 3] = 255
+    }
+    this.silObsTex.needsUpdate = true
+    setGPUSilhouette({ tex: this.silObsTex, interaction: obs.interaction, strength: obs.strength, invert: !!obs.silhouette?.invert, texel: 1 / mask.w })
+  }
+
   /** Bounding box (world coords) of the enabled mapping zones, or null when
    *  mapping is off / has no shapes. Used by GPU organisms as soft "walls". */
   private computeMapBounds(): [number, number, number, number] | null {
@@ -766,6 +796,7 @@ export class Engine {
     const fbMesh = this.feedbackQuadScene.children[0] as THREE.Mesh | undefined
     fbMesh?.geometry?.dispose()
     this.organismMaskTex?.dispose()
+    this.silObsTex?.dispose()
     // Release any module-level singletons that would otherwise leak across HMR
     stopMaskedWebcam()
     stopColorTracking()

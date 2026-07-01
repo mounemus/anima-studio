@@ -91,11 +91,11 @@ export function SilhouetteOverlay({ stageRef }: { stageRef: React.RefObject<HTML
       }
       scratchCtx.putImageData(img, 0, 0)
 
-      // Composite onto display with mirror, soft blur, and a brighter edge highlight
+      // Composite onto display. NOTE: the mask buffer is ALREADY X-mirrored in
+      // senses/Silhouette.ts (to match the mirrored webcam), so we must NOT mirror
+      // again here — doing so put the glow on the opposite side of the real body.
       ctx.clearRect(0, 0, W, H)
       ctx.save()
-      ctx.translate(W, 0)
-      ctx.scale(-1, 1)   // mirror X to match the displayed webcam
       // Soft fill
       ctx.filter = 'blur(5px)'
       ctx.globalAlpha = opacity

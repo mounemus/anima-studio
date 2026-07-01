@@ -39,8 +39,19 @@ export function makeObstacleUniforms(): Record<string, THREE.IUniform> {
     uObsPolyFx: { value: new THREE.Vector4(0, 0, 0.05, 0) },  // (interaction, strength, margin, _)
     uMapWalls: { value: 0 },
     uMapBounds: { value: new THREE.Vector4(-1, -1, 1, 1) },     // (minX, minY, maxX, maxY) world
+    uObsAspect: { value: 1 },
+    // Silhouette (SelfieSegmenter body mask)
+    uSilMask: { value: null },
+    uSilOn: { value: 0 },
+    uSilFx: { value: new THREE.Vector3(0, 1, 0) },  // (interactionCode, strength, invert)
+    uSilTexel: { value: 1 / 128 },
   }
 }
+
+/** Module-level silhouette state, set once per frame by the Engine and consumed
+ *  by every organism's packObstacles() call (avoids threading it through each). */
+let silState: { tex: THREE.Texture | null; interaction: string; strength: number; invert: boolean; texel: number } | null = null
+export function setGPUSilhouette(s: typeof silState) { silState = s }
 
 /** GLSL to prepend to a sim fragment shader. Provides obstacleForce(). */
 export const OBSTACLE_GLSL = `
@@ -52,6 +63,11 @@ export const OBSTACLE_GLSL = `
   uniform vec4 uObsPolyFx;                         // (interactionCode, strength, margin, _)
   uniform float uMapWalls;
   uniform vec4 uMapBounds;
+  uniform float uObsAspect;
+  uniform sampler2D uSilMask;
+  uniform float uSilOn;
+  uniform vec3 uSilFx;      // (interactionCode, strength, invert)
+  uniform float uSilTexel;
 
   void applyInter(float interaction, vec2 n, float k, bool inside, inout vec2 f, inout float kill) {
     if (interaction < 0.5)      { f += n * k * 3.0; }                 // avoid
@@ -103,6 +119,30 @@ export const OBSTACLE_GLSL = `
       if (inside || minDist < m) {
         float t = inside ? 1.0 : 1.0 - minDist / m;
         applyInter(uObsPolyFx.x, nrm, uObsPolyFx.y * t, inside, f, kill);
+      }
+    }
+    // --- silhouette (body mask) : same world→mask uv + Sobel-normal convention
+    //     as the CPU solver (Obstacles.ts), so GPU behaviour matches CPU. ---
+    if (uSilOn > 0.5) {
+      // world → mask uv : nx = x/aspect*0.5+0.5 ; ny = 0.5 - y*0.5  (mask stored top-down, X already mirrored)
+      vec2 suv = vec2(p.x / uObsAspect * 0.5 + 0.5, 0.5 - p.y * 0.5);
+      if (suv.x >= 0.0 && suv.x <= 1.0 && suv.y >= 0.0 && suv.y <= 1.0) {
+        float invert = uSilFx.z;
+        float here = texture2D(uSilMask, suv).r;
+        bool isIn = (here > 0.5) != (invert > 0.5);
+        if (isIn) {
+          float e = uSilTexel * 3.0;
+          float l = texture2D(uSilMask, suv + vec2(-e, 0.0)).r;
+          float r = texture2D(uSilMask, suv + vec2( e, 0.0)).r;
+          float u = texture2D(uSilMask, suv + vec2(0.0, -e)).r;
+          float d = texture2D(uSilMask, suv + vec2(0.0,  e)).r;
+          if (invert > 0.5) { l = 1.0 - l; r = 1.0 - r; u = 1.0 - u; d = 1.0 - d; }
+          // Sobel gradient → outward normal. World y is up while mask y is down → (gx, -gy).
+          vec2 n = vec2(l - r, -(u - d));
+          float len = length(n);
+          if (len < 1e-3) n = vec2(0.0, 1.0); else n /= len;   // fallback: push up if deep inside
+          applyInter(uSilFx.x, n, uSilFx.y, true, f, kill);
+        }
       }
     }
     // --- map walls : keep agents inside the enabled-zone bounding box ---
@@ -170,10 +210,20 @@ export function packObstacles(
   }
   uniforms.uObsCircleCount.value = nc
   if (npoly === 0) uniforms.uObsPolyCount.value = 0
+  uniforms.uObsAspect.value = aspect
   if (mapBounds) {
     uniforms.uMapWalls.value = 1
     ;(uniforms.uMapBounds.value as THREE.Vector4).set(mapBounds[0], mapBounds[1], mapBounds[2], mapBounds[3])
   } else {
     uniforms.uMapWalls.value = 0
+  }
+  // Silhouette (module-level, set by the Engine each frame)
+  if (silState && silState.tex) {
+    uniforms.uSilOn.value = 1
+    uniforms.uSilMask.value = silState.tex
+    uniforms.uSilTexel.value = silState.texel
+    ;(uniforms.uSilFx.value as THREE.Vector3).set(INTERACTION_CODE[silState.interaction] ?? 0, silState.strength, silState.invert ? 1 : 0)
+  } else {
+    uniforms.uSilOn.value = 0
   }
 }
