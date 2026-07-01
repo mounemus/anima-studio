@@ -2035,6 +2035,28 @@ function MappingTab() {
           <Plus size={12} /> Grille
         </button>
       </div>
+      <button
+        onClick={() => {
+          // One-click chroma-key zone : full-frame, no drawing → pick a color and
+          // the content is projected automatically wherever that color appears.
+          const base = defaultShape(shapes.length, 'quad')
+          const shape = {
+            ...base,
+            name: `Chroma ${shapes.length + 1}`,
+            corners: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }],
+            chromaKey: { h: 0, s: 0, v: 1, tolerance: 0.2, feather: 0.08, invert: false },
+            content: { type: 'organism', opacity: 1 },
+          } as any
+          addShapes([shape])
+          selectShape(shapes.length)
+          // open the pipette right away so the user just clicks the object
+          setTimeout(() => window.dispatchEvent(new CustomEvent('anima:pick-color', { detail: `shape:${shape.id}` })), 120)
+        }}
+        style={{ width: '100%', justifyContent: 'center', fontSize: 12, marginTop: 4, background: 'var(--bg-elev-2)', border: '1px solid var(--accent)' }}
+        title="Crée une zone plein-cadre masquée par une couleur — pas besoin de dessiner. Clique puis choisis la couleur à la pipette."
+      >
+        🟢 Zone chroma-key (choisir une couleur — auto)
+      </button>
       {(() => {
         // Subdivision stepper for the selected mesh zone
         const sel = shapes[current.mapping.selectedShape ?? 0]
