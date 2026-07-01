@@ -1,4 +1,5 @@
 export { BoidsOrganism } from './Boids'
+export { BoidsGPUOrganism } from './BoidsGPU'
 export { ParticlesOrganism } from './Particles'
 export { TendrilsOrganism } from './Tendrils'
 export { CellsOrganism } from './Cells'
