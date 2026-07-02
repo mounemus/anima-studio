@@ -171,6 +171,7 @@ const SIM_FRAG = `
       if (pos.y >  1.0) { pos.y =  1.0; vel.y = -abs(vel.y) * 0.6; } else if (pos.y < -1.0) { pos.y = -1.0; vel.y = abs(vel.y) * 0.6; }
     }
     // free (2) : no boundary handling
+    pos = silhouetteClamp(pos);   // hard no-penetration of the body silhouette
     gl_FragColor = vec4(pos, vel);
   }
 `

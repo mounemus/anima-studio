@@ -119,6 +119,7 @@ const SIM_FRAG = `
     } else if (abs(pos.x)>xMax || abs(pos.y)>yMax) {
       pos = spawnPos(idx); vel = spawnVel(idx);
     }
+    pos = silhouetteClamp(pos);   // hard no-penetration of the body silhouette
     gl_FragColor = vec4(pos, vel);
   }
 `

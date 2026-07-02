@@ -161,6 +161,36 @@ export const OBSTACLE_GLSL = `
     }
     return f;
   }
+
+  // Hard no-penetration for the silhouette (avoid/bounce): if an agent ended up
+  // INSIDE the body, march it back out along the mask gradient. Force alone can't
+  // stop fast or turn-rate-limited flockers from clipping the body — this
+  // guarantees they never render inside it (clean silhouette edge / aura).
+  vec2 silhouetteClamp(vec2 p) {
+    if (uSilOn < 0.5) return p;
+    float inter = uSilFx.x;
+    if (inter > 0.5 && inter < 1.5) return p;   // attract → allow inside
+    if (inter > 2.5) return p;                  // kill → respawn handles it
+    float inv = uSilFx.z;
+    float step = max(0.015, uSilMargin);
+    for (int i = 0; i < 8; i++) {
+      vec2 sv = vec2(p.x / uObsAspect * 0.5 + 0.5, 0.5 - p.y * 0.5);
+      if (sv.x < 0.0 || sv.x > 1.0 || sv.y < 0.0 || sv.y > 1.0) break;
+      float c = texture2D(uSilMask, sv).r; if (inv > 0.5) c = 1.0 - c;
+      if (c <= 0.5) break;                       // outside → done
+      float mr = max(uSilTexel * 2.0, uSilMargin * 0.5);
+      float l = texture2D(uSilMask, sv + vec2(-mr, 0.0)).r;
+      float r = texture2D(uSilMask, sv + vec2( mr, 0.0)).r;
+      float u = texture2D(uSilMask, sv + vec2(0.0, -mr)).r;
+      float d = texture2D(uSilMask, sv + vec2(0.0,  mr)).r;
+      if (inv > 0.5) { l=1.0-l; r=1.0-r; u=1.0-u; d=1.0-d; }
+      vec2 n = vec2(l - r, -(u - d));
+      float len = length(n);
+      n = len < 1e-3 ? vec2(0.0, 1.0) : n / len;
+      p += n * step;
+    }
+    return p;
+  }
 `
 
 const toWX = (nx: number, a: number) => (nx - 0.5) * 2 * a

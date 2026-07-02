@@ -316,6 +316,13 @@ export class Engine {
     setTrackers(trackers)
   }
 
+  /** Live-update the per-scene sensor filters (Capteurs actifs). Without this the
+   *  Engine kept the senses snapshot from loadScene, so toggling "Tracking main +
+   *  corps" etc. in the UI had no effect until a full scene reload. */
+  updateSenses(s: any) {
+    if (this.currentScene) this.currentScene = { ...this.currentScene, senses: s }
+  }
+
   updateFlow(flow: import('../types/scene').FlowField | undefined) {
     if (this.currentScene) this.currentScene = { ...this.currentScene, flow }
     setFlow(flow)

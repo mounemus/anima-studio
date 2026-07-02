@@ -572,31 +572,24 @@ function SensesTab() {
   const setScenes = useSceneStore((s) => s.persistCurrent)
   const updateEvolution = useSceneStore((s) => s.updateEvolution)
 
-  const toggle = (key: 'hands' | 'audio' | 'light' | 'midi') => {
-    (current.senses as any)[key] = !(current.senses as any)[key]
+  // IMMUTABLE senses update — the old code mutated current.senses in place then
+  // faked an array copy, so the scene OBJECT reference never changed → Zustand
+  // saw no change → the checkboxes never re-rendered (couldn't be toggled).
+  const patchSenses = (patch: Record<string, boolean>) => {
+    useSceneStore.setState((st) => ({
+      scenes: st.scenes.map((s) => s.id === st.currentId ? { ...s, senses: { ...(s.senses as any), ...patch } } : s),
+    }))
     setScenes()
-    // trigger react
-    useSceneStore.setState({ scenes: [...useSceneStore.getState().scenes] })
+  }
+  const toggle = (key: 'hands' | 'audio' | 'light' | 'midi') => {
+    patchSenses({ [key]: !(current.senses as any)[key] })
   }
 
   // "Obstacles physiques uniquement" preset — turns off every reactive sensor
   // for this scene. Webcam / micro restent dispos en haut pour AR ou autres
   // scènes ; cette scène-ci ignore juste leurs valeurs.
-  const setObstaclesOnly = () => {
-    (current.senses as any).hands = false
-    ;(current.senses as any).audio = false
-    ;(current.senses as any).light = false
-    ;(current.senses as any).midi = false
-    setScenes()
-    useSceneStore.setState({ scenes: [...useSceneStore.getState().scenes] })
-  }
-  const setAllOn = () => {
-    (current.senses as any).hands = true
-    ;(current.senses as any).audio = true
-    ;(current.senses as any).light = true
-    setScenes()
-    useSceneStore.setState({ scenes: [...useSceneStore.getState().scenes] })
-  }
+  const setObstaclesOnly = () => patchSenses({ hands: false, audio: false, light: false, midi: false })
+  const setAllOn = () => patchSenses({ hands: true, audio: true, light: true })
   const allOff = !current.senses.hands && !current.senses.audio && !current.senses.light && !(current.senses as any).midi
 
   return (

@@ -145,6 +145,7 @@ const SIM_FRAG = `
       if(pos.x>ax){pos.x=ax;vel.x*=-0.5;} if(pos.x<-ax){pos.x=-ax;vel.x*=-0.5;}
       if(pos.y>1.0){pos.y=1.0;vel.y*=-0.5;} if(pos.y<-1.0){pos.y=-1.0;vel.y*=-0.5;}
     }
+    pos = silhouetteClamp(pos);   // hard no-penetration of the body silhouette
     gl_FragColor = vec4(pos, vel);
   }
 `

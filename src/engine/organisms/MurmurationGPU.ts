@@ -256,6 +256,7 @@ const SIM_FRAG = `
       if (npos.x >  ax) npos.x -= 2.0 * ax; else if (npos.x < -ax) npos.x += 2.0 * ax;
       if (npos.y >  1.0) npos.y -= 2.0;     else if (npos.y < -1.0) npos.y += 2.0;
     }
+    npos = silhouetteClamp(npos);   // hard no-penetration of the body silhouette
     gl_FragColor = vec4(npos, nvel);
   }
 `

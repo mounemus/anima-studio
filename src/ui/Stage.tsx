@@ -93,6 +93,12 @@ export function Stage({ onEngineReady }: Props) {
     if (current && engineRef.current) engineRef.current.updateFlow(current.flow)
   }, [current?.flow])
 
+  // Propagate sensor-filter (Capteurs actifs) changes so toggling "Tracking",
+  // "Micro" etc. takes effect live instead of only on a full scene reload.
+  useEffect(() => {
+    if (current && engineRef.current) engineRef.current.updateSenses(current.senses)
+  }, [current?.senses])
+
   // Propagate modifier updates — without this, Vortex / GravityWell / ColorCycle /
   // PulseGate / MagneticBands only "took" on a full scene reload because Engine
   // reads modifiers from currentScene every frame.
