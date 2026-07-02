@@ -45,12 +45,13 @@ export function makeObstacleUniforms(): Record<string, THREE.IUniform> {
     uSilOn: { value: 0 },
     uSilFx: { value: new THREE.Vector3(0, 1, 0) },  // (interactionCode, strength, invert)
     uSilTexel: { value: 1 / 128 },
+    uSilMargin: { value: 0.04 },
   }
 }
 
 /** Module-level silhouette state, set once per frame by the Engine and consumed
  *  by every organism's packObstacles() call (avoids threading it through each). */
-let silState: { tex: THREE.Texture | null; interaction: string; strength: number; invert: boolean; texel: number } | null = null
+let silState: { tex: THREE.Texture | null; interaction: string; strength: number; invert: boolean; texel: number; marginUv: number } | null = null
 export function setGPUSilhouette(s: typeof silState) { silState = s }
 
 /** GLSL to prepend to a sim fragment shader. Provides obstacleForce(). */
@@ -68,6 +69,7 @@ export const OBSTACLE_GLSL = `
   uniform float uSilOn;
   uniform vec3 uSilFx;      // (interactionCode, strength, invert)
   uniform float uSilTexel;
+  uniform float uSilMargin; // avoidance band radius (uv) around the body
 
   void applyInter(float interaction, vec2 n, float k, bool inside, inout vec2 f, inout float kill) {
     if (interaction < 0.5)      { f += n * k * 3.0; }                 // avoid
@@ -127,21 +129,25 @@ export const OBSTACLE_GLSL = `
       // world → mask uv : nx = x/aspect*0.5+0.5 ; ny = 0.5 - y*0.5  (mask stored top-down, X already mirrored)
       vec2 suv = vec2(p.x / uObsAspect * 0.5 + 0.5, 0.5 - p.y * 0.5);
       if (suv.x >= 0.0 && suv.x <= 1.0 && suv.y >= 0.0 && suv.y <= 1.0) {
-        float invert = uSilFx.z;
-        float here = texture2D(uSilMask, suv).r;
-        bool isIn = (here > 0.5) != (invert > 0.5);
-        if (isIn) {
-          float e = uSilTexel * 3.0;
-          float l = texture2D(uSilMask, suv + vec2(-e, 0.0)).r;
-          float r = texture2D(uSilMask, suv + vec2( e, 0.0)).r;
-          float u = texture2D(uSilMask, suv + vec2(0.0, -e)).r;
-          float d = texture2D(uSilMask, suv + vec2(0.0,  e)).r;
-          if (invert > 0.5) { l = 1.0 - l; r = 1.0 - r; u = 1.0 - u; d = 1.0 - d; }
-          // Sobel gradient → outward normal. World y is up while mask y is down → (gx, -gy).
+        float inv = uSilFx.z;
+        float mr = uSilMargin;                                   // avoidance-band radius
+        float c = texture2D(uSilMask, suv).r;
+        float l = texture2D(uSilMask, suv + vec2(-mr, 0.0)).r;
+        float r = texture2D(uSilMask, suv + vec2( mr, 0.0)).r;
+        float u = texture2D(uSilMask, suv + vec2(0.0, -mr)).r;
+        float d = texture2D(uSilMask, suv + vec2(0.0,  mr)).r;
+        if (inv > 0.5) { c=1.0-c; l=1.0-l; r=1.0-r; u=1.0-u; d=1.0-d; }
+        // Dilated influence : the body PLUS a margin band. Agents feel the push
+        // BEFORE touching (ramped by proximity) → they veer cleanly around the
+        // silhouette instead of penetrating then popping out (fuzzy edge before).
+        float infl = max(c, max(max(l, r), max(u, d)));
+        if (infl > 0.02) {
+          // Outward normal from the wide-kernel gradient. World y up, mask y down → (gx, -gy).
           vec2 n = vec2(l - r, -(u - d));
           float len = length(n);
-          if (len < 1e-3) n = vec2(0.0, 1.0); else n /= len;   // fallback: push up if deep inside
-          applyInter(uSilFx.x, n, uSilFx.y, true, f, kill);
+          if (len < 1e-3) n = vec2(0.0, 1.0); else n /= len;      // deep inside → push up (rare with the band)
+          // avoid/attract ramp across the band ; bounce/kill still gate on truly-inside (c>0.5)
+          applyInter(uSilFx.x, n, uSilFx.y * infl, c > 0.5, f, kill);
         }
       }
     }
@@ -222,6 +228,7 @@ export function packObstacles(
     uniforms.uSilOn.value = 1
     uniforms.uSilMask.value = silState.tex
     uniforms.uSilTexel.value = silState.texel
+    uniforms.uSilMargin.value = silState.marginUv
     ;(uniforms.uSilFx.value as THREE.Vector3).set(INTERACTION_CODE[silState.interaction] ?? 0, silState.strength, silState.invert ? 1 : 0)
   } else {
     uniforms.uSilOn.value = 0

@@ -700,7 +700,9 @@ export class Engine {
       rgba[i * 4] = v; rgba[i * 4 + 1] = v; rgba[i * 4 + 2] = v; rgba[i * 4 + 3] = 255
     }
     this.silObsTex.needsUpdate = true
-    setGPUSilhouette({ tex: this.silObsTex, interaction: obs.interaction, strength: obs.strength, invert: !!obs.silhouette?.invert, texel: 1 / mask.w })
+    // margin band (uv) from the obstacle's Marge slider → agents avoid before touching
+    const marginUv = 0.012 + (obs.margin ?? 0.3) * 0.08
+    setGPUSilhouette({ tex: this.silObsTex, interaction: obs.interaction, strength: obs.strength, invert: !!obs.silhouette?.invert, texel: 1 / mask.w, marginUv })
   }
 
   /** Bounding box (world coords) of the enabled mapping zones, or null when
