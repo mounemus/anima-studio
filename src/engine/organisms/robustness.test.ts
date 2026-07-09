@@ -24,7 +24,7 @@ const VISUAL: VisualParams = {
 const KINDS: OrganismKind[] = [
   'boids', 'particles', 'tendrils', 'cells', 'worms', 'spores', 'psychedelic',
   'mandala', 'fractal', 'mathcurve', 'reactiondiffusion', 'cellularautomata',
-  'hilbert', 'menger', 'supershape3d', 'swarm3d', 'crystal', 'murmuration',
+  'hilbert', 'menger', 'supershape3d', 'swarm3d', 'crystal', 'murmuration', 'instrument',
 ]
 
 function bufferFinite(o: any): { ok: boolean; where: string } {

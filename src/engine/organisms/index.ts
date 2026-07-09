@@ -20,6 +20,7 @@ export { MurmurationOrganism } from './Murmuration'
 export { MurmurationGPUOrganism } from './MurmurationGPU'
 export { ParticleSwarm3DOrganism } from './ParticleSwarm3D'
 export { CrystalGrowthOrganism } from './CrystalGrowth'
+export { InstrumentOrganism } from './Instrument'
 
 export interface OrganismLike {
   mesh: import('three').Object3D

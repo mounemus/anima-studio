@@ -68,6 +68,7 @@ const ORGANISM_PRESETS: Record<OrganismKind, Record<string, number>> = {
   swarm3d: { count: 600, speed: 1.2, cohesion: 0.6, separation: 0.8, alignment: 0.5, vision: 0.18, bounds: 1, pointSize: 2, autoOrbitSpeed: 0.25, fov: 55, trail: 0.5 } as any,
   crystal: { maxCubes: 1500, growthRate: 12, cubeSize: 0.95, gridResolution: 28, autoOrbitSpeed: 0.3, fov: 55, ambient: 0.4, emissive: 0.2 } as any,
   murmuration: { count: 3000, cohesion: 0.6, separation: 1.0, alignment: 2.2, swirl: 0.4, speed: 1.2, vision: 0.18, size: 0.015, flapSpeed: 14, flapAmplitude: 0.6, predatorResponse: 1.5, depthSpread: 0.7, trail: 0.92, gpu: 1 } as any,
+  instrument: { strings: 9, root: 48, scale: 'penta-minor', waveSpeed: 6, decay: 0.9, size: 0.02, velScale: 8, osc: 0 } as any,
 }
 
 export function ParamPanel() {
@@ -153,6 +154,7 @@ export function ParamPanel() {
               <option value="swarm3d">🐝 Essaim 3D — boids dans un cube</option>
               <option value="crystal">💎 Cristal — croissance par accrétion</option>
               <option value="murmuration">🦅 Murmuration — milliers d'oiseaux ballet aérien</option>
+              <option value="instrument">🎼 Instrument — harpe de lumière jouée aux mains</option>
             </select>
 
             <h3>Paramètres</h3>
@@ -470,6 +472,37 @@ export function ParamPanel() {
                 </div>
               </>
             )}
+            {current.organism.kind === 'instrument' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8, lineHeight: 1.5 }}>
+                  🎼 <strong>Harpe de lumière</strong> — active la <strong>Caméra</strong> + le tracking main.
+                  Tes doigts traversent les cordes pour les <strong>pincer</strong> : chaque corde joue sa note.
+                  Le son sort du polysynth interne ; active OSC pour piloter Ableton/un mixeur pro.
+                </p>
+                <Slider label="Cordes (notes)" value={v.strings} min={4} max={24} step={1} onChange={(x) => patchValues({ strings: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <div style={{ marginTop: 6 }}>
+                  <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>Gamme</label>
+                  <select value={(v as any).scale ?? 'penta-minor'} onChange={(e) => patchValues({ scale: e.target.value } as any)} style={{ width: '100%', fontSize: 12, marginTop: 2 }}>
+                    <option value="penta-minor">Pentatonique mineure (méditatif)</option>
+                    <option value="penta-major">Pentatonique majeure (lumineux)</option>
+                    <option value="minor">Mineure (mélancolique)</option>
+                    <option value="major">Majeure (joyeux)</option>
+                    <option value="dorian">Dorien (jazz / cool)</option>
+                    <option value="chromatic">Chromatique (12 notes)</option>
+                  </select>
+                </div>
+                <Slider label="Note grave (root MIDI)" value={v.root} min={36} max={60} step={1} onChange={(x) => patchValues({ root: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vibration (vitesse)" value={v.waveSpeed} min={0} max={20} step={0.5} onChange={(x) => patchValues({ waveSpeed: x })} format={(x) => x.toFixed(1)} />
+                <Slider label="Amortissement corde" value={v.decay} min={0.8} max={0.995} step={0.005} onChange={(x) => patchValues({ decay: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Taille des points" value={v.size} min={0.005} max={0.05} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Sensibilité vélocité" value={v.velScale} min={2} max={20} step={0.5} onChange={(x) => patchValues({ velScale: x })} format={(x) => x.toFixed(1)} />
+                <label style={{ display: 'flex', gap: 6, fontSize: 12, cursor: 'pointer', marginTop: 6 }}>
+                  <input type="checkbox" checked={!!(v as any).osc} onChange={(e) => patchValues({ osc: e.target.checked ? 1 : 0 } as any)} />
+                  🛰️ Émettre les notes en OSC (<code>/anima/note</code> → Ableton)
+                </label>
+                <InstrumentMixer />
+              </>
+            )}
             {current.organism.kind === 'mathcurve' && (
               <>
                 <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
@@ -677,6 +710,36 @@ function SensesTab() {
       </p>
 
       <BehaviorModifiers />
+    </div>
+  )
+}
+
+function InstrumentMixer() {
+  const [, rr] = useState(0)
+  const s = soundEngine.midiSynth
+  const [master, setMaster] = useState(0.6)
+  const patch = (p: Partial<typeof s>) => { soundEngine.setMidiSynth(p); rr((x) => x + 1) }
+  return (
+    <div style={{ marginTop: 14, padding: 10, background: 'var(--bg-elev-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)' }}>
+      <h3 style={{ margin: '0 0 4px' }}>🎛️ Console de mixage</h3>
+      <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8, lineHeight: 1.4 }}>
+        Sculpte le son de l'instrument. Pour un vrai mixeur multipiste, active OSC (ci-dessus) et route vers Ableton.
+      </p>
+      <Slider label="Volume général" value={master} min={0} max={1} step={0.01} onChange={(x) => { setMaster(x); soundEngine.setMasterVolume(x) }} format={(x) => `${Math.round(x * 100)}%`} />
+      <Slider label="Volume instrument" value={s.volume} min={0} max={1} step={0.01} onChange={(x) => patch({ volume: x })} format={(x) => `${Math.round(x * 100)}%`} />
+      <div style={{ marginTop: 6 }}>
+        <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>Timbre (waveform)</label>
+        <select value={s.waveform} onChange={(e) => patch({ waveform: e.target.value as any })} style={{ width: '100%', fontSize: 12, marginTop: 2 }}>
+          <option value="sine">Sinus (doux)</option>
+          <option value="triangle">Triangle</option>
+          <option value="sawtooth">Dent de scie (riche)</option>
+          <option value="square">Carré (8-bit)</option>
+        </select>
+      </div>
+      <Slider label="Filtre (cutoff)" value={s.filterCutoff} min={120} max={12000} step={10} onChange={(x) => patch({ filterCutoff: x })} format={(x) => `${Math.round(x)}Hz`} />
+      <Slider label="Résonance (Q)" value={s.filterQ} min={0.1} max={12} step={0.1} onChange={(x) => patch({ filterQ: x })} format={(x) => x.toFixed(1)} />
+      <Slider label="Attaque" value={s.attack} min={0.001} max={0.5} step={0.001} onChange={(x) => patch({ attack: x })} format={(x) => `${Math.round(x * 1000)}ms`} />
+      <Slider label="Release" value={s.release} min={0.02} max={2} step={0.01} onChange={(x) => patch({ release: x })} format={(x) => `${x.toFixed(2)}s`} />
     </div>
   )
 }

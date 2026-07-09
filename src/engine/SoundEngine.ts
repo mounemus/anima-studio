@@ -239,6 +239,19 @@ export class SoundEngine {
     }
   }
 
+  /** Pluck a note : note-on then auto-release after holdMs → a struck/plucked
+   *  sound for the hand-played instrument. Ensures + resumes the audio context. */
+  pluckNote(note: number, velocity = 0.7, holdMs = 90) {
+    this.ensure()
+    if (!this.ctx) return
+    if (!this.midiSynth.enabled) return
+    this.triggerNote(note, velocity)
+    window.setTimeout(() => this.releaseNote(note), Math.max(20, holdMs))
+  }
+
+  /** Enable/disable + reach the MIDI polysynth so an instrument organism can play it. */
+  enableSynth(on: boolean) { this.midiSynth.enabled = on }
+
   private triggerNote(note: number, velocity: number) {
     if (!this.ctx || !this.midiBus) return
     // If a voice for this note already exists (re-trigger), kill it first

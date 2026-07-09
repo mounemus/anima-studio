@@ -1,4 +1,6 @@
-export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores' | 'psychedelic' | 'mandala' | 'fractal' | 'mathcurve' | 'reactiondiffusion' | 'cellularautomata' | 'hilbert' | 'menger' | 'supershape3d' | 'swarm3d' | 'crystal' | 'murmuration'
+export type OrganismKind = 'boids' | 'particles' | 'tendrils' | 'cells' | 'worms' | 'spores' | 'psychedelic' | 'mandala' | 'fractal' | 'mathcurve' | 'reactiondiffusion' | 'cellularautomata' | 'hilbert' | 'menger' | 'supershape3d' | 'swarm3d' | 'crystal' | 'murmuration' | 'instrument'
+
+export interface InstrumentParams { strings: number; root: number; scale: string; waveSpeed: number; decay: number; size: number; velScale: number; osc: number }
 export interface MurmurationParams { count: number; cohesion: number; separation: number; alignment: number; swirl: number; speed: number; vision: number; size: number; flapSpeed: number; flapAmplitude: number; predatorResponse: number; depthSpread: number; trail: number }
 export interface ParticleSwarm3DParams { count: number; speed: number; cohesion: number; separation: number; alignment: number; vision: number; bounds: number; pointSize: number; autoOrbitSpeed: number; fov: number; trail: number }
 export interface CrystalGrowthParams { maxCubes: number; growthRate: number; cubeSize: number; gridResolution: number; autoOrbitSpeed: number; fov: number; ambient: number; emissive: number }
@@ -105,6 +107,7 @@ export type OrganismParams =
   | { kind: 'murmuration'; values: MurmurationParams }
   | { kind: 'swarm3d'; values: ParticleSwarm3DParams }
   | { kind: 'crystal'; values: CrystalGrowthParams }
+  | { kind: 'instrument'; values: InstrumentParams }
 
 export interface Palette {
   bg: string
