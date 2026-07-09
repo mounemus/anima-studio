@@ -185,6 +185,10 @@ export interface ShapeContent {
   organismValues?: Record<string, number>
   /** Optional palette override per zone. */
   organismPalette?: Palette
+  /** Manual flip of the inserted content (webcam/video/image) within the zone.
+   *  Independent of the automatic upright correction. */
+  flipV?: boolean
+  flipH?: boolean
 }
 
 export type ShapeKind = 'quad' | 'polygon' | 'mesh'

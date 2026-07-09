@@ -2469,6 +2469,20 @@ function ShapeContentEditor({ shape, update }: { shape: import('../types/scene')
         </div>
       )}
       {content.type === 'webcam' && <WebcamZoneStatus />}
+      {(content.type === 'video' || content.type === 'image' || content.type === 'webcam') && (
+        <div style={{ display: 'flex', gap: 12, marginBottom: 10, fontSize: 12 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} title="Retourner le contenu de haut en bas">
+            <input type="checkbox" checked={content.flipV ?? false}
+              onChange={(e) => update({ content: { ...content, flipV: e.target.checked } })} />
+            ↕ Retourner vertical
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} title="Effet miroir gauche-droite">
+            <input type="checkbox" checked={content.flipH ?? false}
+              onChange={(e) => update({ content: { ...content, flipH: e.target.checked } })} />
+            ↔ Miroir
+          </label>
+        </div>
+      )}
       {content.type === 'organism' && (
         <div style={{ marginBottom: 10, padding: 8, background: 'var(--bg-elev-2)', borderRadius: 'var(--radius-sm)' }}>
           <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 5 }}>Organisme de cette zone</div>

@@ -47,6 +47,7 @@ const FRAG = `
   uniform vec3 uTint;                  // overall tint multiplier
   uniform float uTransparent;          // 0 = opaque (normal), 1 = content-based alpha (AR mirror)
   uniform float uOpacity;              // per-shape opacity 0..1
+  uniform vec2 uContentFlip;           // x=flip horizontal, y=flip vertical (inserted content only)
   ${CHROMA_GLSL}
 
   // Newton iteration WITHOUT clamping (else outside-quad detection is dead code).
@@ -141,10 +142,13 @@ const FRAG = `
     if (uPattern > 0) {
       col = patternColor(uv);
     } else {
-      // sample sub-rect of source
+      // sample sub-rect of source (flip inserted content to upright via uContentFlip)
+      vec2 s = uv;
+      s.x = mix(s.x, 1.0 - s.x, uContentFlip.x);
+      s.y = mix(s.y, 1.0 - s.y, uContentFlip.y);
       vec2 srcUv = vec2(
-        uSourceRect.x + uv.x * uSourceRect.z,
-        1.0 - (uSourceRect.y + uv.y * uSourceRect.w)
+        uSourceRect.x + s.x * uSourceRect.z,
+        1.0 - (uSourceRect.y + s.y * uSourceRect.w)
       );
       col = texture2D(uTex, srcUv).rgb;
     }
@@ -187,6 +191,7 @@ const FRAG_POLYGON = `
   uniform vec3 uTint;
   uniform float uTransparent;
   uniform float uOpacity;
+  uniform vec2 uContentFlip;
 
   ${CHROMA_GLSL}
   // Ray-casting point-in-polygon.
@@ -236,9 +241,12 @@ const FRAG_POLYGON = `
     // UV: map vUv from polygon's bbox to [0,1] then to source rect
     vec2 local = (vUv - uBbox.xy) / uBbox.zw;
     local = clamp(local, 0.0, 1.0);
+    vec2 s = local;
+    s.x = mix(s.x, 1.0 - s.x, uContentFlip.x);
+    s.y = mix(s.y, 1.0 - s.y, uContentFlip.y);
     vec2 srcUv = vec2(
-      uSourceRect.x + local.x * uSourceRect.z,
-      1.0 - (uSourceRect.y + local.y * uSourceRect.w)
+      uSourceRect.x + s.x * uSourceRect.z,
+      1.0 - (uSourceRect.y + s.y * uSourceRect.w)
     );
     vec3 col;
     if (uPattern > 0) col = patternColor(local);
@@ -275,6 +283,7 @@ const MESH_FRAG = `
   uniform vec3 uTint;
   uniform float uTransparent;
   uniform float uOpacity;
+  uniform vec2 uContentFlip;
   vec3 patternColor(vec2 uv) {
     if (uPattern == 1) {
       vec2 g = abs(fract(uv * 10.0) - 0.5);
@@ -294,7 +303,10 @@ const MESH_FRAG = `
     vec3 col;
     if (uPattern > 0) col = patternColor(uv);
     else {
-      vec2 srcUv = vec2(uSourceRect.x + uv.x * uSourceRect.z, 1.0 - (uSourceRect.y + uv.y * uSourceRect.w));
+      vec2 s = uv;
+      s.x = mix(s.x, 1.0 - s.x, uContentFlip.x);
+      s.y = mix(s.y, 1.0 - s.y, uContentFlip.y);
+      vec2 srcUv = vec2(uSourceRect.x + s.x * uSourceRect.z, 1.0 - (uSourceRect.y + s.y * uSourceRect.w));
       col = texture2D(uTex, srcUv).rgb;
     }
     col *= uTint;
@@ -401,6 +413,7 @@ export class MappingPass {
         uTint: { value: new THREE.Vector3(1, 1, 1) },
         uTransparent: { value: this.transparent },
         uOpacity: { value: 1.0 },
+        uContentFlip: { value: new THREE.Vector2(0, 0) },
         ...chromaUniforms(),
       }
       mat = new THREE.ShaderMaterial({
@@ -426,6 +439,7 @@ export class MappingPass {
         uTint: { value: new THREE.Vector3(1, 1, 1) },
         uTransparent: { value: this.transparent },
         uOpacity: { value: 1.0 },
+        uContentFlip: { value: new THREE.Vector2(0, 0) },
         ...chromaUniforms(),
       }
       mat = new THREE.ShaderMaterial({
@@ -450,6 +464,7 @@ export class MappingPass {
         uTint: { value: new THREE.Vector3(1, 1, 1) },
         uTransparent: { value: this.transparent },
         uOpacity: { value: 1.0 },
+        uContentFlip: { value: new THREE.Vector2(0, 0) },
         ...chromaUniforms(),
       }
       mat = new THREE.ShaderMaterial({
@@ -466,6 +481,18 @@ export class MappingPass {
     const sm: ShapeMesh = { shape, mesh, uniforms, kind }
     this.applyToShape(sm, cfg)
     return sm
+  }
+
+  /** Inserted content (webcam/video/image) samples upside-down through the shader's
+   *  Y-flip (which is tuned for the organism render-target). Auto-correct it to
+   *  upright, then apply the user's manual flip toggles on top. Organism content
+   *  (no custom texture) keeps the RT orientation and only honors manual flips. */
+  private applyContentFlip(sm: ShapeMesh, isDom: boolean) {
+    const c = sm.shape.content
+    const autoY = isDom ? 1 : 0
+    const flipY = autoY ^ (c?.flipV ? 1 : 0)
+    const flipX = c?.flipH ? 1 : 0
+    ;(sm.uniforms.uContentFlip.value as THREE.Vector2).set(flipX, flipY)
   }
 
   private applyToShape(sm: ShapeMesh, cfg: MappingConfig) {
@@ -500,6 +527,7 @@ export class MappingPass {
       sm.uniforms.uOpacity.value = sm.shape.content?.opacity ?? 1.0
       const custom = this.perShapeTex.get(sm.shape.id)
       sm.uniforms.uTex.value = custom ?? this.sourceTex
+      this.applyContentFlip(sm, !!custom)
       sm.mesh.visible = sm.shape.enabled
       return
     }
@@ -555,6 +583,7 @@ export class MappingPass {
     sm.uniforms.uOpacity.value = sm.shape.content?.opacity ?? 1.0
     const custom = this.perShapeTex.get(sm.shape.id)
     sm.uniforms.uTex.value = custom ?? this.sourceTex
+    this.applyContentFlip(sm, !!custom)
     sm.mesh.visible = sm.shape.enabled
   }
 

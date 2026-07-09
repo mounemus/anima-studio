@@ -34,9 +34,6 @@ function ensure() {
   texture.colorSpace = THREE.SRGBColorSpace
   texture.minFilter = THREE.LinearFilter
   texture.magFilter = THREE.LinearFilter
-  // Consumed only as mapping-zone content: match the render-target convention
-  // (flipY=false) so the mapping shader's Y-flip lands it upright, not inverted.
-  texture.flipY = false
 
   maskCanvas = document.createElement('canvas')
   maskCanvas.width = CANVAS_W
