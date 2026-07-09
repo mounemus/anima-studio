@@ -246,6 +246,10 @@ export interface MappingConfig {
   arClipToZones?: boolean
   /** Mask all webcam content with SelfieSegmenter silhouette → only the body shows, environment is transparent. */
   arMaskBody?: boolean
+  /** Draw the live organism scene full-screen BEHIND the zones (living background),
+   *  so content zones (webcam/video/image) overlay on the organism instead of black.
+   *  Undefined/true = shown ; false = pure black background (projector-mapping mode). */
+  showOrganismBg?: boolean
 }
 
 export type ObstacleKind = 'circle' | 'polygon' | 'hand' | 'silhouette' | 'pose' | 'tracker'

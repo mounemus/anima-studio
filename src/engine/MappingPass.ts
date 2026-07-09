@@ -486,9 +486,17 @@ export class MappingPass {
   /** Inserted content (webcam/video/image) samples upside-down through the shader's
    *  Y-flip (which is tuned for the organism render-target). Auto-correct it to
    *  upright, then apply the user's manual flip toggles on top. Organism content
-   *  (no custom texture) keeps the RT orientation and only honors manual flips. */
-  private applyContentFlip(sm: ShapeMesh, isDom: boolean) {
+   *  (the scene RT or a zone's own RT) keeps the RT orientation and only honors
+   *  manual flips.
+   *
+   *  Keyed on content.type (always present in the shape data) — NOT on whether a
+   *  custom texture is currently bound. Basing it on perShapeTex caused a desync:
+   *  setShapeTexture() binds the DOM texture a beat after apply() computed the flip,
+   *  so the content rendered upright first, then inverted. */
+  private applyContentFlip(sm: ShapeMesh) {
     const c = sm.shape.content
+    const t = c?.type
+    const isDom = t === 'video' || t === 'image' || t === 'webcam'
     const autoY = isDom ? 1 : 0
     const flipY = autoY ^ (c?.flipV ? 1 : 0)
     const flipX = c?.flipH ? 1 : 0
@@ -527,7 +535,7 @@ export class MappingPass {
       sm.uniforms.uOpacity.value = sm.shape.content?.opacity ?? 1.0
       const custom = this.perShapeTex.get(sm.shape.id)
       sm.uniforms.uTex.value = custom ?? this.sourceTex
-      this.applyContentFlip(sm, !!custom)
+      this.applyContentFlip(sm)
       sm.mesh.visible = sm.shape.enabled
       return
     }
@@ -583,7 +591,7 @@ export class MappingPass {
     sm.uniforms.uOpacity.value = sm.shape.content?.opacity ?? 1.0
     const custom = this.perShapeTex.get(sm.shape.id)
     sm.uniforms.uTex.value = custom ?? this.sourceTex
-    this.applyContentFlip(sm, !!custom)
+    this.applyContentFlip(sm)
     sm.mesh.visible = sm.shape.enabled
   }
 
@@ -593,7 +601,7 @@ export class MappingPass {
     else this.perShapeTex.delete(shapeId)
     // Re-apply uniforms for the matching shape
     const sm = this.shapes.find((s) => s.shape.id === shapeId)
-    if (sm) sm.uniforms.uTex.value = tex ?? this.sourceTex
+    if (sm) { sm.uniforms.uTex.value = tex ?? this.sourceTex; this.applyContentFlip(sm) }
   }
 
   /** Live-update a quad zone's 4 corners (canvas 0..1) without a store write —
@@ -622,6 +630,14 @@ export class MappingPass {
     // Build the effective shape list:
     // - If mapping disabled OR no shapes: 1 full-screen identity quad
     // - Else: each shape becomes a mesh
+    // Synthetic base layer: the live organism, full-screen, drawn behind every zone
+    // so content zones (webcam/video/image) overlay on the living scene instead of
+    // pure black. content:undefined → uses the organism source, no content-flip.
+    const bgLayer: MappingShape = {
+      id: '__bg_organism__', name: 'Fond organisme', enabled: true,
+      corners: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }],
+      source: { x: 0, y: 0, w: 1, h: 1 },
+    }
     const targetShapes: MappingShape[] = (() => {
       if (!cfg.enabled) {
         return [{
@@ -630,7 +646,10 @@ export class MappingPass {
           source: { x: 0, y: 0, w: 1, h: 1 },
         }]
       }
-      if (cfg.shapes && cfg.shapes.length > 0) return cfg.shapes
+      if (cfg.shapes && cfg.shapes.length > 0) {
+        // Prepend the organism background unless the user opted for a black bg.
+        return cfg.showOrganismBg === false ? cfg.shapes : [bgLayer, ...cfg.shapes]
+      }
       // legacy fallback to single-quad corners
       return [{
         id: 'legacy', name: 'Legacy', enabled: true,

@@ -2009,6 +2009,18 @@ function MappingTab() {
           <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none', marginBottom: 6, fontSize: 12 }}>
             <input
               type="checkbox"
+              checked={m.showOrganismBg !== false}
+              onChange={(e) => update({ showOrganismBg: e.target.checked })}
+            />
+            <span><strong>Organisme en fond (derrière les zones)</strong></span>
+          </label>
+          <p style={{ fontSize: 10, color: 'var(--text-mute)', marginBottom: 8, marginLeft: 22, lineHeight: 1.4 }}>
+            Les zones (webcam / vidéo / image) se superposent sur l'organisme vivant.
+            Décoche pour un <em>fond noir</em> (mapping vidéoprojecteur : seules les zones s'allument).
+          </p>
+          <label style={{ display: 'flex', gap: 8, cursor: 'pointer', userSelect: 'none', marginBottom: 6, fontSize: 12 }}>
+            <input
+              type="checkbox"
               checked={m.arClipToZones ?? false}
               onChange={(e) => update({ arClipToZones: e.target.checked })}
             />
