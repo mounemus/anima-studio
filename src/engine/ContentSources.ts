@@ -54,6 +54,11 @@ function loadVideo(src: string): VideoEntry {
   texture.colorSpace = THREE.SRGBColorSpace
   texture.minFilter = THREE.LinearFilter
   texture.magFilter = THREE.LinearFilter
+  // The mapping shader flips Y to render the organism render-target (flipY=false)
+  // upright. Regular image/video textures default to flipY=true (three flips them
+  // at upload), which the shader flip would invert AGAIN → upside-down zone content.
+  // Match the render-target convention so the content lands right-side up.
+  texture.flipY = false
   return { kind: 'video', src, video, texture }
 }
 
@@ -64,6 +69,7 @@ function loadImage(src: string): ImageEntry {
   tex.colorSpace = THREE.SRGBColorSpace
   tex.minFilter = THREE.LinearMipmapLinearFilter
   tex.magFilter = THREE.LinearFilter
+  tex.flipY = false   // match render-target convention (see loadVideo)
   return { kind: 'image', src, texture: tex }
 }
 
@@ -82,6 +88,7 @@ function bindWebcam(useMaskedBody: boolean): WebcamEntry {
   texture.colorSpace = THREE.SRGBColorSpace
   texture.minFilter = THREE.LinearFilter
   texture.magFilter = THREE.LinearFilter
+  texture.flipY = false   // match render-target convention (see loadVideo)
   return { kind: 'webcam', texture }
 }
 
