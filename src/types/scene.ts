@@ -214,6 +214,9 @@ export interface MappingShape {
    *  colored object (e.g. a white t-shirt). Pick the color with the pipette.
    *  invert = show everywhere EXCEPT the color. */
   chromaKey?: { h: number; s: number; v: number; tolerance: number; feather: number; invert?: boolean }
+  /** Make this zone's OUTLINE a physical obstacle : organisms avoid / are attracted
+   *  to / bounce off / are killed by the zone shape (quad or polygon). */
+  obstacle?: { interaction: ObstacleInteraction; strength: number; margin: number }
   /** 0..1 — how much to smooth the polygon with Catmull-Rom subdivision (polygon kind only). */
   smooth?: number
   /** Rotation in radians around the shape's centroid (applied at render time only, points stay clean) */

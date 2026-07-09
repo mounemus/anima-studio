@@ -38,12 +38,14 @@ Tu DOIS retourner un objet JSON valide avec cette forme :
 }
 
 Zones de mapping (mappingShapes) :
-- kind: "polygon" (recommandé) ou "quad". Polygon = liste de points 0..1, smooth 0..1 pour courber.
+- kind: "polygon" (recommandé), "quad", ou "mesh" (grille de warp pour surfaces courbes).
+- Options par zone : "obstacle": { interaction:"avoid"|"attract"|"bounce"|"kill", strength:0-2, margin:0.02-0.4 } → le contour de la zone devient un obstacle physique. "chromaKey": { h,s,v (0..1), tolerance:0.05-0.6, feather:0-0.3 } → le contenu n'apparaît que sur cette couleur dans la webcam (green screen, suit l'objet).
+- kind: "polygon" = liste de points 0..1, smooth 0..1 pour courber.
 - Pour créer des zones visuelles autour de l'écran : place les points dans [0..1] x [0..1].
 - Exemples : "3 cercles en triangle" → 3 polygones de 24 sommets répartis.
 
-Organismes disponibles (9 espèces) :
-- boids.values: count(100-5000), cohesion(0-2), separation(0-2), alignment(0-2), speed(0.1-3), vision(0.1-1), size(0.005-0.05)
+Organismes disponibles (18 espèces) :
+- boids.values: count(100-100000), cohesion(0-2), separation(0-2), alignment(0-2), speed(0.1-3), vision(0.1-1), size(0.005-0.05), edges('wrap'|'wall'|'free' — bords toriques / rebond / aucun). GPU, jusqu'à 100k.
 - particles.values: count(500-8000), speed(0.1-3), size(0.3-3), spread(0.2-2), gravity(-1..1), turbulence(0-2)
 - tendrils.values: count(4-80), length(8-64), speed(0.1-2), twist(0-4)
 - cells.values: count(4-200), pulse(0-3), size(0.4-3), attraction(0-2), repulsion(0-2)

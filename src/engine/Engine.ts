@@ -514,6 +514,7 @@ export class Engine {
       // Feed the GPU organisms the bounding box of the enabled mapping zones so
       // they can keep agents inside the projection surface ("map walls"). null
       // when mapping is off → no confinement. CPU organisms ignore this field.
+      ;(this.organism as any).obstacles = this.effectiveObstacles()
       ;(this.organism as any).mapBounds = this.computeMapBounds()
       this.organism.update(dt)
       // Layer behavior modifiers on top of the base organism update.
@@ -710,6 +711,30 @@ export class Engine {
     // margin band (uv) from the obstacle's Marge slider → agents avoid before touching
     const marginUv = 0.012 + (obs.margin ?? 0.3) * 0.08
     setGPUSilhouette({ tex: this.silObsTex, interaction: obs.interaction, strength: obs.strength, invert: !!obs.silhouette?.invert, texel: 1 / mask.w, marginUv })
+  }
+
+  /** Scene obstacles + obstacles synthesized from any mapping zone flagged as an
+   *  obstacle (its outline becomes a polygon obstacle). */
+  private effectiveObstacles(): Obstacle[] {
+    const base = this.currentScene?.obstacles ?? []
+    const shapes = this.currentScene?.mapping?.shapes ?? []
+    let extra: Obstacle[] | null = null
+    for (const s of shapes) {
+      if (!s.enabled || !s.obstacle) continue
+      let points: { x: number; y: number }[] | undefined
+      if (s.kind === 'polygon' && s.points) points = s.points
+      else if (s.kind === 'mesh' && s.mesh) {
+        const g = s.mesh, w = g.cols + 1
+        points = [g.points[0], g.points[g.cols], g.points[(g.rows + 1) * w - 1], g.points[g.rows * w]]
+      } else points = s.corners
+      if (!points || points.length < 3) continue
+      ;(extra ??= []).push({
+        id: 'zoneobs:' + s.id, name: s.name, kind: 'polygon', enabled: true,
+        interaction: s.obstacle.interaction, strength: s.obstacle.strength, margin: s.obstacle.margin,
+        polygon: { points },
+      })
+    }
+    return extra ? [...base, ...extra] : base
   }
 
   /** Bounding box (world coords) of the enabled mapping zones, or null when

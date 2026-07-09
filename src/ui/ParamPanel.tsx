@@ -2090,6 +2090,49 @@ function MappingTab() {
         )
       })()}
       {(() => {
+        // Zone scaling (#3) + "zone is an obstacle" (#2)
+        const sel = shapes[current.mapping.selectedShape ?? 0]
+        if (!sel) return null
+        const scaleZone = (f: number) => {
+          const sc = (pts: { x: number; y: number }[]) => {
+            const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length
+            const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length
+            return pts.map((p) => ({ x: cx + (p.x - cx) * f, y: cy + (p.y - cy) * f }))
+          }
+          if (sel.kind === 'polygon' && sel.points) updateShape(sel.id, { points: sc(sel.points) })
+          else if (sel.kind === 'mesh' && sel.mesh) updateShape(sel.id, { mesh: { ...sel.mesh, points: sc(sel.mesh.points) } })
+          else updateShape(sel.id, { corners: sc(sel.corners) as any })
+        }
+        const ob = (sel as any).obstacle as { interaction: string; strength: number; margin: number } | undefined
+        return (
+          <div style={{ marginTop: 8, padding: 6, background: 'var(--bg-elev-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text-dim)' }}>
+              <span>Taille de la zone</span>
+              <button onClick={() => scaleZone(0.9)} style={{ padding: '2px 10px' }} title="Réduire">−</button>
+              <button onClick={() => scaleZone(1.111)} style={{ padding: '2px 10px' }} title="Agrandir">+</button>
+            </div>
+            <label style={{ display: 'flex', gap: 6, fontSize: 12, cursor: 'pointer', alignItems: 'center', marginTop: 8 }}>
+              <input type="checkbox" checked={!!ob}
+                onChange={(e) => updateShape(sel.id, { obstacle: e.target.checked ? { interaction: 'avoid', strength: 1, margin: 0.08 } : undefined } as any)} />
+              🧱 Cette zone est un obstacle (les organismes réagissent à son contour)
+            </label>
+            {ob && (
+              <>
+                <select value={ob.interaction} onChange={(e) => updateShape(sel.id, { obstacle: { ...ob, interaction: e.target.value } } as any)}
+                  style={{ width: '100%', fontSize: 12, marginTop: 4 }}>
+                  <option value="avoid">↺ Éviter (contourner)</option>
+                  <option value="attract">➘ Attirer (aspirer)</option>
+                  <option value="bounce">⤾ Rebondir</option>
+                  <option value="kill">✕ Disparaître (kill)</option>
+                </select>
+                <Slider label="Force" value={ob.strength} min={0} max={2} step={0.05} onChange={(x) => updateShape(sel.id, { obstacle: { ...ob, strength: x } } as any)} />
+                <Slider label="Marge" value={ob.margin} min={0.02} max={0.4} step={0.01} onChange={(x) => updateShape(sel.id, { obstacle: { ...ob, margin: x } } as any)} format={(x) => `${Math.round(x * 100)}%`} />
+              </>
+            )}
+          </div>
+        )
+      })()}
+      {(() => {
         // Chroma-key (green screen) : the zone's content shows only where the live
         // webcam matches the picked color → it sticks to & follows a colored object.
         const sel = shapes[current.mapping.selectedShape ?? 0]
