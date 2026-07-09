@@ -483,22 +483,15 @@ export class MappingPass {
     return sm
   }
 
-  /** Inserted content (webcam/video/image) samples upside-down through the shader's
-   *  Y-flip (which is tuned for the organism render-target). Auto-correct it to
-   *  upright, then apply the user's manual flip toggles on top. Organism content
-   *  (the scene RT or a zone's own RT) keeps the RT orientation and only honors
-   *  manual flips.
-   *
-   *  Keyed on content.type (always present in the shape data) — NOT on whether a
-   *  custom texture is currently bound. Basing it on perShapeTex caused a desync:
-   *  setShapeTexture() binds the DOM texture a beat after apply() computed the flip,
-   *  so the content rendered upright first, then inverted. */
+  /** Content flip = purely the user's manual toggles. All content (webcam / video /
+   *  image / organism RT) renders upright by default (flip 0) — verified empirically.
+   *  An earlier "auto-correct DOM content" heuristic was WRONG: it inverted content
+   *  that was already upright, which is what made zones "start correct then flip"
+   *  (the auto-flip engaged a beat after the texture bound). No magic now: default
+   *  upright, and ↕/↔ toggles for any source that genuinely needs flipping. */
   private applyContentFlip(sm: ShapeMesh) {
     const c = sm.shape.content
-    const t = c?.type
-    const isDom = t === 'video' || t === 'image' || t === 'webcam'
-    const autoY = isDom ? 1 : 0
-    const flipY = autoY ^ (c?.flipV ? 1 : 0)
+    const flipY = c?.flipV ? 1 : 0
     const flipX = c?.flipH ? 1 : 0
     ;(sm.uniforms.uContentFlip.value as THREE.Vector2).set(flipX, flipY)
   }
