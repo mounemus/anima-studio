@@ -27,6 +27,7 @@ interface SceneStoreState {
   addMappingShapes: (shapes: MappingShape[]) => void
   removeMappingShape: (id: string) => void
   updateMappingShape: (id: string, patch: Partial<MappingShape>) => void
+  reorderMappingShape: (id: string, dir: -1 | 1) => void
   selectMappingShape: (idx: number) => void
   setTestPattern: (p: TestPattern) => void
   addObstacle: (kind: ObstacleKind, patch?: Partial<Obstacle>) => string | null
@@ -238,6 +239,22 @@ export const useSceneStore = create<SceneStoreState>((set, get) => ({
         if (s.id !== st.currentId) return s
         const shapes = (s.mapping.shapes ?? []).map((sh) => sh.id === id ? { ...sh, ...patch } : sh)
         return { ...s, mapping: { ...s.mapping, shapes }, updatedAt: Date.now() }
+      })
+      return { scenes: next }
+    })
+    debouncePersist(() => get().persistCurrent())
+  },
+
+  reorderMappingShape: (id, dir) => {
+    set((st) => {
+      const next = st.scenes.map((s) => {
+        if (s.id !== st.currentId) return s
+        const shapes = [...(s.mapping.shapes ?? [])]
+        const i = shapes.findIndex((sh) => sh.id === id)
+        const j = i + dir
+        if (i < 0 || j < 0 || j >= shapes.length) return s   // already at an edge
+        ;[shapes[i], shapes[j]] = [shapes[j], shapes[i]]      // swap = change draw order (later = on top)
+        return { ...s, mapping: { ...s.mapping, shapes, selectedShape: j }, updatedAt: Date.now() }
       })
       return { scenes: next }
     })

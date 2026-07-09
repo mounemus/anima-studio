@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX, Wand2, Bone, Pipette, Wind, Navigation, Bug, Palette, Activity, Map as MapIcon, StickyNote, Film, Image as ImageIcon, Camera as CameraIcon } from 'lucide-react'
+import { Sparkles, X, Loader, Plus, Trash2, Eye, EyeOff, ChevronUp, ChevronDown, Video, VideoOff, Crop, Save, Download, FolderOpen, Hand, User, Circle, Pentagon, Shapes, Music2, Volume2, VolumeX, Wand2, Bone, Pipette, Wind, Navigation, Bug, Palette, Activity, Map as MapIcon, StickyNote, Film, Image as ImageIcon, Camera as CameraIcon } from 'lucide-react'
 import { useSceneStore } from '../store/sceneStore'
 import { ORGANISM_DEFAULTS } from '../engine/OrganismFactory'
 import type { OrganismKind, TestPattern, ObstacleInteraction, Waveform, SoundConfig } from '../types/scene'
@@ -1965,6 +1965,7 @@ function MappingTab() {
   const addShapes = useSceneStore((s) => s.addMappingShapes)
   const removeShape = useSceneStore((s) => s.removeMappingShape)
   const updateShape = useSceneStore((s) => s.updateMappingShape)
+  const reorderShape = useSceneStore((s) => s.reorderMappingShape)
   const selectShape = useSceneStore((s) => s.selectMappingShape)
   const setTestPattern = useSceneStore((s) => s.setTestPattern)
   const m = current.mapping
@@ -2035,6 +2036,7 @@ function MappingTab() {
       <h3 style={{ marginTop: 10 }}>Zones (Kantan-style)</h3>
       <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
         Chaque zone projette une portion du rendu sur un quadrilatère de la sortie.
+        {shapes.length > 1 && <> Réordonne comme des calques avec <ChevronUp size={10} style={{ verticalAlign: 'middle' }} />/<ChevronDown size={10} style={{ verticalAlign: 'middle' }} /> — <b>le bas de la liste passe au-dessus</b>.</>}
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
         {shapes.length === 0 && (
@@ -2070,6 +2072,24 @@ function MappingTab() {
               onClick={(e) => e.stopPropagation()}
               style={{ flex: 1, background: 'transparent', border: 'none', padding: 2, fontSize: 12 }}
             />
+            <button
+              className="ghost icon"
+              onClick={(e) => { e.stopPropagation(); reorderShape(sh.id, -1) }}
+              disabled={i === 0}
+              title="Monter (passe dessous)"
+              style={{ padding: 2, opacity: i === 0 ? 0.25 : 1 }}
+            >
+              <ChevronUp size={12} />
+            </button>
+            <button
+              className="ghost icon"
+              onClick={(e) => { e.stopPropagation(); reorderShape(sh.id, 1) }}
+              disabled={i === shapes.length - 1}
+              title="Descendre (passe au-dessus)"
+              style={{ padding: 2, opacity: i === shapes.length - 1 ? 0.25 : 1 }}
+            >
+              <ChevronDown size={12} />
+            </button>
             <button
               className="ghost icon danger"
               onClick={(e) => { e.stopPropagation(); if (confirm(`Supprimer ${sh.name} ?`)) removeShape(sh.id) }}
