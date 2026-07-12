@@ -21,6 +21,11 @@ function sanitizeForSave(s: Scene): Scene {
       sh.content.src = undefined
     }
   }
+  // Uploaded organism texture is a blob: URL too — it dies on reload and would
+  // otherwise be re-loaded (dead) at boot. Drop it (keep AI/http textures).
+  if (next.visual?.texture?.url?.startsWith('blob:')) {
+    next.visual.texture = null
+  }
   return next
 }
 
@@ -44,6 +49,9 @@ function safeOrganism(rawOrg: any): { kind: OrganismKind; values: Record<string,
  *  Exported so the import path can reuse the exact same hardening as load. */
 export function migrateScene(s: any): Scene {
   const v = s.visual ?? {}
+  // A blob: texture URL from a previous session is dead after reload — loading it
+  // throws a connection error. Drop it so boot doesn't try to fetch a dead blob.
+  const texture = v.texture?.url?.startsWith('blob:') ? null : (v.texture ?? null)
   return {
     ...s,
     organism: safeOrganism(s.organism),
@@ -51,8 +59,9 @@ export function migrateScene(s: any): Scene {
     obstacles: Array.isArray(s.obstacles) ? s.obstacles : [],
     flow: s.flow ?? defaultFlow(),
     visual: {
-      bloom: 0.5, feedback: 0.92, blendMode: 'add' as const, texture: null, textureIntensity: 0,
+      bloom: 0.5, feedback: 0.92, blendMode: 'add' as const, textureIntensity: 0,
       ...v,
+      texture,
       // Palette must be DEEP-merged : a partial palette (e.g. only {primary})
       // from an old/external file would otherwise wipe bg/secondary/glow and
       // crash the Engine which reads palette.bg/primary/secondary/glow.
