@@ -27,6 +27,8 @@ import * as THREE from 'three'
 import type { VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
 import { OBSTACLE_GLSL, makeObstacleUniforms, packObstacles } from '../GPUObstacles'
+import { MODIFIER_GLSL, makeModifierUniforms, packModifiers } from '../GPUModifiers'
+import type { Modifier } from '../Modifiers'
 import { edgeCode } from './BoidsGPU'
 
 export interface MurmurationParams {
@@ -145,6 +147,7 @@ const SIM_FRAG = `
   uniform float uEdge;
   ${CURL}
   ${OBSTACLE_GLSL}
+  ${MODIFIER_GLSL}
 
   vec2 worldToFieldUv(vec2 w) { return vec2(w.x / uAspect, w.y) * 0.5 + 0.5; }
   vec4 fieldAt(vec2 w) { return texture2D(uField, worldToFieldUv(w)); }
@@ -227,6 +230,7 @@ const SIM_FRAG = `
     float _kill; vec2 _of = obstacleForce(pos, _kill);
     if (_kill > 0.5) { gl_FragColor = vec4(0.0, 0.0, uSpeed, 0.0); return; }
     dir += _of * 2.5;
+    dir += modifierForce(pos);   // vortex / gravity well / magnetic bands
 
     // Desired unit direction (fallback : keep current heading)
     float dm = length(dir);
@@ -248,7 +252,7 @@ const SIM_FRAG = `
       float cA = cos(maxStep);
       nd = vec2(cur.x * cA - cur.y * sA, cur.x * sA + cur.y * cA);
     }
-    vec2 nvel = nd * uSpeed;
+    vec2 nvel = nd * uSpeed * uPulseVelScale;   // pulseGate beat
     vec2 npos = pos + nvel * uDt;
     // Toroidal wrap in 'wrap' mode (uEdge==0); wall repulsion handled above; free = nothing.
     if (uEdge < 0.5) {
@@ -327,6 +331,7 @@ export class MurmurationGPUOrganism {
   mesh: THREE.Mesh
   count = 0
   obstacles: Obstacle[] | undefined
+  modifiers: Modifier[] | undefined
   mapBounds: [number, number, number, number] | null = null
   renderer: THREE.WebGLRenderer | null = null
 
@@ -394,6 +399,7 @@ export class MurmurationGPUOrganism {
         uDanger: { value: 0.4 },
         uEdge: { value: edgeCode(params.edges ?? 'wall') },
         ...makeObstacleUniforms(),
+        ...makeModifierUniforms(),
       },
       depthTest: false, depthWrite: false,
     })
@@ -580,6 +586,7 @@ export class MurmurationGPUOrganism {
 
     // 2) SIM — advance state, ping-pong
     packObstacles(this.simMat.uniforms, this.obstacles, this.aspect, this.mapBounds)
+    packModifiers(this.simMat.uniforms, this.modifiers, this.aspect, this.t)
     const src = this.current
     const dst = src === this.stateA ? this.stateB : this.stateA
     this.simMat.uniforms.uPrev.value = src.texture

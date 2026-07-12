@@ -19,6 +19,8 @@ import type { VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
 import { flowState } from '../Flow'
 import { OBSTACLE_GLSL, makeObstacleUniforms, packObstacles } from '../GPUObstacles'
+import { MODIFIER_GLSL, makeModifierUniforms, packModifiers, SPRITE_TEX_GLSL, makeSpriteTexUniforms } from '../GPUModifiers'
+import type { Modifier } from '../Modifiers'
 
 export interface ParticlesGPUParams {
   count: number
@@ -74,6 +76,7 @@ const SIM_FRAG = `
   uniform float uWrap, uSpread, uLifePeriod;
   ${HASH}
   ${OBSTACLE_GLSL}
+  ${MODIFIER_GLSL}
   void main(){
     float idx = floor(vUv.y*uTexDim)*uTexDim + floor(vUv.x*uTexDim);
     if (idx >= uCount) { gl_FragColor = vec4(999.0,999.0,0.0,0.0); return; }
@@ -108,6 +111,8 @@ const SIM_FRAG = `
     float _kill; vec2 _of = obstacleForce(pos, _kill);
     if (_kill > 0.5) { gl_FragColor = vec4(spawnPos(idx), spawnVel(idx)); return; }
     vel += _of * uDt;
+    vel += modifierForce(pos) * uDt;       // vortex / gravity well / magnetic bands
+    vel *= uPulseVelScale;                 // pulseGate beat
     vel *= pow(0.985, uDt*60.0);           // dt-independent damping
     float aBoost = 1.0 + uAudioMid*1.5;
     pos += vel * uSpeed * aBoost * uDt;
@@ -144,7 +149,14 @@ const RENDER_FRAG = `
   precision highp float;
   uniform float uAlpha;
   varying vec3 vColor;
+  ${SPRITE_TEX_GLSL}
   void main(){
+    if (uUseTex > 0.5) {
+      vec4 s = texSprite(vColor, uAlpha);
+      if (s.a < 0.01) discard;
+      gl_FragColor = s;
+      return;
+    }
     vec2 c = gl_PointCoord - 0.5;
     float d2 = dot(c,c);
     if (d2 > 0.25) discard;
@@ -157,6 +169,7 @@ export class ParticlesGPUOrganism {
   mesh: THREE.Points
   count = 0
   obstacles: Obstacle[] | undefined
+  modifiers: Modifier[] | undefined
   mapBounds: [number, number, number, number] | null = null
   renderer: THREE.WebGLRenderer | null = null
 
@@ -203,6 +216,7 @@ export class ParticlesGPUOrganism {
         uWrap: { value: wrap }, uSpread: { value: params.spread ?? 0.5 },
         uLifePeriod: { value: 4.0 },
         ...makeObstacleUniforms(),
+        ...makeModifierUniforms(),
       },
       depthTest: false, depthWrite: false,
     })
@@ -223,6 +237,7 @@ export class ParticlesGPUOrganism {
         uCount: { value: this.count }, uPointPx: { value: 4 }, uAlpha: { value: 0.85 },
         uColorA: { value: new THREE.Color(visual.palette.primary) },
         uColorB: { value: new THREE.Color(visual.palette.glow) },
+        ...makeSpriteTexUniforms(),
       },
       transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
     })
@@ -265,6 +280,11 @@ export class ParticlesGPUOrganism {
     ;(this.renderMat.uniforms.uColorA.value as THREE.Color).set(visual.palette.primary)
     ;(this.renderMat.uniforms.uColorB.value as THREE.Color).set(visual.palette.glow)
     this.renderMat.blending = visual.blendMode === 'normal' ? THREE.NormalBlending : THREE.AdditiveBlending
+  }
+
+  setTexture(tex: THREE.Texture | null) {
+    this.renderMat.uniforms.uTex.value = tex
+    this.renderMat.uniforms.uUseTex.value = tex ? 1 : 0
   }
 
   private seed() {
@@ -318,6 +338,7 @@ export class ParticlesGPUOrganism {
 
     // sim ping-pong (single pass — no field)
     packObstacles(this.simMat.uniforms, this.obstacles, this.aspect, this.mapBounds)
+    packModifiers(this.simMat.uniforms, this.modifiers, this.aspect, this.t)
     const src = this.current
     const dst = src === this.stateA ? this.stateB : this.stateA
     this.simMat.uniforms.uPrev.value = src.texture

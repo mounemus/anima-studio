@@ -17,6 +17,8 @@ import type { VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
 import { flowState } from '../Flow'
 import { OBSTACLE_GLSL, makeObstacleUniforms, packObstacles } from '../GPUObstacles'
+import { MODIFIER_GLSL, makeModifierUniforms, packModifiers, SPRITE_TEX_GLSL, makeSpriteTexUniforms } from '../GPUModifiers'
+import type { Modifier } from '../Modifiers'
 
 export interface CellsGPUParams {
   count: number
@@ -88,6 +90,7 @@ const SIM_FRAG = `
   vec4 fld(vec2 w){ return texture2D(uField, fUv(w)); }
   vec2 sn(vec2 g){ float m=length(g); return m>1e-4 ? g/m : vec2(0.0); }
   ${OBSTACLE_GLSL}
+  ${MODIFIER_GLSL}
 
   void main(){
     float idx = floor(vUv.y*uTexDim)*uTexDim + floor(vUv.x*uTexDim);
@@ -131,8 +134,10 @@ const SIM_FRAG = `
     float _kill; vec2 _of = obstacleForce(pos, _kill);
     if (_kill > 0.5) { gl_FragColor = vec4((fract(idx*0.013)-0.5)*uAspect, (fract(idx*0.071)-0.5), 0.0, 0.0); return; }
     force += _of;
+    force += modifierForce(pos);   // vortex / gravity well / magnetic bands
 
     vel = vel * pow(0.9, uDt*60.0) + force * uDt;
+    vel *= uPulseVelScale;          // pulseGate beat
     float maxSp = 1.2;
     float s = length(vel); if (s>maxSp) vel = vel/s*maxSp;
     pos += vel * uDt;
@@ -172,7 +177,14 @@ const RENDER_FRAG = `
   precision highp float;
   uniform float uAlpha;
   varying vec3 vColor;
+  ${SPRITE_TEX_GLSL}
   void main(){
+    if (uUseTex > 0.5) {
+      vec4 s = texSprite(vColor, uAlpha);
+      if (s.a < 0.01) discard;
+      gl_FragColor = s;
+      return;
+    }
     vec2 c = gl_PointCoord - 0.5;
     float d2 = dot(c,c);
     if (d2 > 0.25) discard;
@@ -194,6 +206,7 @@ export class CellsGPUOrganism {
   mesh: THREE.Points
   count = 0
   obstacles: Obstacle[] | undefined
+  modifiers: Modifier[] | undefined
   mapBounds: [number, number, number, number] | null = null
   renderer: THREE.WebGLRenderer | null = null
 
@@ -252,6 +265,7 @@ export class CellsGPUOrganism {
         uFlow: { value: new THREE.Vector2(0, 0) }, uFlowTurb: { value: 0 },
         uWrap: { value: wrap },
         ...makeObstacleUniforms(),
+        ...makeModifierUniforms(),
       },
       depthTest: false, depthWrite: false,
     })
@@ -288,6 +302,7 @@ export class CellsGPUOrganism {
         uCount: { value: this.count }, uPointPx: { value: 8 }, uAlpha: { value: 0.6 },
         uTime: { value: 0 }, uPulse: { value: params.pulse },
         uCol0: { value: cols[0] }, uCol1: { value: cols[1] }, uCol2: { value: cols[2] }, uCol3: { value: cols[3] },
+        ...makeSpriteTexUniforms(),
       },
       transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
     })
@@ -346,6 +361,11 @@ export class CellsGPUOrganism {
     this.renderMat.blending = visual.blendMode === 'normal' ? THREE.NormalBlending : THREE.AdditiveBlending
   }
 
+  setTexture(tex: THREE.Texture | null) {
+    this.renderMat.uniforms.uTex.value = tex
+    this.renderMat.uniforms.uUseTex.value = tex ? 1 : 0
+  }
+
   private seed() {
     if (!this.renderer) return
     const seedMat = new THREE.ShaderMaterial({
@@ -392,6 +412,7 @@ export class CellsGPUOrganism {
     this.renderer.render(this.fieldScene, this.simCam)
     // 2) sim
     packObstacles(this.simMat.uniforms, this.obstacles, this.aspect, this.mapBounds)
+    packModifiers(this.simMat.uniforms, this.modifiers, this.aspect, this.t)
     const src = this.current
     const dst = src === this.stateA ? this.stateB : this.stateA
     this.simMat.uniforms.uPrev.value = src.texture

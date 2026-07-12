@@ -18,6 +18,8 @@ import type { VisualParams, Obstacle } from '../../types/scene'
 import { senseBus } from '../../senses/SenseBus'
 import { flowState } from '../Flow'
 import { OBSTACLE_GLSL, makeObstacleUniforms, packObstacles } from '../GPUObstacles'
+import { MODIFIER_GLSL, makeModifierUniforms, packModifiers, SPRITE_TEX_GLSL, makeSpriteTexUniforms } from '../GPUModifiers'
+import type { Modifier } from '../Modifiers'
 
 export interface BoidsGPUParams {
   count: number
@@ -110,6 +112,7 @@ const SIM_FRAG = `
   vec2 worldToFieldUv(vec2 w) { return vec2(w.x / uAspect, w.y) * 0.5 + 0.5; }
   vec4 fieldAt(vec2 w) { return texture2D(uField, worldToFieldUv(w)); }
   ${OBSTACLE_GLSL}
+  ${MODIFIER_GLSL}
 
   void main() {
     float idx = floor(vUv.y * uTexDim) * uTexDim + floor(vUv.x * uTexDim);
@@ -153,8 +156,12 @@ const SIM_FRAG = `
     if (_kill > 0.5) { gl_FragColor = vec4((fract(idx*0.013)-0.5)*uAspect, (fract(idx*0.071)-0.5), 0.0, 0.0); return; }
     force += _of;
 
+    // Behaviour modifiers (vortex / gravity well / magnetic bands)
+    force += modifierForce(pos);
+
     // Integrate (accel) + speed clamp
     vel += force * uDt * 2.0;
+    vel *= uPulseVelScale;   // pulseGate beat
     float maxSp = 1.2 * uSpeed;
     float sp = length(vel);
     if (sp > maxSp) vel = vel / sp * maxSp;
@@ -199,7 +206,14 @@ const RENDER_FRAG = `
   precision highp float;
   uniform float uAlpha;
   varying vec3 vColor;
+  ${SPRITE_TEX_GLSL}
   void main() {
+    if (uUseTex > 0.5) {
+      vec4 s = texSprite(vColor, uAlpha);
+      if (s.a < 0.01) discard;
+      gl_FragColor = s;
+      return;
+    }
     vec2 c = gl_PointCoord - 0.5;
     float d2 = dot(c, c);
     if (d2 > 0.25) discard;
@@ -212,6 +226,7 @@ export class BoidsGPUOrganism {
   mesh: THREE.Points
   count = 0
   obstacles: Obstacle[] | undefined
+  modifiers: Modifier[] | undefined
   mapBounds: [number, number, number, number] | null = null
   renderer: THREE.WebGLRenderer | null = null
 
@@ -269,6 +284,7 @@ export class BoidsGPUOrganism {
         uFlow: { value: new THREE.Vector2(0, 0) }, uFlowTurb: { value: 0 },
         uEdge: { value: edgeCode(params.edges) },
         ...makeObstacleUniforms(),
+        ...makeModifierUniforms(),
       },
       depthTest: false, depthWrite: false,
     })
@@ -305,6 +321,7 @@ export class BoidsGPUOrganism {
         uCount: { value: this.count }, uPointPx: { value: 6 }, uAlpha: { value: 0.9 },
         uColorA: { value: new THREE.Color(visual.palette.primary) },
         uColorB: { value: new THREE.Color(visual.palette.secondary) },
+        ...makeSpriteTexUniforms(),
       },
       transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
     })
@@ -368,6 +385,11 @@ export class BoidsGPUOrganism {
     this.renderMat.blending = visual.blendMode === 'normal' ? THREE.NormalBlending : THREE.AdditiveBlending
   }
 
+  setTexture(tex: THREE.Texture | null) {
+    this.renderMat.uniforms.uTex.value = tex
+    this.renderMat.uniforms.uUseTex.value = tex ? 1 : 0
+  }
+
   private seed() {
     if (!this.renderer) return
     const seedMat = new THREE.ShaderMaterial({
@@ -422,6 +444,7 @@ export class BoidsGPUOrganism {
 
     // 2) sim ping-pong
     packObstacles(this.simMat.uniforms, this.obstacles, this.aspect, this.mapBounds)
+    packModifiers(this.simMat.uniforms, this.modifiers, this.aspect, this.t)
     const src = this.current
     const dst = src === this.stateA ? this.stateB : this.stateA
     this.simMat.uniforms.uPrev.value = src.texture

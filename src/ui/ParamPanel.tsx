@@ -1168,12 +1168,12 @@ function GravityWellEditor({ wells, onChange }: {
   )
 }
 
-// Only these organisms keep persistent per-agent position+velocity arrays that
-// the position/velocity modifiers can actually move. The others are procedural
-// (regenerated each frame) or GPU full-quad simulations with no agents — the
-// position modifiers are silent no-ops there. colorCycle is visual-only and
-// works on every organism.
-const AGENT_ORGANISMS = new Set(['boids', 'particles', 'cells', 'spores'])
+// Organisms whose agents the movement modifiers can steer. CPU variants move via
+// applyModifiers(); GPU variants (boids/particles/cells/murmuration) apply the same
+// force fields in their sim shader (see GPUModifiers.ts / packModifiers). Procedural
+// organisms (mandala, fractal, …) have no agents — only colorCycle (visual-only)
+// affects them, and it works on every organism.
+const AGENT_ORGANISMS = new Set(['boids', 'particles', 'cells', 'spores', 'murmuration'])
 function modifierApplies(modKind: string, organismKind: string): boolean {
   if (modKind === 'colorCycle') return true
   return AGENT_ORGANISMS.has(organismKind)
@@ -1368,6 +1368,15 @@ function TextureGen() {
   const [liveStrength, setLiveStrength] = useState(0.55)
   const [liveStatus, setLiveStatus] = useState<'idle' | 'capturing' | 'pending' | 'error'>('idle')
   const liveRef = useRef<LiveImg2Img | null>(null)
+  const uploadRef = useRef<HTMLInputElement>(null)
+
+  const onUploadTexture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    const url = URL.createObjectURL(f)   // local blob — lost on reload, like zone content
+    setTexture({ url, prompt: f.name, model: 'upload', generatedAt: Date.now() })
+    e.target.value = ''
+  }
 
   // Stop live loop on unmount or when scene changes
   useEffect(() => {
@@ -1478,6 +1487,15 @@ function TextureGen() {
           {busy ? '...' : 'Générer'}
         </button>
       </div>
+      <button
+        onClick={() => uploadRef.current?.click()}
+        className="ghost"
+        style={{ width: '100%', justifyContent: 'center', fontSize: 12, marginBottom: 8 }}
+        title="Utiliser une image de ton ordinateur comme texture des agents"
+      >
+        <ImageIcon size={12} /> Téléverser une image
+      </button>
+      <input ref={uploadRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onUploadTexture} />
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
         {TEXTURE_PROMPTS.map((p) => (
           <button

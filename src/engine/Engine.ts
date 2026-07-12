@@ -516,6 +516,9 @@ export class Engine {
       // when mapping is off → no confinement. CPU organisms ignore this field.
       ;(this.organism as any).obstacles = this.effectiveObstacles()
       ;(this.organism as any).mapBounds = this.computeMapBounds()
+      // GPU organisms read this in their sim shader (packModifiers). CPU organisms
+      // ignore it and get the same modifiers via applyModifiers() below.
+      ;(this.organism as any).modifiers = this.currentScene.modifiers ?? []
       this.organism.update(dt)
       // Layer behavior modifiers on top of the base organism update.
       // The organism owns its position/velocity Float32Arrays; we expose them via
