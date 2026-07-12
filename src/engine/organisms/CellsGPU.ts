@@ -425,8 +425,10 @@ export class CellsGPUOrganism {
     const dpr = this.renderer.getPixelRatio()
     this.renderer.getSize(this._sizeV2)
     const pxPerWorld = (this._sizeV2.y * dpr) / 2
-    const worldDiam = p.size * 0.06 * (1 + (audio.bass ?? 0) * 0.5) * 2.0
-    this.renderMat.uniforms.uPointPx.value = Math.max(2, Math.min(64, worldDiam * pxPerWorld))
+    // Old clamp (64) saturated at size ~0.5 — the default 1.2 was already maxed, so
+    // the 0.4→3 slider did nothing. Rescaled + clamp raised so it spans small→big.
+    const worldDiam = p.size * 0.06 * (0.8 + (audio.bass ?? 0) * 0.6)
+    this.renderMat.uniforms.uPointPx.value = Math.max(2, Math.min(180, worldDiam * pxPerWorld))
     this.renderMat.uniforms.uAlpha.value = Math.max(0.06, Math.min(0.7, 40 / Math.sqrt(this.count)))
     this.renderMat.uniforms.uTime.value = this.t
     this.renderMat.uniforms.uState.value = this.current.texture

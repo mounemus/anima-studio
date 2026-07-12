@@ -227,7 +227,7 @@ export class InstrumentOrganism {
     // point size in px
     let pxPerWorld = 300
     if (this.renderer) { this.renderer.getSize(this._sz); pxPerWorld = (this._sz.y * this.renderer.getPixelRatio()) / 2 }
-    this.mat.uniforms.uPointPx.value = Math.max(2, Math.min(48, p.size * pxPerWorld))
+    this.mat.uniforms.uPointPx.value = Math.max(2, Math.min(80, p.size * pxPerWorld))
   }
 
   private pluck(i: number, vel: number) {

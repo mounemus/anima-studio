@@ -459,7 +459,8 @@ export class BoidsGPUOrganism {
     this.renderer.getSize(this._sizeV2)
     const pxPerWorld = (this._sizeV2.y * dpr) / 2
     const worldDiam = p.size * (1.2 + (audio.bass ?? 0) * 2.5) * 2.0
-    this.renderMat.uniforms.uPointPx.value = Math.max(1, Math.min(64, worldDiam * pxPerWorld))
+    // Clamp raised 64→110 so the top of the size slider isn't flat on hi-DPI screens.
+    this.renderMat.uniforms.uPointPx.value = Math.max(1, Math.min(110, worldDiam * pxPerWorld))
     // density-adaptive alpha → no additive white-out at high counts
     this.renderMat.uniforms.uAlpha.value = Math.max(0.06, Math.min(0.9, 45 / Math.sqrt(this.count)))
     this.renderMat.uniforms.uState.value = this.current.texture
