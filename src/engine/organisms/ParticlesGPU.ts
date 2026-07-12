@@ -351,8 +351,12 @@ export class ParticlesGPUOrganism {
     const dpr = this.renderer.getPixelRatio()
     this.renderer.getSize(this._sizeV2)
     const pxPerWorld = (this._sizeV2.y * dpr) / 2
-    const worldDiam = p.size * 0.08 * (0.5 + (audio.bass ?? 0) * 0.75) * 2.0
-    this.renderMat.uniforms.uPointPx.value = Math.max(1, Math.min(48, worldDiam * pxPerWorld))
+    // Point diameter in world units. The old formula saturated the 48px clamp even
+    // at low `size`, so the slider did nothing above ~0.8 and the max stayed small.
+    // Rescaled so the 0.2→8 slider spans fine dust → big grains, clamp raised so the
+    // top actually reads big (and audio bass can pump it further).
+    const worldDiam = p.size * 0.03 * (0.6 + (audio.bass ?? 0) * 0.8)
+    this.renderMat.uniforms.uPointPx.value = Math.max(1, Math.min(160, worldDiam * pxPerWorld))
     // density-adaptive alpha → no additive white-out at high counts
     this.renderMat.uniforms.uAlpha.value = Math.max(0.05, Math.min(0.9, 45 / Math.sqrt(this.count)))
     this.renderMat.uniforms.uState.value = this.current.texture
