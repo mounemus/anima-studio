@@ -32,6 +32,41 @@ const FINGER_CHAINS = [
 type BrushKind = 'tube' | 'neon' | 'marker' | 'metal' | 'wire'
 type DrawMode = 'pinch' | 'index'
 type BgMode = 'webcam' | 'black'
+type ShapeKind = 'free' | 'line' | 'circle' | 'rect' | 'box'
+
+const SHAPES: { kind: ShapeKind; label: string }[] = [
+  { kind: 'free', label: '✏️ Libre (main levée)' },
+  { kind: 'line', label: '📏 Ligne droite' },
+  { kind: 'circle', label: '⭕ Cercle' },
+  { kind: 'rect', label: '▭ Rectangle' },
+  { kind: 'box', label: '📦 Boîte 3D (profondeur)' },
+]
+
+/** Polylines (monde) d'une forme primitive définie par deux points A→B. La boîte
+ *  utilise l'écart de profondeur z (main proche/loin) pour sa 3ᵉ dimension. */
+function shapePolylines(a: THREE.Vector3, b: THREE.Vector3, shape: ShapeKind): THREE.Vector3[][] {
+  const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z)
+  if (shape === 'line') return [[a.clone(), b.clone()]]
+  if (shape === 'circle') {
+    const r = Math.max(0.01, Math.hypot(b.x - a.x, b.y - a.y))
+    const ring: THREE.Vector3[] = []
+    for (let i = 0; i <= 48; i++) { const t = (i / 48) * Math.PI * 2; ring.push(V(a.x + Math.cos(t) * r, a.y + Math.sin(t) * r, a.z)) }
+    return [ring]
+  }
+  if (shape === 'rect') {
+    const z = a.z
+    return [[V(a.x, a.y, z), V(b.x, a.y, z), V(b.x, b.y, z), V(a.x, b.y, z), V(a.x, a.y, z)]]
+  }
+  if (shape === 'box') {
+    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x)
+    const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y)
+    const z0 = a.z, z1 = Math.abs(b.z - a.z) > 0.02 ? b.z : a.z + (x1 - x0) * 0.7   // depth from hand z, else from width
+    const c = [V(x0, y0, z0), V(x1, y0, z0), V(x1, y1, z0), V(x0, y1, z0), V(x0, y0, z1), V(x1, y0, z1), V(x1, y1, z1), V(x0, y1, z1)]
+    const edges = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]]
+    return edges.map(([i, j]) => [c[i].clone(), c[j].clone()])
+  }
+  return []
+}
 
 const BRUSHES: { kind: BrushKind; label: string; rMul: number }[] = [
   { kind: 'tube', label: '🩵 Tube mat', rMul: 1 },
@@ -84,6 +119,7 @@ export function SketchStudio() {
 
   const [color, setColor] = useState('#00f0ff')
   const [brush, setBrush] = useState<BrushKind>('tube')
+  const [shape, setShape] = useState<ShapeKind>('free')
   const [eraser, setEraser] = useState(false)
   const [size, setSize] = useState(6)
   const [drawMode, setDrawMode] = useState<DrawMode>('pinch')
@@ -100,8 +136,8 @@ export function SketchStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ color, brush, eraser, size, drawMode, symmetry, depthScale, autoRotate, showGrid, showSkeleton })
-  paramsRef.current = { color, brush, eraser, size, drawMode, symmetry, depthScale, autoRotate, showGrid, showSkeleton }
+  const paramsRef = useRef({ color, brush, shape, eraser, size, drawMode, symmetry, depthScale, autoRotate, showGrid, showSkeleton })
+  paramsRef.current = { color, brush, shape, eraser, size, drawMode, symmetry, depthScale, autoRotate, showGrid, showSkeleton }
 
   const clearRef = useRef(false)
   const undoRef = useRef(false)
@@ -171,11 +207,30 @@ export function SketchStudio() {
       g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose() })
     }
 
-    // active stroke
+    // active freehand stroke
     let aPts: THREE.Vector3[] = [], aMirror: THREE.Vector3[] = []
     let aGroup: THREE.Group | null = null, aMain: THREE.Mesh | null = null, aMir: THREE.Mesh | null = null
     let aMat: THREE.Material | null = null
     let wasDrawing = false
+    // active primitive-shape gesture (anchor A + live end B, rebuilt each frame)
+    let sAnchor = new THREE.Vector3(), sEnd = new THREE.Vector3(), sKind: ShapeKind = 'free'
+    let sPreview: THREE.Group | null = null, sMat: THREE.Material | null = null, sRadius = 0.01
+
+    const commitShape = () => {
+      const p = paramsRef.current
+      if (sPreview) { for (let i = sPreview.children.length - 1; i >= 0; i--) { const m = sPreview.children[i] as THREE.Mesh; m.geometry?.dispose(); sPreview.remove(m) } strokeGroup.remove(sPreview) }
+      sPreview = null
+      let polys = shapePolylines(sAnchor, sEnd, sKind)
+      if (p.symmetry) polys = polys.concat(polys.map((pl) => pl.map((v) => new THREE.Vector3(-v.x, v.y, v.z))))
+      for (const pl of polys) {
+        const geo = buildStrokeGeometry(pl, sRadius, true)
+        if (!geo) continue
+        const g = new THREE.Group(); const mesh = new THREE.Mesh(geo, makeBrushMaterial(p.brush, p.color)); mesh.frustumCulled = false
+        g.add(mesh); strokeGroup.add(g)
+        strokesRef.current.push({ pts: pl, mirrorPts: null, radius: sRadius, hex: p.color, brush: p.brush, group: g })
+      }
+      setCount(strokesRef.current.length)
+    }
 
     const finalize = () => {
       const p = paramsRef.current
@@ -241,6 +296,8 @@ export function SketchStudio() {
         strokesRef.current = []; setCount(0)
         if (aGroup) disposeGroup(aGroup)
         aGroup = aMain = aMir = null; aPts = []; aMirror = []
+        if (sPreview) { disposeGroup(sPreview); sPreview = null }
+        wasDrawing = false
         clearRef.current = false
       }
       if (undoRef.current) { const s = strokesRef.current.pop(); if (s) { disposeGroup(s.group); setCount(strokesRef.current.length) } undoRef.current = false }
@@ -279,6 +336,19 @@ export function SketchStudio() {
             }
             setCount(strokesRef.current.length)
             wasDrawing = false
+          } else if (on && p.shape !== 'free') {
+            // primitive shape : anchor A on start, live end B, rebuilt each frame
+            cam.targetAz += (0 - cam.targetAz) * 0.15
+            cam.targetPolar += (Math.PI / 2 - cam.targetPolar) * 0.15
+            sEnd = wp
+            if (!wasDrawing) { sAnchor = wp.clone(); sKind = p.shape; sRadius = radius; sMat = makeBrushMaterial(p.brush, p.color); sPreview = new THREE.Group(); strokeGroup.add(sPreview) }
+            if (sPreview) {
+              for (let i = sPreview.children.length - 1; i >= 0; i--) { const m = sPreview.children[i] as THREE.Mesh; m.geometry?.dispose(); sPreview.remove(m) }
+              let polys = shapePolylines(sAnchor, sEnd, sKind)
+              if (p.symmetry) polys = polys.concat(polys.map((pl) => pl.map((v) => new THREE.Vector3(-v.x, v.y, v.z))))
+              for (const pl of polys) { const geo = buildStrokeGeometry(pl, sRadius, false); if (geo) { const mesh = new THREE.Mesh(geo, sMat!); mesh.frustumCulled = false; sPreview.add(mesh) } }
+            }
+            wasDrawing = true
           } else if (on) {
             cam.targetAz += (0 - cam.targetAz) * 0.15
             cam.targetPolar += (Math.PI / 2 - cam.targetPolar) * 0.15
@@ -301,7 +371,7 @@ export function SketchStudio() {
             if (g && aMain) { aMain.geometry.dispose(); aMain.geometry = g }
             if (p.symmetry && aMir) { const gm = buildStrokeGeometry(aMirror, aMain!.userData.radius, false); if (gm) { aMir.geometry.dispose(); aMir.geometry = gm } }
             wasDrawing = true
-          } else if (wasDrawing) { finalize(); wasDrawing = false }
+          } else if (wasDrawing) { if (sPreview) commitShape(); else finalize(); wasDrawing = false }
 
           if (p.showSkeleton) {
             octx.strokeStyle = 'rgba(0,240,255,0.35)'; octx.lineWidth = 2
@@ -311,7 +381,7 @@ export function SketchStudio() {
               octx.stroke()
             }
           }
-        } else if (wasDrawing) { finalize(); wasDrawing = false }
+        } else if (wasDrawing) { if (sPreview) commitShape(); else finalize(); wasDrawing = false }
       }
 
       // cursor
@@ -414,6 +484,11 @@ export function SketchStudio() {
           <Field label="Pinceau">
             <select value={brush} onChange={(e) => { setBrush(e.target.value as BrushKind); setEraser(false) }} style={selStyle}>
               {BRUSHES.map((b) => <option key={b.kind} value={b.kind}>{b.label}</option>)}
+            </select>
+          </Field>
+          <Field label="Forme (posée aux deux points)">
+            <select value={shape} onChange={(e) => { setShape(e.target.value as ShapeKind); setEraser(false) }} style={selStyle}>
+              {SHAPES.map((s) => <option key={s.kind} value={s.kind}>{s.label}</option>)}
             </select>
           </Field>
           <button onClick={() => setEraser((v) => !v)} style={{ ...selStyle, marginBottom: 12, background: eraser ? 'rgba(255,80,80,0.28)' : 'rgba(255,255,255,0.1)', borderColor: eraser ? 'rgba(255,80,80,0.6)' : 'rgba(255,255,255,0.2)' }}>
