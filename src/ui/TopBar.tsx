@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music, ScanFace, Glasses, Clock, Sparkles, Aperture } from 'lucide-react'
+import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music, ScanFace, Glasses, Clock, Sparkles, Aperture, PenTool } from 'lucide-react'
 import { startMood, stopMood, isMoodActive, triggerMoodReflect } from '../engine/MoodEngine'
 import { Link } from 'react-router-dom'
 import { listDisplays, openOutputWindow, type DisplayInfo } from '../lib/multiDisplay'
@@ -355,6 +355,9 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
         <button onClick={onToggleAI} className="ghost icon" title="Compagnon IA"><MessageCircle size={16} /></button>
         <Link to="/mandala" title="Mandala Studio AR — dessin kaléidoscopique par les mains" style={{ display: 'inline-flex' }}>
           <button className="ghost icon"><Aperture size={16} /></button>
+        </Link>
+        <Link to="/sketch" title="Sketch AR 3D — dessin 3D dans l'espace aux doigts (Gravity Sketch / Sketchar)" style={{ display: 'inline-flex' }}>
+          <button className="ghost icon"><PenTool size={16} /></button>
         </Link>
         <Link to="/admin" title="Administration" style={{ display: 'inline-flex' }}>
           <button className="ghost icon"><Settings size={16} /></button>
