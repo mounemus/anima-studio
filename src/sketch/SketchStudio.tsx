@@ -21,6 +21,7 @@ import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
@@ -136,7 +137,7 @@ function shapePolylines(a: THREE.Vector3, b: THREE.Vector3, shape: ShapeKind): T
   return []
 }
 
-interface StrokeRec { copies: THREE.Vector3[][]; radii: number[] | null; radius: number; hex: string; brush: BrushKind; group: THREE.Group }
+interface StrokeRec { copies: THREE.Vector3[][]; radii: number[] | null; radius: number; hex: string; brush: BrushKind; group: THREE.Group; layerId: string }
 
 export function SketchStudio() {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -159,13 +160,16 @@ export function SketchStudio() {
   const [bgMode, setBgMode] = useState<BgMode>('webcam')
   const [refUrl, setRefUrl] = useState<string | null>(null)
   const [refOpacity, setRefOpacity] = useState(0.5)
+  const [layers, setLayers] = useState<{ id: string; name: string; visible: boolean }[]>([{ id: 'L1', name: 'Calque 1', visible: true }])
+  const [activeLayer, setActiveLayer] = useState('L1')
+  const [xform, setXform] = useState<null | 'translate' | 'rotate' | 'scale'>(null)
   const [panelOpen, setPanelOpen] = useState(true)
   const [count, setCount] = useState(0)
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton })
-  paramsRef.current = { color, brush, shape, eraser, caligraphy, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton }
+  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, layers, activeLayer, xform })
+  paramsRef.current = { color, brush, shape, eraser, caligraphy, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, layers, activeLayer, xform }
 
   const clearRef = useRef(false), undoRef = useRef(false), recenterRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
@@ -191,6 +195,34 @@ export function SketchStudio() {
     const strokeGroup = new THREE.Group(); scene.add(strokeGroup)
     const target = new THREE.Vector3(0, 0, 0)
 
+    // ── Calques : un THREE.Group par calque, sous strokeGroup ──
+    const layerGroups = new Map<string, THREE.Group>()
+    const ensureLayer = (id: string) => { let g = layerGroups.get(id); if (!g) { g = new THREE.Group(); strokeGroup.add(g); layerGroups.set(id, g) } return g }
+    ensureLayer('L1')
+    const activeLayerGroup = () => ensureLayer(paramsRef.current.activeLayer)
+
+    // ── Gizmo de transformation (TransformControls) sur tout le croquis ──
+    let gizmo: TransformControls | null = null, gizmoHelper: THREE.Object3D | null = null
+    const bakeTransform = () => {
+      strokeGroup.updateMatrix()
+      const M = strokeGroup.matrix
+      if (M.equals(new THREE.Matrix4())) return
+      for (const s of strokesRef.current) {
+        for (const cp of s.copies) for (const v of cp) v.applyMatrix4(M)
+        let mi = 0
+        for (const child of s.group.children) { const m = child as THREE.Mesh; const geo = buildStrokeGeometry(s.copies[mi] ?? s.copies[0], s.radii ?? s.radius, true); if (geo) { m.geometry.dispose(); m.geometry = geo } mi++ }
+      }
+      strokeGroup.position.set(0, 0, 0); strokeGroup.rotation.set(0, 0, 0); strokeGroup.scale.set(1, 1, 1); strokeGroup.updateMatrix()
+    }
+    try {
+      gizmo = new TransformControls(camera, renderer.domElement)
+      gizmoHelper = (gizmo as any).getHelper ? (gizmo as any).getHelper() : (gizmo as unknown as THREE.Object3D)
+      scene.add(gizmoHelper!)
+      gizmo.addEventListener('dragging-changed', (e: any) => { orbitEnabled = !e.value; if (!e.value) bakeTransform() })
+      gizmo.attach(strokeGroup)
+      gizmo.enabled = false; if (gizmoHelper) gizmoHelper.visible = false
+    } catch { gizmo = null }
+
     const cam = { radius: 3.2, az: 0, polar: Math.PI / 2, targetAz: 0, targetPolar: Math.PI / 2 }
     const applyCam = () => {
       const sp = Math.sin(cam.polar), cp = Math.cos(cam.polar)
@@ -200,8 +232,8 @@ export function SketchStudio() {
     const resize = () => { const w = window.innerWidth, h = window.innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); overlay.width = w; overlay.height = h }
     resize(); window.addEventListener('resize', resize)
 
-    let dragging = false, lastX = 0, lastY = 0
-    const onDown = (e: PointerEvent) => { dragging = true; lastX = e.clientX; lastY = e.clientY }
+    let dragging = false, lastX = 0, lastY = 0, orbitEnabled = true
+    const onDown = (e: PointerEvent) => { if (!orbitEnabled) return; dragging = true; lastX = e.clientX; lastY = e.clientY }
     const onMove = (e: PointerEvent) => { if (!dragging) return; cam.targetAz -= (e.clientX - lastX) * 0.008; cam.targetPolar = clamp(0.2, Math.PI - 0.2, cam.targetPolar - (e.clientY - lastY) * 0.008); lastX = e.clientX; lastY = e.clientY }
     const onUp = () => { dragging = false }
     const onWheel = (e: WheelEvent) => { cam.radius = clamp(1.2, 9, cam.radius + e.deltaY * 0.002) }
@@ -222,7 +254,7 @@ export function SketchStudio() {
 
     // ── active freehand stroke (with symmetry copies + optional per-point radii) ──
     let aCopies: THREE.Vector3[][] = [], aRadii: number[] = [], aMeshes: THREE.Mesh[] = []
-    let aGroup: THREE.Group | null = null, aMat: THREE.Material | null = null, aRadius = 0.01
+    let aGroup: THREE.Group | null = null, aMat: THREE.Material | null = null, aRadius = 0.01, aLayerId = 'L1'
     let wasDrawing = false
     // active primitive shape
     let sAnchor = new THREE.Vector3(), sEnd = new THREE.Vector3(), sKind: ShapeKind = 'free'
@@ -246,7 +278,7 @@ export function SketchStudio() {
         const useRadii = p.caligraphy && p.shape === 'free'
         const rArg: number | number[] = useRadii ? aRadii : aRadius
         for (let c = 0; c < aMeshes.length; c++) { const g = buildStrokeGeometry(aCopies[c], rArg, true); if (g) { aMeshes[c].geometry.dispose(); aMeshes[c].geometry = g } }
-        strokesRef.current.push({ copies: aCopies, radii: useRadii ? aRadii : null, radius: aRadius, hex: p.color, brush: p.brush, group: aGroup })
+        strokesRef.current.push({ copies: aCopies, radii: useRadii ? aRadii : null, radius: aRadius, hex: p.color, brush: p.brush, group: aGroup, layerId: aLayerId })
         setCount(strokesRef.current.length)
       } else if (aGroup) disposeGroup(aGroup)
       aGroup = null; aMat = null; aCopies = []; aRadii = []; aMeshes = []
@@ -259,7 +291,7 @@ export function SketchStudio() {
         const copies = expandPolyline(pl, p.sym, p.radialN)
         const grp = new THREE.Group(); const meshes: THREE.Mesh[] = []
         for (const cp of copies) { const geo = buildStrokeGeometry(cp, sRadius, true); if (geo) { const m = new THREE.Mesh(geo, makeBrushMaterial(p.brush, p.color)); m.frustumCulled = false; grp.add(m); meshes.push(m) } }
-        if (meshes.length) { strokeGroup.add(grp); strokesRef.current.push({ copies, radii: null, radius: sRadius, hex: p.color, brush: p.brush, group: grp }) }
+        if (meshes.length) { activeLayerGroup().add(grp); strokesRef.current.push({ copies, radii: null, radius: sRadius, hex: p.color, brush: p.brush, group: grp, layerId: p.activeLayer }) }
       }
       setCount(strokesRef.current.length)
     }
@@ -286,10 +318,13 @@ export function SketchStudio() {
     const loop = () => {
       if (!running) return
       const p = paramsRef.current
-      if (clearRef.current) { for (const s of strokesRef.current) disposeGroup(s.group); strokesRef.current = []; setCount(0); if (aGroup) disposeGroup(aGroup); if (sPreview) disposeGroup(sPreview); aGroup = sPreview = null; aCopies = []; aMeshes = []; wasDrawing = false; clearRef.current = false }
-      if (undoRef.current) { const s = strokesRef.current.pop(); if (s) { disposeGroup(s.group); setCount(strokesRef.current.length) } undoRef.current = false }
+      if (clearRef.current) { strokesRef.current = strokesRef.current.filter((s) => { if (s.layerId === p.activeLayer) { disposeGroup(s.group); return false } return true }); setCount(strokesRef.current.length); if (aGroup) disposeGroup(aGroup); if (sPreview) disposeGroup(sPreview); aGroup = sPreview = null; aCopies = []; aMeshes = []; wasDrawing = false; clearRef.current = false }
+      if (undoRef.current) { for (let i = strokesRef.current.length - 1; i >= 0; i--) { if (strokesRef.current[i].layerId === p.activeLayer) { disposeGroup(strokesRef.current[i].group); strokesRef.current.splice(i, 1); setCount(strokesRef.current.length); break } } undoRef.current = false }
       if (recenterRef.current) { cam.targetAz = 0; cam.targetPolar = Math.PI / 2; recenterRef.current = false }
       if (exportRef.current) { doExport(exportRef.current); exportRef.current = null }
+      // sync layers + gizmo from React state
+      { const wanted = new Set(p.layers.map((l) => l.id)); for (const l of p.layers) ensureLayer(l.id).visible = l.visible; for (const [id, g] of layerGroups) { if (!wanted.has(id)) { disposeGroup(g); layerGroups.delete(id); strokesRef.current = strokesRef.current.filter((s) => s.layerId !== id); setCount(strokesRef.current.length) } } }
+      if (gizmo) { const want = !!p.xform; gizmo.enabled = want; if (gizmoHelper) gizmoHelper.visible = want; if (want && p.xform) gizmo.setMode(p.xform) }
       grid.visible = p.showGrid
       octx.clearRect(0, 0, overlay.width, overlay.height)
       let cursor: { x: number; y: number; on: boolean; mode: 'draw' | 'erase' | 'nav' } | null = null
@@ -309,7 +344,11 @@ export function SketchStudio() {
           const sx = (1 - idx.x) * overlay.width, sy = idx.y * overlay.height
           const radius = Math.max(0.004, p.size * 0.0016 * cam.radius * (BRUSHES.find((b) => b.kind === p.brush)?.rMul ?? 1))
 
-          if (fist) {
+          if (p.xform) {
+            // transform mode : le gizmo (souris) gère la pose ; pas de dessin à la main
+            navPrev = null
+            if (wasDrawing) { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false }
+          } else if (fist) {
             // ── NAVIGATE : poing fermé → orbite + zoom par la main ──
             if (wasDrawing) { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false }
             const hx = lm[9].x, hy = lm[9].y
@@ -350,7 +389,7 @@ export function SketchStudio() {
                 aCopies = expandPoint(wp, p.sym, p.radialN).map((v) => [v]); aRadii = [calR]
                 aGroup = new THREE.Group(); aMeshes = []
                 for (let c = 0; c < k; c++) { const m = new THREE.Mesh(new THREE.BufferGeometry(), aMat); m.frustumCulled = false; aGroup.add(m); aMeshes.push(m) }
-                strokeGroup.add(aGroup)
+                aLayerId = p.activeLayer; activeLayerGroup().add(aGroup)
               } else {
                 const last = aCopies[0][aCopies[0].length - 1]
                 if (wp.distanceTo(last) > Math.max(0.006, radius * 0.55)) {
@@ -406,7 +445,8 @@ export function SketchStudio() {
       try { landmarker?.close() } catch { /* noop */ }
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
       for (const s of strokesRef.current) s.group.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose() })
-      strokesRef.current = []; renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
+      strokesRef.current = []; try { gizmo?.dispose() } catch { /* noop */ }
+      renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
     }
   }, [])
 
@@ -456,7 +496,24 @@ export function SketchStudio() {
           </Field>
           <Field label="Fond"><select value={bgMode} onChange={(e) => setBgMode(e.target.value as BgMode)} style={selStyle}><option value="webcam">📷 Webcam (AR)</option><option value="black">⬛ Noir</option></select></Field>
 
-          <div style={{ display: 'flex', gap: 8 }}><button onClick={() => { undoRef.current = true }} style={{ ...selStyle, flex: 1 }}>↶ Annuler</button><button onClick={() => { recenterRef.current = true }} style={{ ...selStyle, flex: 1 }}>⊙ Vue</button><button onClick={() => { clearRef.current = true }} style={{ ...selStyle, flex: 1, background: 'rgba(255,40,100,0.2)', borderColor: 'rgba(255,40,100,0.4)' }}>Effacer</button></div>
+          <div style={{ fontSize: 10, color: '#00f0ff', textTransform: 'uppercase', letterSpacing: 1, margin: '4px 0 6px' }}>Calques</div>
+          {layers.map((l) => (
+            <div key={l.id} onClick={() => setActiveLayer(l.id)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', marginBottom: 4, borderRadius: 6, cursor: 'pointer', border: `1px solid ${activeLayer === l.id ? '#00f0ff' : 'rgba(255,255,255,0.15)'}`, background: activeLayer === l.id ? 'rgba(0,240,255,0.12)' : 'transparent' }}>
+              <button onClick={(e) => { e.stopPropagation(); setLayers((ls) => ls.map((x) => x.id === l.id ? { ...x, visible: !x.visible } : x)) }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 13 }}>{l.visible ? '👁' : '🚫'}</button>
+              <span style={{ flex: 1, fontSize: 12 }}>{l.name}</span>
+              {layers.length > 1 && <button onClick={(e) => { e.stopPropagation(); setLayers((ls) => { const nx = ls.filter((x) => x.id !== l.id); if (activeLayer === l.id) setActiveLayer(nx[0].id); return nx }) }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#ff6b6b', fontSize: 12 }}>🗑</button>}
+            </div>
+          ))}
+          <button onClick={() => { const id = 'L' + Date.now(); setLayers((ls) => [...ls, { id, name: 'Calque ' + (ls.length + 1), visible: true }]); setActiveLayer(id) }} style={{ ...selStyle, marginBottom: 12 }}>+ Nouveau calque</button>
+
+          <div style={{ fontSize: 10, color: '#00f0ff', textTransform: 'uppercase', letterSpacing: 1, margin: '4px 0 6px' }}>Transformer (gizmo souris)</div>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+            {(['translate', 'rotate', 'scale'] as const).map((mode) => (
+              <button key={mode} onClick={() => setXform((x) => x === mode ? null : mode)} style={{ ...selStyle, flex: 1, fontSize: 11, padding: 6, background: xform === mode ? 'rgba(0,240,255,0.28)' : 'rgba(255,255,255,0.1)', borderColor: xform === mode ? '#00f0ff' : 'rgba(255,255,255,0.2)' }}>{mode === 'translate' ? '↔ Placer' : mode === 'rotate' ? '⟳ Tourner' : '⤢ Échelle'}</button>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}><button onClick={() => { undoRef.current = true }} style={{ ...selStyle, flex: 1 }}>↶ Annuler</button><button onClick={() => { recenterRef.current = true }} style={{ ...selStyle, flex: 1 }}>⊙ Vue</button><button onClick={() => { clearRef.current = true }} style={{ ...selStyle, flex: 1, background: 'rgba(255,40,100,0.2)', borderColor: 'rgba(255,40,100,0.4)' }} title="Efface le calque actif">Effacer</button></div>
           <div style={{ fontSize: 10, color: '#00f0ff', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Export ({count} traits)</div>
           <div style={{ display: 'flex', gap: 8 }}><button onClick={exportPng} style={{ ...selStyle, flex: 1 }}>📸 PNG</button><button onClick={() => { exportRef.current = 'glb' }} style={{ ...selStyle, flex: 1 }}>🧊 .glb</button><button onClick={() => { exportRef.current = 'stl' }} style={{ ...selStyle, flex: 1 }} title="Maillage étanche pour impression 3D">🖨️ .stl</button></div>
           <p style={{ color: '#777', fontSize: 10, marginTop: 10, marginBottom: 0, lineHeight: 1.4 }}>Poing = orbite/zoom · main proche/loin = profondeur z · souris = tourner · molette = zoom · .stl = solide imprimable</p>
