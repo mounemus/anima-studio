@@ -32,7 +32,7 @@ const Z_AXIS = new THREE.Vector3(0, 0, 1)
 const UP = new THREE.Vector3(0, 1, 0)
 const clamp = (a: number, b: number, v: number) => Math.max(a, Math.min(b, v))
 
-type BrushKind = 'tube' | 'neon' | 'marker' | 'metal' | 'wire'
+type BrushKind = 'tube' | 'neon' | 'marker' | 'metal' | 'wire' | 'calligA' | 'airbrush'
 type DrawMode = 'pinch' | 'index'
 type BgMode = 'webcam' | 'black'
 type ShapeKind = 'free' | 'line' | 'circle' | 'rect' | 'box'
@@ -44,6 +44,8 @@ const BRUSHES: { kind: BrushKind; label: string; rMul: number }[] = [
   { kind: 'marker', label: '🖊️ Marqueur plat', rMul: 1.1 },
   { kind: 'metal', label: '⚙️ Métal chromé', rMul: 1 },
   { kind: 'wire', label: '✨ Fil fin', rMul: 0.45 },
+  { kind: 'calligA', label: '✒️ Calligraphie arabe (plume large)', rMul: 1.35 },
+  { kind: 'airbrush', label: '💨 Aérographe (spray doux)', rMul: 1.4 },
 ]
 const SHAPES: { kind: ShapeKind; label: string }[] = [
   { kind: 'free', label: '✏️ Libre (main levée)' }, { kind: 'line', label: '📏 Ligne droite' },
@@ -57,6 +59,7 @@ function makeBrushMaterial(kind: BrushKind, hex: string): THREE.Material {
     case 'marker': return new THREE.MeshBasicMaterial({ color })
     case 'metal': return new THREE.MeshStandardMaterial({ color, metalness: 0.95, roughness: 0.22 })
     case 'wire': return new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false })
+    case 'calligA': return new THREE.MeshStandardMaterial({ color, metalness: 0.15, roughness: 0.5 })
     case 'tube': default: return new THREE.MeshStandardMaterial({ color, metalness: 0.1, roughness: 0.55 })
   }
 }
@@ -110,6 +113,29 @@ function buildVarTube(pts: THREE.Vector3[], radii: number[], radial = 8, capped 
   return g
 }
 
+/** Broad-nib (calligraphie arabe) radii : thick when the stroke is perpendicular to
+ *  the pen nib direction, thin when parallel — the classic thick/thin modulation. */
+function calligRadii(pts: THREE.Vector3[], base: number, nibRef: THREE.Vector3): number[] {
+  const N = pts.length, out: number[] = []
+  for (let i = 0; i < N; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(N - 1, i + 1)]
+    const t = new THREE.Vector3().subVectors(b, a); let mul = 0.25
+    if (t.lengthSq() > 1e-9) { t.normalize(); mul = 0.2 + 0.95 * new THREE.Vector3().crossVectors(t, nibRef).length() }
+    out.push(base * mul)
+  }
+  return out
+}
+
+let _sprayTex: THREE.Texture | null = null
+function sprayTexture(): THREE.Texture {
+  if (_sprayTex) return _sprayTex
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d')!
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32)
+  grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(0.4, 'rgba(255,255,255,0.5)'); grd.addColorStop(1, 'rgba(255,255,255,0)')
+  g.fillStyle = grd; g.fillRect(0, 0, 64, 64)
+  _sprayTex = new THREE.CanvasTexture(c); return _sprayTex
+}
+
 /** Symmetric copies of a point (main + mirror or radial branches). */
 function expandPoint(v: THREE.Vector3, sym: SymKind, n: number): THREE.Vector3[] {
   if (sym === 'mirror') return [v.clone(), new THREE.Vector3(-v.x, v.y, v.z)]
@@ -150,6 +176,8 @@ export function SketchStudio() {
   const [shape, setShape] = useState<ShapeKind>('free')
   const [eraser, setEraser] = useState(false)
   const [caligraphy, setCaligraphy] = useState(false)
+  const [smooth, setSmooth] = useState(0.35)
+  const [nibAngle, setNibAngle] = useState(45)
   const [size, setSize] = useState(6)
   const [drawMode, setDrawMode] = useState<DrawMode>('pinch')
   const [sym, setSym] = useState<SymKind>('none')
@@ -168,8 +196,8 @@ export function SketchStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, layers, activeLayer, xform })
-  paramsRef.current = { color, brush, shape, eraser, caligraphy, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, layers, activeLayer, xform }
+  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, layers, activeLayer, xform })
+  paramsRef.current = { color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, layers, activeLayer, xform }
 
   const clearRef = useRef(false), undoRef = useRef(false), recenterRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
@@ -255,6 +283,8 @@ export function SketchStudio() {
     // ── active freehand stroke (with symmetry copies + optional per-point radii) ──
     let aCopies: THREE.Vector3[][] = [], aRadii: number[] = [], aMeshes: THREE.Mesh[] = []
     let aGroup: THREE.Group | null = null, aMat: THREE.Material | null = null, aRadius = 0.01, aLayerId = 'L1'
+    let aNibRef = new THREE.Vector3(1, 0, 0), aSmooth: THREE.Vector3 | null = null
+    let aIsAir = false, aAir: THREE.Points | null = null, aAirPts: THREE.Vector3[] = []
     let wasDrawing = false
     // active primitive shape
     let sAnchor = new THREE.Vector3(), sEnd = new THREE.Vector3(), sKind: ShapeKind = 'free'
@@ -263,22 +293,27 @@ export function SketchStudio() {
     let navPrev: { x: number; y: number; d: number } | null = null
     let lastRawWp: THREE.Vector3 | null = null
 
+    const rArgFor = (p: typeof paramsRef.current): number | number[] => {
+      if (p.brush === 'calligA' && p.shape === 'free') return calligRadii(aCopies[0], aRadius, aNibRef)
+      if (p.caligraphy && p.shape === 'free') return aRadii
+      return aRadius
+    }
     const rebuildActive = () => {
-      if (!aGroup) return
-      const p = paramsRef.current
-      const rArg: number | number[] = (p.caligraphy && p.shape === 'free') ? aRadii : aRadius
-      for (let c = 0; c < aMeshes.length; c++) {
-        const g = buildStrokeGeometry(aCopies[c], rArg, false)
-        if (g) { aMeshes[c].geometry.dispose(); aMeshes[c].geometry = g }
-      }
+      if (!aGroup || aIsAir) return
+      const rArg = rArgFor(paramsRef.current)
+      for (let c = 0; c < aMeshes.length; c++) { const g = buildStrokeGeometry(aCopies[c], rArg, false); if (g) { aMeshes[c].geometry.dispose(); aMeshes[c].geometry = g } }
     }
     const finalizeFree = () => {
       const p = paramsRef.current
+      if (aIsAir) {
+        if (aAir && aAirPts.length && aGroup) { strokesRef.current.push({ copies: [aAirPts], radii: null, radius: aRadius, hex: p.color, brush: 'airbrush', group: aGroup, layerId: aLayerId }); setCount(strokesRef.current.length) }
+        else if (aGroup) disposeGroup(aGroup)
+        aIsAir = false; aAir = null; aAirPts = []; aGroup = null; aMat = null; return
+      }
       if (aGroup && aCopies[0]?.length >= 2) {
-        const useRadii = p.caligraphy && p.shape === 'free'
-        const rArg: number | number[] = useRadii ? aRadii : aRadius
+        const rArg = rArgFor(p); const rArr = Array.isArray(rArg) ? rArg : null
         for (let c = 0; c < aMeshes.length; c++) { const g = buildStrokeGeometry(aCopies[c], rArg, true); if (g) { aMeshes[c].geometry.dispose(); aMeshes[c].geometry = g } }
-        strokesRef.current.push({ copies: aCopies, radii: useRadii ? aRadii : null, radius: aRadius, hex: p.color, brush: p.brush, group: aGroup, layerId: aLayerId })
+        strokesRef.current.push({ copies: aCopies, radii: rArr, radius: aRadius, hex: p.color, brush: p.brush, group: aGroup, layerId: aLayerId })
         setCount(strokesRef.current.length)
       } else if (aGroup) disposeGroup(aGroup)
       aGroup = null; aMat = null; aCopies = []; aRadii = []; aMeshes = []
@@ -299,7 +334,14 @@ export function SketchStudio() {
     const doExport = (fmt: 'stl' | 'glb') => {
       const recs = strokesRef.current
       if (!recs.length) { setStatus('Rien à exporter — trace d\'abord un croquis.'); return }
-      const build = (s: StrokeRec) => s.copies.map((cp) => buildStrokeGeometry(cp, s.radii ?? s.radius, true)).filter(Boolean) as THREE.BufferGeometry[]
+      const build = (s: StrokeRec): THREE.BufferGeometry[] => {
+        if (s.brush === 'airbrush') {
+          const pts = s.copies[0] ?? [], step = Math.max(1, Math.ceil(pts.length / 800)), geoms: THREE.BufferGeometry[] = []
+          for (let i = 0; i < pts.length; i += step) { const v = pts[i]; const sph = new THREE.SphereGeometry(s.radius * 1.4, 6, 5); sph.translate(v.x, v.y, v.z); geoms.push(sph) }
+          return geoms
+        }
+        return s.copies.map((cp) => buildStrokeGeometry(cp, s.radii ?? s.radius, true)).filter(Boolean) as THREE.BufferGeometry[]
+      }
       if (fmt === 'stl') {
         const geoms: THREE.BufferGeometry[] = []; for (const s of recs) geoms.push(...build(s))
         if (!geoms.length) return
@@ -318,7 +360,7 @@ export function SketchStudio() {
     const loop = () => {
       if (!running) return
       const p = paramsRef.current
-      if (clearRef.current) { strokesRef.current = strokesRef.current.filter((s) => { if (s.layerId === p.activeLayer) { disposeGroup(s.group); return false } return true }); setCount(strokesRef.current.length); if (aGroup) disposeGroup(aGroup); if (sPreview) disposeGroup(sPreview); aGroup = sPreview = null; aCopies = []; aMeshes = []; wasDrawing = false; clearRef.current = false }
+      if (clearRef.current) { strokesRef.current = strokesRef.current.filter((s) => { if (s.layerId === p.activeLayer) { disposeGroup(s.group); return false } return true }); setCount(strokesRef.current.length); if (aGroup) disposeGroup(aGroup); if (sPreview) disposeGroup(sPreview); aGroup = sPreview = null; aCopies = []; aMeshes = []; aIsAir = false; aAir = null; aAirPts = []; aSmooth = null; wasDrawing = false; clearRef.current = false }
       if (undoRef.current) { for (let i = strokesRef.current.length - 1; i >= 0; i--) { if (strokesRef.current[i].layerId === p.activeLayer) { disposeGroup(strokesRef.current[i].group); strokesRef.current.splice(i, 1); setCount(strokesRef.current.length); break } } undoRef.current = false }
       if (recenterRef.current) { cam.targetAz = 0; cam.targetPolar = Math.PI / 2; recenterRef.current = false }
       if (exportRef.current) { doExport(exportRef.current); exportRef.current = null }
@@ -366,14 +408,28 @@ export function SketchStudio() {
             const on = p.drawMode === 'pinch' ? pinch < 0.055 : indexUp
             cursor = { x: sx, y: sy, on, mode: p.eraser ? 'erase' : 'draw' }
             const wp = drawPoint(ndcX, ndcY, depthNorm, p.depthScale)
-            // instantaneous speed for calligraphy
-            const speed = lastRawWp ? wp.distanceTo(lastRawWp) : 0; lastRawWp = wp.clone()
+            // lissage : lissage exponentiel du point vers le doigt brut (anti-tremblement)
+            if (!wasDrawing || !aSmooth) aSmooth = wp.clone(); else aSmooth.lerp(wp, clamp(0.06, 1, 1 - p.smooth * 0.92))
+            const dp = aSmooth.clone()
+            const speed = lastRawWp ? dp.distanceTo(lastRawWp) : 0; lastRawWp = dp.clone()
             const calR = radius * clamp(0.32, 1.6, 1.45 - speed * 6)
 
             if (on && p.eraser) {
               const er = Math.max(0.05, radius * 6)
               for (let i = strokesRef.current.length - 1; i >= 0; i--) { const s = strokesRef.current[i]; if (s.copies.some((cp) => cp.some((q) => q.distanceTo(wp) < er))) { disposeGroup(s.group); strokesRef.current.splice(i, 1) } }
               setCount(strokesRef.current.length); wasDrawing = false
+            } else if (on && p.brush === 'airbrush') {
+              // aérographe : nuage de points doux accumulé autour du doigt
+              if (!wasDrawing) {
+                aIsAir = true; aRadius = radius; aLayerId = p.activeLayer
+                aMat = new THREE.PointsMaterial({ color: new THREE.Color(p.color), map: sprayTexture(), size: radius * 4, sizeAttenuation: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })
+                aAirPts = []; aGroup = new THREE.Group(); aAir = new THREE.Points(new THREE.BufferGeometry(), aMat as THREE.PointsMaterial); aAir.frustumCulled = false; aGroup.add(aAir); activeLayerGroup().add(aGroup)
+              }
+              for (let s = 0; s < 5; s++) { const j = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(radius * 2.4); aAirPts.push(dp.clone().add(j)) }
+              if (aAirPts.length > 4000) aAirPts.splice(0, aAirPts.length - 4000)
+              const arr = new Float32Array(aAirPts.length * 3); for (let i = 0; i < aAirPts.length; i++) { arr[i * 3] = aAirPts[i].x; arr[i * 3 + 1] = aAirPts[i].y; arr[i * 3 + 2] = aAirPts[i].z }
+              if (aAir) { aAir.geometry.dispose(); const bg = new THREE.BufferGeometry(); bg.setAttribute('position', new THREE.BufferAttribute(arr, 3)); aAir.geometry = bg }
+              wasDrawing = true
             } else if (on && p.shape !== 'free') {
               sEnd = wp
               if (!wasDrawing) { sAnchor = wp.clone(); sKind = p.shape; sRadius = radius; sMat = makeBrushMaterial(p.brush, p.color); sPreview = new THREE.Group(); strokeGroup.add(sPreview) }
@@ -385,21 +441,22 @@ export function SketchStudio() {
             } else if (on) {
               if (!wasDrawing) {
                 aMat = makeBrushMaterial(p.brush, p.color); aRadius = radius
+                { const fwd = new THREE.Vector3().subVectors(target, camera.position).normalize(); const rgt = new THREE.Vector3().crossVectors(fwd, camera.up).normalize(); const upv = new THREE.Vector3().crossVectors(rgt, fwd).normalize(); const ang = p.nibAngle * Math.PI / 180; aNibRef = rgt.multiplyScalar(Math.cos(ang)).add(upv.multiplyScalar(Math.sin(ang))).normalize() }
                 const k = symCount(p.sym, p.radialN)
-                aCopies = expandPoint(wp, p.sym, p.radialN).map((v) => [v]); aRadii = [calR]
+                aCopies = expandPoint(dp, p.sym, p.radialN).map((v) => [v]); aRadii = [calR]
                 aGroup = new THREE.Group(); aMeshes = []
                 for (let c = 0; c < k; c++) { const m = new THREE.Mesh(new THREE.BufferGeometry(), aMat); m.frustumCulled = false; aGroup.add(m); aMeshes.push(m) }
                 aLayerId = p.activeLayer; activeLayerGroup().add(aGroup)
               } else {
                 const last = aCopies[0][aCopies[0].length - 1]
-                if (wp.distanceTo(last) > Math.max(0.006, radius * 0.55)) {
-                  const cs = expandPoint(wp, p.sym, p.radialN)
+                if (dp.distanceTo(last) > Math.max(0.006, radius * 0.55)) {
+                  const cs = expandPoint(dp, p.sym, p.radialN)
                   for (let c = 0; c < aCopies.length; c++) { aCopies[c].push(cs[c]); if (aCopies[c].length > 500) aCopies[c].shift() }
                   aRadii.push(calR); if (aRadii.length > 500) aRadii.shift()
                 }
               }
               rebuildActive(); wasDrawing = true
-            } else if (wasDrawing) { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false }
+            } else if (wasDrawing) { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false; aSmooth = null }
           }
 
           if (p.showSkeleton) {
@@ -475,7 +532,9 @@ export function SketchStudio() {
           <div style={{ fontSize: 10, color: '#ffc800', marginBottom: 12, lineHeight: 1.35, background: 'rgba(255,200,0,0.08)', padding: 7, borderRadius: 6 }}>✊ Ferme le <b>poing</b> = mode orbite : bouge pour tourner, avance/recule pour zoomer, puis dessine dans le nouveau plan.</div>
 
           <Field label="Pinceau"><select value={brush} onChange={(e) => { setBrush(e.target.value as BrushKind); setEraser(false) }} style={selStyle}>{BRUSHES.map((b) => <option key={b.kind} value={b.kind}>{b.label}</option>)}</select></Field>
-          <label style={chkRow}><input type="checkbox" checked={caligraphy} onChange={(e) => setCaligraphy(e.target.checked)} style={{ accentColor: '#00f0ff' }} /> ✒️ Calligraphie (épaisseur selon vitesse)</label>
+          {brush === 'calligA' && <Field label={`Angle de plume — ${nibAngle}°`}><input type="range" min={0} max={180} value={nibAngle} onChange={(e) => setNibAngle(+e.target.value)} style={rngStyle} /></Field>}
+          {brush !== 'airbrush' && <label style={chkRow}><input type="checkbox" checked={caligraphy} onChange={(e) => setCaligraphy(e.target.checked)} style={{ accentColor: '#00f0ff' }} /> ✒️ Épaisseur selon vitesse</label>}
+          <Field label={`Lissage de ligne — ${Math.round(smooth * 100)}%`}><input type="range" min={0} max={0.9} step={0.05} value={smooth} onChange={(e) => setSmooth(+e.target.value)} style={rngStyle} /></Field>
           <Field label="Forme (posée aux deux points)"><select value={shape} onChange={(e) => { setShape(e.target.value as ShapeKind); setEraser(false) }} style={selStyle}>{SHAPES.map((s) => <option key={s.kind} value={s.kind}>{s.label}</option>)}</select></Field>
           <button onClick={() => setEraser((v) => !v)} style={{ ...selStyle, marginBottom: 12, background: eraser ? 'rgba(255,80,80,0.28)' : 'rgba(255,255,255,0.1)', borderColor: eraser ? 'rgba(255,80,80,0.6)' : 'rgba(255,255,255,0.2)' }}>🧽 Gomme 3D {eraser ? '— ACTIVE' : ''}</button>
 
