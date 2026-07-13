@@ -17,14 +17,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import * as THREE from 'three'
-import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
+import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
+// Gesture Recognizer = MediaPipe's on-device ML model that classifies hand gestures
+// (Closed_Fist, Open_Palm, Pointing_Up, Victory…) in real time — far more robust than
+// geometric heuristics. It also returns the 21 landmarks, so it fully replaces the plain
+// HandLandmarker while giving us a reliable fist signal for orbit mode.
+const GESTURE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
 
 const TIP_THUMB = 4, TIP_INDEX = 8, TIP_MIDDLE = 12, PIP_INDEX = 6
 const FINGER_CHAINS = [[0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [0, 9, 10, 11, 12], [0, 13, 14, 15, 16], [0, 17, 18, 19, 20]]
@@ -208,7 +212,7 @@ export function SketchStudio() {
   useEffect(() => {
     const video = videoRef.current!, mount = mountRef.current!, overlay = overlayRef.current!
     const octx = overlay.getContext('2d')!
-    let landmarker: HandLandmarker | null = null, stream: MediaStream | null = null
+    let landmarker: GestureRecognizer | null = null, stream: MediaStream | null = null
     let rafId = 0, running = true, lastVideoTime = -1
 
     const scene = new THREE.Scene()
@@ -292,7 +296,7 @@ export function SketchStudio() {
     let sAnchor = new THREE.Vector3(), sEnd = new THREE.Vector3(), sKind: ShapeKind = 'free'
     let sPreview: THREE.Group | null = null, sMat: THREE.Material | null = null, sRadius = 0.01
     // fist-navigation
-    let navPrev: { x: number; y: number; d: number } | null = null
+    let navPrev: { x: number; y: number; hs: number } | null = null
     let lastRawWp: THREE.Vector3 | null = null
     // Gesture hysteresis + gap bridging (fixes strokes breaking on brief detection flicker)
     let onState = false, graceLeft = 0
@@ -300,7 +304,7 @@ export function SketchStudio() {
     // Primary-hand lock + adaptive depth (works far / standing)
     let primaryPos: { x: number; y: number } | null = null
     let handScaleMax = 0.16   // running max palm size → auto-calibrates near/far
-    let fistState = false, fistFrames = 0   // robust fist detection (hysteresis + debounce)
+    let fistFrames = 0   // debounce on the ML Closed_Fist gesture
     let lastFrameT = performance.now()
     // One-Euro filter (precise, low-lag hand smoothing) — per world component
     let euFirst = true, euX = 0, euY = 0, euZ = 0, euDX = 0, euDY = 0, euDZ = 0
@@ -419,38 +423,33 @@ export function SketchStudio() {
 
       if (video.readyState >= 2 && video.currentTime !== lastVideoTime && landmarker) {
         lastVideoTime = video.currentTime
-        const hands = (landmarker.detectForVideo(video, performance.now()).landmarks) ?? []
+        const res = landmarker.recognizeForVideo(video, performance.now())
+        const hands = res.landmarks ?? []
+        const gestures = res.gestures ?? []
         if (hands.length > 0) {
-          // PRIMARY-HAND LOCK : among detected hands, keep the one nearest to last frame's
-          // wrist → we never switch to a second hand that wanders into frame.
-          let lm = hands[0]
+          // PRIMARY-HAND LOCK : keep the hand whose wrist is nearest to last frame's → we
+          // never switch to a second hand that wanders into frame. Track its INDEX so we
+          // can read its ML gesture too.
+          let pi = 0
           if (primaryPos && hands.length > 1) {
             let best = 1e9
-            for (const h of hands) { const d = Math.hypot(h[0].x - primaryPos.x, h[0].y - primaryPos.y); if (d < best) { best = d; lm = h } }
+            for (let i = 0; i < hands.length; i++) { const d = Math.hypot(hands[i][0].x - primaryPos.x, hands[i][0].y - primaryPos.y); if (d < best) { best = d; pi = i } }
           }
+          const lm = hands[pi]
+          const gName = gestures[pi]?.[0]?.categoryName ?? 'None'
           primaryPos = { x: lm[0].x, y: lm[0].y }
           const idx = lm[TIP_INDEX], thumb = lm[TIP_THUMB]
           const ndcX = (1 - idx.x) * 2 - 1, ndcY = -(idx.y * 2 - 1)
-          // Palm size (scale-invariant reference). Auto-calibrating depth : near = when the
-          // hand is close to its recent max size, far = small → works standing / far away.
+          // Palm size (scale-invariant). Auto-calibrating depth : near = hand close to its
+          // recent max size, far = small → works standing / far away.
           const hs = Math.max(0.02, Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y))
-          handScaleMax = Math.max(hs, handScaleMax * 0.97)   // recalibrates the near-ref in ~0.5s
+          handScaleMax = Math.max(hs, handScaleMax * 0.97)
           depthNorm = clamp(0, 1, (hs / handScaleMax - 0.45) / 0.55)
-          // Robust FIST (orbit) : all fingertips curled INTO the palm AND the thumb/index
-          // are clearly APART. The pinch draw-gesture also curls the index, so we require
-          // thumb-index separation (a pinch brings them together) → a pinch is never read
-          // as a fist. Also never fires while a draw gesture is active (onState). Hysteresis
-          // + 4-frame debounce so a stray frame can't flip into orbit mid-stroke.
-          const tipDist = (t: number) => Math.hypot(lm[t].x - lm[9].x, lm[t].y - lm[9].y) / hs
-          const thumbIndexApart = Math.hypot(lm[TIP_THUMB].x - lm[TIP_INDEX].x, lm[TIP_THUMB].y - lm[TIP_INDEX].y) / hs
-          // Relaxed so a normal fist is easy to make; the pinch is still excluded because a
-          // pinch brings thumb+index together (apart < 0.5) and !onState blocks it while drawing.
-          const curlT = fistState ? 1.35 : 1.0
-          const allCurled = tipDist(8) < curlT && tipDist(12) < curlT && tipDist(16) < curlT && tipDist(20) < curlT
-          const rawFist = allCurled && thumbIndexApart > 0.5
-          fistState = rawFist
+          // FIST (orbit) from the ML gesture classifier → reliable, no open-palm/pinch false
+          // triggers. Small debounce + never while a draw gesture is active.
+          const rawFist = gName === 'Closed_Fist'
           fistFrames = rawFist ? Math.min(fistFrames + 1, 12) : 0
-          const fist = fistFrames >= 3 && !onState
+          const fist = fistFrames >= 2 && !onState
           const sx = (1 - idx.x) * overlay.width, sy = idx.y * overlay.height
           const radius = Math.max(0.004, p.size * 0.0016 * cam.radius * (BRUSHES.find((b) => b.kind === p.brush)?.rMul ?? 1))
 
@@ -463,11 +462,13 @@ export function SketchStudio() {
             if (wasDrawing) { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false }
             const hx = lm[9].x, hy = lm[9].y
             if (navPrev) {
-              cam.targetAz -= (hx - navPrev.x) * 5
-              cam.targetPolar = clamp(0.18, Math.PI - 0.18, cam.targetPolar - (hy - navPrev.y) * 5)
-              cam.radius = clamp(1.2, 9, cam.radius + (navPrev.d - depthNorm) * 4)
+              cam.targetAz -= (hx - navPrev.x) * 4
+              cam.targetPolar = clamp(0.18, Math.PI - 0.18, cam.targetPolar - (hy - navPrev.y) * 4)
+              // ZOOM from RAW palm-size delta (approche = plus grand → zoom in). The adaptive
+              // depthNorm can't drive zoom (it self-cancels), so we use hs directly.
+              cam.radius = clamp(1.2, 9, cam.radius - (hs - navPrev.hs) * 26)
             }
-            navPrev = { x: hx, y: hy, d: depthNorm }
+            navPrev = { x: hx, y: hy, hs }
             cursor = { x: (1 - lm[9].x) * overlay.width, y: lm[9].y * overlay.height, on: true, mode: 'nav' }
           } else {
             navPrev = null
@@ -551,7 +552,7 @@ export function SketchStudio() {
           else { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false; onState = false }
           navPrev = null; lastRawWp = null; euFirst = true
         }
-        if (hands.length === 0) { fistFrames = 0; fistState = false }
+        if (hands.length === 0) { fistFrames = 0 }
       }
 
       if (cursor) {
@@ -591,7 +592,7 @@ export function SketchStudio() {
         // to last position) instead of MediaPipe arbitrarily switching to the other hand.
         // Low presence/tracking confidence keeps the hand through marginal frames; the
         // One-Euro filter + hysteresis absorb the extra noise.
-        landmarker = await HandLandmarker.createFromOptions(files, { baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' }, runningMode: 'VIDEO', numHands: 2, minHandDetectionConfidence: 0.45, minHandPresenceConfidence: 0.3, minTrackingConfidence: 0.3 })
+        landmarker = await GestureRecognizer.createFromOptions(files, { baseOptions: { modelAssetPath: GESTURE_MODEL_URL, delegate: 'GPU' }, runningMode: 'VIDEO', numHands: 2, minHandDetectionConfidence: 0.45, minHandPresenceConfidence: 0.3, minTrackingConfidence: 0.3 })
         setStatus('Prêt — trace, ferme le POING pour tourner la vue, dessine dans le nouveau plan ✦'); loop()
       } catch (e: any) { setError(`Caméra ou modèle indisponible : ${e?.message ?? e}`) }
     }
