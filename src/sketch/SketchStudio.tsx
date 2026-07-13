@@ -283,7 +283,7 @@ export function SketchStudio() {
   const [error, setError] = useState<string | null>(null)
 
   const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, surfaceClosed, keyframes, tlDuration, tlLoop, turntable, turntableSpeed, layers, activeLayer, xform, bgMode })
-  paramsRef.current = { color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, layers, activeLayer, xform, bgMode }
+  paramsRef.current = { color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, surfaceClosed, keyframes, tlDuration, tlLoop, turntable, turntableSpeed, layers, activeLayer, xform, bgMode }
 
   const clearRef = useRef(false), undoRef = useRef(false), recenterRef = useRef(false), surfaceRef = useRef(false)
   const tlAddRef = useRef(false), tlCmdRef = useRef<null | 'play' | 'stop'>(null), kfSeqRef = useRef(0)
@@ -625,7 +625,7 @@ export function SketchStudio() {
       }
       if (tlCmdRef.current) {
         const cmd = tlCmdRef.current; tlCmdRef.current = null
-        if (cmd === 'play' && p.keyframes.length >= 2) { tlActive = true; tlStart = nowT; setTlPlaying(true); setStatus('▶️ Lecture de l\'animation…') }
+        if (cmd === 'play' && (p.keyframes?.length ?? 0) >= 2) { tlActive = true; tlStart = nowT; setTlPlaying(true); setStatus('▶️ Lecture de l\'animation…') }
         else if (cmd === 'play') { setStatus('Ajoute au moins 2 vues pour animer.') }
         else { tlActive = false; setTlPlaying(false); setStatus('⏸️ Animation arrêtée.') }
       }
@@ -814,7 +814,7 @@ export function SketchStudio() {
 
       // Camera : timeline playback owns it first ; then the manual manipulator (arcball) ;
       // otherwise the gesture/mouse spherical orbit (with optional turntable) does.
-      if (tlActive && p.keyframes.length >= 2) {
+      if (tlActive && (p.keyframes?.length ?? 0) >= 2) {
         if (arcball && arcActive) { arcActive = false; arcball.enabled = false; arcball.setGizmosVisible(false); orbitEnabled = true }
         const kfs = p.keyframes
         let t = ((nowT - tlStart) / 1000) / Math.max(0.5, p.tlDuration)
