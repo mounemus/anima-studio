@@ -295,6 +295,9 @@ export function SketchStudio() {
     // Gesture hysteresis + gap bridging (fixes strokes breaking on brief detection flicker)
     let onState = false, graceLeft = 0
     const GRACE = 9
+    // Primary-hand lock + adaptive depth (works far / standing)
+    let primaryPos: { x: number; y: number } | null = null
+    let handScaleMax = 0.16   // running max palm size → auto-calibrates near/far
     let lastFrameT = performance.now()
     // One-Euro filter (precise, low-lag hand smoothing) — per world component
     let euFirst = true, euX = 0, euY = 0, euZ = 0, euDX = 0, euDY = 0, euDZ = 0
@@ -397,11 +400,21 @@ export function SketchStudio() {
         lastVideoTime = video.currentTime
         const hands = (landmarker.detectForVideo(video, performance.now()).landmarks) ?? []
         if (hands.length > 0) {
-          const lm = hands[0]
+          // PRIMARY-HAND LOCK : among detected hands, keep the one nearest to last frame's
+          // wrist → we never switch to a second hand that wanders into frame.
+          let lm = hands[0]
+          if (primaryPos && hands.length > 1) {
+            let best = 1e9
+            for (const h of hands) { const d = Math.hypot(h[0].x - primaryPos.x, h[0].y - primaryPos.y); if (d < best) { best = d; lm = h } }
+          }
+          primaryPos = { x: lm[0].x, y: lm[0].y }
           const idx = lm[TIP_INDEX], thumb = lm[TIP_THUMB]
           const ndcX = (1 - idx.x) * 2 - 1, ndcY = -(idx.y * 2 - 1)
-          const handScale = Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y)
-          depthNorm = clamp(0, 1, (handScale - 0.08) / 0.22)
+          // Palm size (scale-invariant reference). Auto-calibrating depth : near = when the
+          // hand is close to its recent max size, far = small → works standing / far away.
+          const hs = Math.max(0.02, Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y))
+          handScaleMax = Math.max(hs, handScaleMax * 0.997)
+          depthNorm = clamp(0, 1, (hs / handScaleMax - 0.45) / 0.55)
           const folded = (t: number, pp: number) => lm[t].y > lm[pp].y
           const fist = folded(8, 6) && folded(12, 10) && folded(16, 14) && folded(20, 18)
           const sx = (1 - idx.x) * overlay.width, sy = idx.y * overlay.height
@@ -424,14 +437,14 @@ export function SketchStudio() {
             cursor = { x: (1 - lm[9].x) * overlay.width, y: lm[9].y * overlay.height, on: true, mode: 'nav' }
           } else {
             navPrev = null
-            const pinch = Math.hypot(idx.x - thumb.x, idx.y - thumb.y)
-            // Hysteresis : it's easier to STAY drawing than to start → no on/off flicker.
+            // Gestures NORMALIZED by palm size (hs) → same feel close-up or far/standing.
+            const pinch = Math.hypot(idx.x - thumb.x, idx.y - thumb.y) / hs
             let rawOn: boolean
-            if (p.drawMode === 'pinch') rawOn = onState ? pinch < 0.085 : pinch < 0.05
+            if (p.drawMode === 'pinch') rawOn = onState ? pinch < 0.62 : pinch < 0.42   // hysteresis
             else {
-              const start = lm[TIP_INDEX].y < lm[PIP_INDEX].y - 0.005 && lm[TIP_MIDDLE].y > lm[PIP_INDEX].y - 0.02
-              const stay = lm[TIP_INDEX].y < lm[PIP_INDEX].y + 0.03
-              rawOn = onState ? stay : start
+              const idxUp = (lm[PIP_INDEX].y - lm[TIP_INDEX].y) / hs    // >0 : index tip above its knuckle
+              const midFold = (lm[TIP_MIDDLE].y - lm[PIP_INDEX].y) / hs // >0 : middle folded below index knuckle
+              rawOn = onState ? (idxUp > -0.15) : (idxUp > 0.25 && midFold > -0.15)
             }
             onState = rawOn
             if (rawOn) graceLeft = GRACE
@@ -526,13 +539,16 @@ export function SketchStudio() {
 
     const init = async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' }, audio: false })
+        // Higher resolution → the hand stays detectable when you're far / standing
+        // (a small hand in the frame has enough pixels). Falls back if 720p is refused.
+        stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: false }).catch(() => navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false }))
         video.srcObject = stream; await new Promise<void>((res) => { video.onloadedmetadata = () => res() }); await video.play()
         const files = await FilesetResolver.forVisionTasks(WASM_BASE)
-        // Lower presence/tracking confidence → the hand keeps being tracked through
-        // marginal frames instead of being dropped (fewer stroke ruptures). The One-Euro
-        // filter + hysteresis absorb the extra noise this admits.
-        landmarker = await HandLandmarker.createFromOptions(files, { baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' }, runningMode: 'VIDEO', numHands: 1, minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.3, minTrackingConfidence: 0.3 })
+        // numHands:2 → we can ASSOCIATE the primary drawing hand across frames (nearest
+        // to last position) instead of MediaPipe arbitrarily switching to the other hand.
+        // Low presence/tracking confidence keeps the hand through marginal frames; the
+        // One-Euro filter + hysteresis absorb the extra noise.
+        landmarker = await HandLandmarker.createFromOptions(files, { baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' }, runningMode: 'VIDEO', numHands: 2, minHandDetectionConfidence: 0.45, minHandPresenceConfidence: 0.3, minTrackingConfidence: 0.3 })
         setStatus('Prêt — trace, ferme le POING pour tourner la vue, dessine dans le nouveau plan ✦'); loop()
       } catch (e: any) { setError(`Caméra ou modèle indisponible : ${e?.message ?? e}`) }
     }
