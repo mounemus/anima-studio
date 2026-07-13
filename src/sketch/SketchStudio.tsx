@@ -56,6 +56,14 @@ const SHAPES: { kind: ShapeKind; label: string }[] = [
   { kind: 'circle', label: '⭕ Cercle' }, { kind: 'rect', label: '▭ Rectangle' }, { kind: 'box', label: '📦 Boîte 3D (profondeur)' },
 ]
 
+// Radial (marking) menu wedges — opened by the OTHER hand's Open_Palm gesture.
+type Wedge = { type: 'color'; hex: string } | { type: 'brush'; label: string } | { type: 'eraser'; label: string }
+const WEDGES: Wedge[] = [
+  { type: 'color', hex: '#00f0ff' }, { type: 'color', hex: '#ff2d78' }, { type: 'color', hex: '#ffd200' },
+  { type: 'color', hex: '#7cff00' }, { type: 'color', hex: '#ff7a00' }, { type: 'color', hex: '#ffffff' },
+  { type: 'brush', label: '⟳ Pinceau' }, { type: 'eraser', label: '🧽 Gomme' },
+]
+
 function makeBrushMaterial(kind: BrushKind, hex: string): THREE.Material {
   const color = new THREE.Color(hex)
   switch (kind) {
@@ -305,6 +313,32 @@ export function SketchStudio() {
     let primaryPos: { x: number; y: number } | null = null
     let handScaleMax = 0.16   // running max palm size → auto-calibrates near/far
     let fistFrames = 0   // debounce on the ML Closed_Fist gesture
+    // Radial (marking) menu — opened by a hand's Open_Palm, selected by flicking out + dwell
+    let menuOpen = false, menuCenter = { x: 0, y: 0 }, menuArmed = -1, menuDwell = 0, menuCooldown = 0
+    const applyWedge = (i: number) => {
+      const w = WEDGES[i]; if (!w) return
+      if (w.type === 'color') { setColor(w.hex); setEraser(false); setStatus('Couleur : ' + w.hex) }
+      else if (w.type === 'brush') { const list = BRUSHES.map((b) => b.kind); const cur = list.indexOf(paramsRef.current.brush); const nx = list[(cur + 1) % list.length]; setBrush(nx); setEraser(false); setStatus('Pinceau : ' + nx) }
+      else if (w.type === 'eraser') { setEraser((v) => !v); setStatus('Gomme basculée') }
+    }
+    const drawRadialMenu = (armed: number) => {
+      const cx = menuCenter.x, cy = menuCenter.y, R = 92, n = WEDGES.length
+      octx.save()
+      octx.beginPath(); octx.arc(cx, cy, R + 26, 0, Math.PI * 2); octx.fillStyle = 'rgba(8,10,16,0.55)'; octx.fill()
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2, w = WEDGES[i]
+        const wx = cx + Math.cos(a) * R, wy = cy + Math.sin(a) * R
+        const on = i === armed
+        octx.beginPath(); octx.arc(wx, wy, on ? 26 : 20, 0, Math.PI * 2)
+        octx.fillStyle = w.type === 'color' ? w.hex : (on ? '#00f0ff' : 'rgba(255,255,255,0.18)')
+        octx.globalAlpha = on ? 1 : 0.85; octx.fill(); octx.globalAlpha = 1
+        octx.lineWidth = on ? 4 : 2; octx.strokeStyle = on ? '#fff' : 'rgba(255,255,255,0.5)'; octx.stroke()
+        if (w.type !== 'color') { octx.fillStyle = on ? '#001018' : '#ccc'; octx.font = 'bold 11px system-ui'; octx.textAlign = 'center'; octx.fillText(w.label.slice(0, 8), wx, wy + 3) }
+      }
+      octx.fillStyle = 'rgba(255,255,255,0.85)'; octx.font = 'bold 11px system-ui'; octx.textAlign = 'center'
+      octx.fillText('paume ouverte → pousse vers un secteur', cx, cy - R - 14)
+      octx.restore()
+    }
     let lastFrameT = performance.now()
     // One-Euro filter (precise, low-lag hand smoothing) — per world component
     let euFirst = true, euX = 0, euY = 0, euZ = 0, euDX = 0, euDY = 0, euDZ = 0
@@ -549,6 +583,22 @@ export function SketchStudio() {
             octx.strokeStyle = fist ? 'rgba(255,200,0,0.5)' : 'rgba(0,240,255,0.35)'; octx.lineWidth = 2
             for (const chain of FINGER_CHAINS) { octx.beginPath(); chain.forEach((i, k) => { const px = (1 - lm[i].x) * overlay.width, py = lm[i].y * overlay.height; if (k === 0) octx.moveTo(px, py); else octx.lineTo(px, py) }); octx.stroke() }
           }
+
+          // ── RADIAL MENU : n'importe quelle main en PAUME OUVERTE l'ouvre (l'autre main
+          // continue de dessiner). Pousse la paume vers un secteur et maintiens (dwell) pour choisir.
+          if (menuCooldown > 0) menuCooldown--
+          let palmLm: typeof lm | null = null
+          for (let i = 0; i < hands.length; i++) { if (gestures[i]?.[0]?.categoryName === 'Open_Palm') { palmLm = hands[i]; break } }
+          if (palmLm && menuCooldown === 0) {
+            const px = (1 - palmLm[9].x) * overlay.width, py = palmLm[9].y * overlay.height
+            if (!menuOpen) { menuOpen = true; menuCenter = { x: px, y: py }; menuArmed = -1; menuDwell = 0 }
+            const dx = px - menuCenter.x, dy = py - menuCenter.y
+            let armed = -1
+            if (Math.hypot(dx, dy) > 55) { let a = Math.atan2(dy, dx); if (a < 0) a += Math.PI * 2; armed = Math.floor((a / (Math.PI * 2)) * WEDGES.length) % WEDGES.length }
+            if (armed >= 0 && armed === menuArmed) menuDwell++; else { menuArmed = armed; menuDwell = 0 }
+            if (menuDwell >= 16) { applyWedge(armed); menuOpen = false; menuArmed = -1; menuDwell = 0; menuCooldown = 30 }
+            if (menuOpen) drawRadialMenu(menuArmed)
+          } else { menuOpen = false; menuArmed = -1; menuDwell = 0 }
         } else if (wasDrawing) {
           // Hand momentarily lost → bridge with grace too, then commit.
           if (graceLeft > 0) { graceLeft-- }
@@ -636,7 +686,7 @@ export function SketchStudio() {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Link to="/" style={{ color: '#aaa', fontSize: 12, textDecoration: 'none' }}>← Studio</Link><button onClick={() => setPanelOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 16 }}>«</button></div>
           </div>
           <div style={{ color: error ? '#ff6b6b' : '#7a7a85', fontSize: 11, marginBottom: 10, lineHeight: 1.3 }}>{error ?? status}</div>
-          <div style={{ fontSize: 10, color: '#ffc800', marginBottom: 12, lineHeight: 1.35, background: 'rgba(255,200,0,0.08)', padding: 7, borderRadius: 6 }}>✊ Ferme le <b>poing</b> = mode orbite : bouge pour tourner, avance/recule pour zoomer, puis dessine dans le nouveau plan.</div>
+          <div style={{ fontSize: 10, color: '#ffc800', marginBottom: 12, lineHeight: 1.35, background: 'rgba(255,200,0,0.08)', padding: 7, borderRadius: 6 }}>✊ <b>Poing</b> = orbite (bouge/zoom). 🖐 <b>Paume ouverte</b> (2ᵉ main) = menu radial : pousse la paume vers un secteur (couleur / pinceau / gomme) et maintiens.</div>
 
           <Field label="Pinceau"><select value={brush} onChange={(e) => { setBrush(e.target.value as BrushKind); setEraser(false) }} style={selStyle}>{BRUSHES.map((b) => <option key={b.kind} value={b.kind}>{b.label}</option>)}</select></Field>
           {brush === 'calligA' && <Field label={`Angle de plume — ${nibAngle}°`}><input type="range" min={0} max={180} value={nibAngle} onChange={(e) => setNibAngle(+e.target.value)} style={rngStyle} /></Field>}
