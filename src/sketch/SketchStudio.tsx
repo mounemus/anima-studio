@@ -283,7 +283,7 @@ export function SketchStudio() {
     // ── active freehand stroke (with symmetry copies + optional per-point radii) ──
     let aCopies: THREE.Vector3[][] = [], aRadii: number[] = [], aMeshes: THREE.Mesh[] = []
     let aGroup: THREE.Group | null = null, aMat: THREE.Material | null = null, aRadius = 0.01, aLayerId = 'L1'
-    let aNibRef = new THREE.Vector3(1, 0, 0), aSmooth: THREE.Vector3 | null = null
+    let aNibRef = new THREE.Vector3(1, 0, 0)
     let aIsAir = false, aAir: THREE.Points | null = null, aAirPts: THREE.Vector3[] = []
     let wasDrawing = false
     // active primitive shape
@@ -292,6 +292,24 @@ export function SketchStudio() {
     // fist-navigation
     let navPrev: { x: number; y: number; d: number } | null = null
     let lastRawWp: THREE.Vector3 | null = null
+    // Gesture hysteresis + gap bridging (fixes strokes breaking on brief detection flicker)
+    let onState = false, graceLeft = 0
+    const GRACE = 9
+    let lastFrameT = performance.now()
+    // One-Euro filter (precise, low-lag hand smoothing) — per world component
+    let euFirst = true, euX = 0, euY = 0, euZ = 0, euDX = 0, euDY = 0, euDZ = 0
+    const euAlpha = (cut: number, dt: number) => { const tau = 1 / (2 * Math.PI * cut); return 1 / (1 + tau / dt) }
+    const oneEuro = (v: THREE.Vector3, minCut: number, dt: number): THREE.Vector3 => {
+      if (euFirst) { euX = v.x; euY = v.y; euZ = v.z; euDX = euDY = euDZ = 0; euFirst = false; return v.clone() }
+      const beta = 0.02, dcut = 1.2, aD = euAlpha(dcut, dt)
+      euDX = aD * ((v.x - euX) / dt) + (1 - aD) * euDX
+      euDY = aD * ((v.y - euY) / dt) + (1 - aD) * euDY
+      euDZ = aD * ((v.z - euZ) / dt) + (1 - aD) * euDZ
+      euX += euAlpha(minCut + beta * Math.abs(euDX), dt) * (v.x - euX)
+      euY += euAlpha(minCut + beta * Math.abs(euDY), dt) * (v.y - euY)
+      euZ += euAlpha(minCut + beta * Math.abs(euDZ), dt) * (v.z - euZ)
+      return new THREE.Vector3(euX, euY, euZ)
+    }
 
     const rArgFor = (p: typeof paramsRef.current): number | number[] => {
       if (p.brush === 'calligA' && p.shape === 'free') return calligRadii(aCopies[0], aRadius, aNibRef)
@@ -360,7 +378,10 @@ export function SketchStudio() {
     const loop = () => {
       if (!running) return
       const p = paramsRef.current
-      if (clearRef.current) { strokesRef.current = strokesRef.current.filter((s) => { if (s.layerId === p.activeLayer) { disposeGroup(s.group); return false } return true }); setCount(strokesRef.current.length); if (aGroup) disposeGroup(aGroup); if (sPreview) disposeGroup(sPreview); aGroup = sPreview = null; aCopies = []; aMeshes = []; aIsAir = false; aAir = null; aAirPts = []; aSmooth = null; wasDrawing = false; clearRef.current = false }
+      const nowT = performance.now()
+      const frameDt = clamp(0.001, 0.05, (nowT - lastFrameT) / 1000)
+      lastFrameT = nowT
+      if (clearRef.current) { strokesRef.current = strokesRef.current.filter((s) => { if (s.layerId === p.activeLayer) { disposeGroup(s.group); return false } return true }); setCount(strokesRef.current.length); if (aGroup) disposeGroup(aGroup); if (sPreview) disposeGroup(sPreview); aGroup = sPreview = null; aCopies = []; aMeshes = []; aIsAir = false; aAir = null; aAirPts = []; wasDrawing = false; onState = false; graceLeft = 0; euFirst = true; clearRef.current = false }
       if (undoRef.current) { for (let i = strokesRef.current.length - 1; i >= 0; i--) { if (strokesRef.current[i].layerId === p.activeLayer) { disposeGroup(strokesRef.current[i].group); strokesRef.current.splice(i, 1); setCount(strokesRef.current.length); break } } undoRef.current = false }
       if (recenterRef.current) { cam.targetAz = 0; cam.targetPolar = Math.PI / 2; recenterRef.current = false }
       if (exportRef.current) { doExport(exportRef.current); exportRef.current = null }
@@ -404,13 +425,22 @@ export function SketchStudio() {
           } else {
             navPrev = null
             const pinch = Math.hypot(idx.x - thumb.x, idx.y - thumb.y)
-            const indexUp = lm[TIP_INDEX].y < lm[PIP_INDEX].y && lm[TIP_MIDDLE].y > lm[PIP_INDEX].y
-            const on = p.drawMode === 'pinch' ? pinch < 0.055 : indexUp
+            // Hysteresis : it's easier to STAY drawing than to start → no on/off flicker.
+            let rawOn: boolean
+            if (p.drawMode === 'pinch') rawOn = onState ? pinch < 0.085 : pinch < 0.05
+            else {
+              const start = lm[TIP_INDEX].y < lm[PIP_INDEX].y - 0.005 && lm[TIP_MIDDLE].y > lm[PIP_INDEX].y - 0.02
+              const stay = lm[TIP_INDEX].y < lm[PIP_INDEX].y + 0.03
+              rawOn = onState ? stay : start
+            }
+            onState = rawOn
+            if (rawOn) graceLeft = GRACE
+            const on = rawOn
             cursor = { x: sx, y: sy, on, mode: p.eraser ? 'erase' : 'draw' }
             const wp = drawPoint(ndcX, ndcY, depthNorm, p.depthScale)
-            // lissage : lissage exponentiel du point vers le doigt brut (anti-tremblement)
-            if (!wasDrawing || !aSmooth) aSmooth = wp.clone(); else aSmooth.lerp(wp, clamp(0.06, 1, 1 - p.smooth * 0.92))
-            const dp = aSmooth.clone()
+            // One-Euro : suivi précis et peu laggé (le slider Lissage règle le cutoff)
+            const minCut = 0.35 + (1 - p.smooth) * 6.5
+            const dp = oneEuro(wp, minCut, frameDt)
             const speed = lastRawWp ? dp.distanceTo(lastRawWp) : 0; lastRawWp = dp.clone()
             const calR = radius * clamp(0.32, 1.6, 1.45 - speed * 6)
 
@@ -456,14 +486,24 @@ export function SketchStudio() {
                 }
               }
               rebuildActive(); wasDrawing = true
-            } else if (wasDrawing) { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false; aSmooth = null }
+            } else if (wasDrawing) {
+              // Gesture briefly released → keep the stroke alive for GRACE frames so a
+              // one-frame detection flicker doesn't split it. Only commit after grace.
+              if (graceLeft > 0 && !p.eraser) { graceLeft-- }
+              else { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false }
+            }
           }
 
           if (p.showSkeleton) {
             octx.strokeStyle = fist ? 'rgba(255,200,0,0.5)' : 'rgba(0,240,255,0.35)'; octx.lineWidth = 2
             for (const chain of FINGER_CHAINS) { octx.beginPath(); chain.forEach((i, k) => { const px = (1 - lm[i].x) * overlay.width, py = lm[i].y * overlay.height; if (k === 0) octx.moveTo(px, py); else octx.lineTo(px, py) }); octx.stroke() }
           }
-        } else if (wasDrawing) { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false; navPrev = null; lastRawWp = null }
+        } else if (wasDrawing) {
+          // Hand momentarily lost → bridge with grace too, then commit.
+          if (graceLeft > 0) { graceLeft-- }
+          else { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false; onState = false }
+          navPrev = null; lastRawWp = null; euFirst = true
+        }
       }
 
       if (cursor) {
@@ -489,7 +529,10 @@ export function SketchStudio() {
         stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' }, audio: false })
         video.srcObject = stream; await new Promise<void>((res) => { video.onloadedmetadata = () => res() }); await video.play()
         const files = await FilesetResolver.forVisionTasks(WASM_BASE)
-        landmarker = await HandLandmarker.createFromOptions(files, { baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' }, runningMode: 'VIDEO', numHands: 1, minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5 })
+        // Lower presence/tracking confidence → the hand keeps being tracked through
+        // marginal frames instead of being dropped (fewer stroke ruptures). The One-Euro
+        // filter + hysteresis absorb the extra noise this admits.
+        landmarker = await HandLandmarker.createFromOptions(files, { baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' }, runningMode: 'VIDEO', numHands: 1, minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.3, minTrackingConfidence: 0.3 })
         setStatus('Prêt — trace, ferme le POING pour tourner la vue, dessine dans le nouveau plan ✦'); loop()
       } catch (e: any) { setError(`Caméra ou modèle indisponible : ${e?.message ?? e}`) }
     }
