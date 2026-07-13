@@ -436,16 +436,19 @@ export function SketchStudio() {
           const hs = Math.max(0.02, Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y))
           handScaleMax = Math.max(hs, handScaleMax * 0.97)   // recalibrates the near-ref in ~0.5s
           depthNorm = clamp(0, 1, (hs / handScaleMax - 0.45) / 0.55)
-          // Robust FIST : every fingertip curled INTO the palm (distance to palm centre,
-          // normalized by hand size). Distinguishes a real fist from a pinch/index gesture
-          // (where fingers point AWAY from the palm). Hysteresis + 3-frame debounce so a
-          // stray frame never flips into orbit mode mid-stroke.
+          // Robust FIST (orbit) : all fingertips curled INTO the palm AND the thumb/index
+          // are clearly APART. The pinch draw-gesture also curls the index, so we require
+          // thumb-index separation (a pinch brings them together) → a pinch is never read
+          // as a fist. Also never fires while a draw gesture is active (onState). Hysteresis
+          // + 4-frame debounce so a stray frame can't flip into orbit mid-stroke.
           const tipDist = (t: number) => Math.hypot(lm[t].x - lm[9].x, lm[t].y - lm[9].y) / hs
-          const curlT = fistState ? 1.25 : 0.92
-          const rawFist = tipDist(8) < curlT && tipDist(12) < curlT && tipDist(16) < curlT && tipDist(20) < curlT
+          const thumbIndexApart = Math.hypot(lm[TIP_THUMB].x - lm[TIP_INDEX].x, lm[TIP_THUMB].y - lm[TIP_INDEX].y) / hs
+          const curlT = fistState ? 1.25 : 0.9
+          const allCurled = tipDist(8) < curlT && tipDist(12) < curlT && tipDist(16) < curlT && tipDist(20) < curlT
+          const rawFist = allCurled && thumbIndexApart > 0.7
           fistState = rawFist
           fistFrames = rawFist ? Math.min(fistFrames + 1, 12) : 0
-          const fist = fistFrames >= 3
+          const fist = fistFrames >= 4 && !onState
           const sx = (1 - idx.x) * overlay.width, sy = idx.y * overlay.height
           const radius = Math.max(0.004, p.size * 0.0016 * cam.radius * (BRUSHES.find((b) => b.kind === p.brush)?.rMul ?? 1))
 
