@@ -238,6 +238,9 @@ function shapePolylines(a: THREE.Vector3, b: THREE.Vector3, shape: ShapeKind): T
 
 interface StrokeRec { copies: THREE.Vector3[][]; radii: number[] | null; radius: number; hex: string; brush: BrushKind; group: THREE.Group; layerId: string; kind?: 'surface'; closed?: boolean }
 
+/** A camera-pose keyframe on the animation timeline (spherical coords around target). */
+interface Keyframe { id: string; az: number; polar: number; radius: number }
+
 export function SketchStudio() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -260,6 +263,12 @@ export function SketchStudio() {
   const [showSkeleton, setShowSkeleton] = useState(true)
   const [manualNav, setManualNav] = useState(false)
   const [surfaceClosed, setSurfaceClosed] = useState(false)
+  const [keyframes, setKeyframes] = useState<Keyframe[]>([])
+  const [tlPlaying, setTlPlaying] = useState(false)
+  const [tlDuration, setTlDuration] = useState(8)
+  const [tlLoop, setTlLoop] = useState(true)
+  const [turntable, setTurntable] = useState(false)
+  const [turntableSpeed, setTurntableSpeed] = useState(0.4)
   const [bgMode, setBgMode] = useState<BgMode>('webcam')
   const [refUrl, setRefUrl] = useState<string | null>(null)
   const [refOpacity, setRefOpacity] = useState(0.5)
@@ -273,10 +282,11 @@ export function SketchStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, surfaceClosed, layers, activeLayer, xform, bgMode })
+  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, surfaceClosed, keyframes, tlDuration, tlLoop, turntable, turntableSpeed, layers, activeLayer, xform, bgMode })
   paramsRef.current = { color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, layers, activeLayer, xform, bgMode }
 
   const clearRef = useRef(false), undoRef = useRef(false), recenterRef = useRef(false), surfaceRef = useRef(false)
+  const tlAddRef = useRef(false), tlCmdRef = useRef<null | 'play' | 'stop'>(null), kfSeqRef = useRef(0)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
   const strokesRef = useRef<StrokeRec[]>([])
 
@@ -338,6 +348,15 @@ export function SketchStudio() {
       const sp = Math.sin(cam.polar), cp = Math.cos(cam.polar)
       camera.position.set(cam.radius * sp * Math.sin(cam.az), cam.radius * cp, cam.radius * sp * Math.cos(cam.az))
       camera.lookAt(target)
+    }
+    // Animation timeline : keyframe playback state (drives the camera when active).
+    let tlActive = false, tlStart = 0
+    const smoothstep = (x: number) => { const t = clamp(0, 1, x); return t * t * (3 - 2 * t) }
+    /** Current camera pose as spherical coords around target — robust regardless of who
+     *  currently owns the camera (gesture orbit, arcball, or playback). */
+    const camPose = (): Keyframe => {
+      const r = camera.position.distanceTo(target)
+      return { id: '', az: Math.atan2(camera.position.x - target.x, camera.position.z - target.z), polar: Math.acos(clamp(-1, 1, (camera.position.y - target.y) / Math.max(1e-3, r))), radius: r }
     }
     const resize = () => { const w = window.innerWidth, h = window.innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); overlay.width = w; overlay.height = h }
     resize(); window.addEventListener('resize', resize)
@@ -599,6 +618,17 @@ export function SketchStudio() {
           } else setStatus('Traits trop courts pour tendre une surface.')
         }
       }
+      if (tlAddRef.current) {
+        tlAddRef.current = false
+        const kf = { ...camPose(), id: 'kf' + (++kfSeqRef.current) }
+        setKeyframes((k) => [...k, kf]); setStatus(`⏱️ Vue ${'#'}${kfSeqRef.current} ajoutée à la timeline.`)
+      }
+      if (tlCmdRef.current) {
+        const cmd = tlCmdRef.current; tlCmdRef.current = null
+        if (cmd === 'play' && p.keyframes.length >= 2) { tlActive = true; tlStart = nowT; setTlPlaying(true); setStatus('▶️ Lecture de l\'animation…') }
+        else if (cmd === 'play') { setStatus('Ajoute au moins 2 vues pour animer.') }
+        else { tlActive = false; setTlPlaying(false); setStatus('⏸️ Animation arrêtée.') }
+      }
       if (exportRef.current) { doExport(exportRef.current); exportRef.current = null }
       // sync layers + gizmo from React state
       { const wanted = new Set(p.layers.map((l) => l.id)); for (const l of p.layers) ensureLayer(l.id).visible = l.visible; for (const [id, g] of layerGroups) { if (!wanted.has(id)) { disposeGroup(g); layerGroups.delete(id); strokesRef.current = strokesRef.current.filter((s) => s.layerId !== id); setCount(strokesRef.current.length) } } }
@@ -782,13 +812,29 @@ export function SketchStudio() {
       octx.fillStyle = p.color; octx.fillRect(gx - 3, gy0 + gh * (1 - depthNorm) - 3, 14, 6)
       octx.fillStyle = 'rgba(255,255,255,0.55)'; octx.font = '10px system-ui'; octx.fillText('proche', gx - 34, gy0 + 4); octx.fillText('loin', gx - 24, gy0 + gh)
 
-      // Camera : the manual manipulator (arcball) owns it when the option is on ; otherwise
-      // the gesture/mouse spherical orbit does. On toggle-off we re-sync the spherical state.
-      if (arcball && p.manualNav) {
+      // Camera : timeline playback owns it first ; then the manual manipulator (arcball) ;
+      // otherwise the gesture/mouse spherical orbit (with optional turntable) does.
+      if (tlActive && p.keyframes.length >= 2) {
+        if (arcball && arcActive) { arcActive = false; arcball.enabled = false; arcball.setGizmosVisible(false); orbitEnabled = true }
+        const kfs = p.keyframes
+        let t = ((nowT - tlStart) / 1000) / Math.max(0.5, p.tlDuration)
+        if (p.tlLoop) t = t - Math.floor(t)
+        else if (t >= 1) { t = 1; tlActive = false; setTlPlaying(false); setStatus('✓ Animation terminée.') }
+        const seg = clamp(0, 1, t) * (kfs.length - 1)
+        const i = Math.min(kfs.length - 2, Math.floor(seg)), f = smoothstep(seg - i)
+        const a = kfs[i], b = kfs[i + 1]
+        let daz = b.az - a.az; while (daz > Math.PI) daz -= 2 * Math.PI; while (daz < -Math.PI) daz += 2 * Math.PI
+        cam.az = a.az + daz * f
+        cam.polar = clamp(0.15, Math.PI - 0.15, a.polar + (b.polar - a.polar) * f)
+        cam.radius = clamp(1.0, 12, a.radius + (b.radius - a.radius) * f)
+        cam.targetAz = cam.az; cam.targetPolar = cam.polar
+        applyCam()
+      } else if (arcball && p.manualNav) {
         if (!arcActive) { arcActive = true; orbitEnabled = false; arcball.enabled = true; arcball.setGizmosVisible(true) }
         arcball.update()
         cam.radius = camera.position.distanceTo(target)   // keep the draw-plane scale in sync
       } else {
+        if (p.turntable) cam.targetAz += p.turntableSpeed * frameDt   // 🎠 auto-rotation
         if (arcActive) {
           arcActive = false; if (arcball) { arcball.enabled = false; arcball.setGizmosVisible(false) }
           orbitEnabled = true
@@ -914,6 +960,19 @@ export function SketchStudio() {
           </div>
 
           <div style={{ display: 'flex', gap: 8 }}><button onClick={() => { undoRef.current = true }} style={{ ...selStyle, flex: 1 }}>↶ Annuler</button><button onClick={() => { recenterRef.current = true }} style={{ ...selStyle, flex: 1 }}>⊙ Vue</button><button onClick={() => { clearRef.current = true }} style={{ ...selStyle, flex: 1, background: 'rgba(255,40,100,0.2)', borderColor: 'rgba(255,40,100,0.4)' }} title="Efface le calque actif">Effacer</button></div>
+          <div style={{ fontSize: 10, color: '#00f0ff', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>⏱️ Animation de la vue</div>
+          <label style={{ ...chkRow, marginTop: 2 }} title="Rotation continue automatique de la vue autour du croquis"><input type="checkbox" checked={turntable} onChange={(e) => setTurntable(e.target.checked)} style={{ accentColor: '#00f0ff' }} /> 🎠 Turntable (rotation auto)</label>
+          {turntable && <Field label={`Vitesse — ${turntableSpeed.toFixed(2)} rad/s`}><input type="range" min={0.05} max={1.5} step={0.05} value={turntableSpeed} onChange={(e) => setTurntableSpeed(+e.target.value)} style={rngStyle} /></Field>}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <button onClick={() => { tlAddRef.current = true }} style={{ ...selStyle, flex: 2 }} title="Mémorise l'angle et le zoom actuels comme étape de l'animation">＋ Vue actuelle</button>
+            <button onClick={() => { kfSeqRef.current = 0; setKeyframes([]); if (tlPlaying) tlCmdRef.current = 'stop' }} disabled={!keyframes.length} style={{ ...selStyle, flex: 1, opacity: keyframes.length ? 1 : 0.4 }}>Vider</button>
+          </div>
+          {keyframes.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>{keyframes.map((k, i) => (<span key={k.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, background: 'rgba(0,240,255,0.14)', border: '1px solid rgba(0,240,255,0.3)', borderRadius: 5, padding: '2px 6px' }}>Vue {i + 1}<button onClick={() => setKeyframes((ks) => ks.filter((x) => x.id !== k.id))} style={{ background: 'none', border: 'none', color: '#ff6b6b', cursor: 'pointer', fontSize: 12, padding: 0, lineHeight: 1 }}>✕</button></span>))}</div>}
+          <Field label={`Durée — ${tlDuration}s`}><input type="range" min={2} max={30} step={1} value={tlDuration} onChange={(e) => setTlDuration(+e.target.value)} style={rngStyle} /></Field>
+          <label style={chkRow}><input type="checkbox" checked={tlLoop} onChange={(e) => setTlLoop(e.target.checked)} style={{ accentColor: '#00f0ff' }} /> 🔁 Boucle</label>
+          <button onClick={() => { tlCmdRef.current = tlPlaying ? 'stop' : 'play' }} disabled={keyframes.length < 2} style={{ ...selStyle, marginBottom: 4, opacity: keyframes.length < 2 ? 0.4 : 1, background: tlPlaying ? 'rgba(255,180,0,0.28)' : 'rgba(0,240,255,0.16)', borderColor: tlPlaying ? 'rgba(255,180,0,0.6)' : 'rgba(0,240,255,0.4)' }} title="Anime la caméra entre les vues mémorisées — enregistrable en vidéo">{tlPlaying ? '⏸ Arrêter l\'animation' : '▶️ Lire l\'animation'}</button>
+          <p style={{ color: '#777', fontSize: 10, marginTop: 2, marginBottom: 0, lineHeight: 1.35 }}>Place la vue puis « ＋ Vue actuelle » à chaque étape (≥ 2), puis ▶️. Lance l'enregistrement vidéo pendant la lecture pour capturer le rendu.</p>
+
           <div style={{ fontSize: 10, color: '#00f0ff', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Export ({count} traits)</div>
           <button onClick={() => { recording ? recCtl.current?.stop() : recCtl.current?.start() }} style={{ ...selStyle, marginBottom: 8, background: recording ? 'rgba(255,40,60,0.35)' : 'rgba(255,255,255,0.1)', borderColor: recording ? '#ff2840' : 'rgba(255,255,255,0.2)' }}>
             {recording ? '⏹ Arrêter l\'enregistrement' : '🔴 Enregistrer une vidéo (WebM)'}
