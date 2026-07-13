@@ -445,11 +445,14 @@ export function SketchStudio() {
           const hs = Math.max(0.02, Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y))
           handScaleMax = Math.max(hs, handScaleMax * 0.97)
           depthNorm = clamp(0, 1, (hs / handScaleMax - 0.45) / 0.55)
-          // FIST (orbit) from the ML gesture classifier → reliable, no open-palm/pinch false
-          // triggers. Small debounce + never while a draw gesture is active.
+          // FIST (orbit) straight from the ML gesture classifier → reliable, no open-palm/
+          // pinch false triggers. Small debounce only. (No !onState guard : a closed fist has
+          // thumb+index close, which the pinch hysteresis would read as "still drawing" and
+          // wrongly block the fist — the ML gesture already separates fist from pinch.)
           const rawFist = gName === 'Closed_Fist'
           fistFrames = rawFist ? Math.min(fistFrames + 1, 12) : 0
-          const fist = fistFrames >= 2 && !onState
+          const fist = fistFrames >= 2
+          if (fist) onState = false   // a fist cancels any lingering draw-gesture state
           const sx = (1 - idx.x) * overlay.width, sy = idx.y * overlay.height
           const radius = Math.max(0.004, p.size * 0.0016 * cam.radius * (BRUSHES.find((b) => b.kind === p.brush)?.rMul ?? 1))
 
