@@ -22,6 +22,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
+import { ArcballControls } from 'three/examples/jsm/controls/ArcballControls.js'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 // Gesture Recognizer = MediaPipe's on-device ML model that classifies hand gestures
@@ -197,6 +198,7 @@ export function SketchStudio() {
   const [depthScale, setDepthScale] = useState(1)
   const [showGrid, setShowGrid] = useState(true)
   const [showSkeleton, setShowSkeleton] = useState(true)
+  const [manualNav, setManualNav] = useState(false)
   const [bgMode, setBgMode] = useState<BgMode>('webcam')
   const [refUrl, setRefUrl] = useState<string | null>(null)
   const [refOpacity, setRefOpacity] = useState(0.5)
@@ -210,8 +212,8 @@ export function SketchStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, layers, activeLayer, xform, bgMode })
-  paramsRef.current = { color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, layers, activeLayer, xform, bgMode }
+  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, layers, activeLayer, xform, bgMode })
+  paramsRef.current = { color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, layers, activeLayer, xform, bgMode }
 
   const clearRef = useRef(false), undoRef = useRef(false), recenterRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
@@ -280,6 +282,17 @@ export function SketchStudio() {
     const onUp = () => { dragging = false }
     const onWheel = (e: WheelEvent) => { cam.radius = clamp(1.2, 9, cam.radius + e.deltaY * 0.002) }
     renderer.domElement.addEventListener('pointerdown', onDown); window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); renderer.domElement.addEventListener('wheel', onWheel, { passive: true })
+
+    // Manual-navigation manipulator (ArcballControls) : a visible 3D gizmo (sphere + rings)
+    // to orbit/zoom the view with the mouse, toggled by the "Manipuler la vue" option.
+    let arcball: ArcballControls | null = null
+    try {
+      arcball = new ArcballControls(camera, renderer.domElement, scene)
+      arcball.enabled = false
+      arcball.setGizmosVisible(false)
+      arcball.enablePan = false
+    } catch { arcball = null }
+    let arcActive = false   // tracks the on/off transition to re-sync the spherical cam
 
     const disposeGroup = (g: THREE.Group) => { g.parent?.remove(g); g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose() }) }
 
@@ -682,8 +695,25 @@ export function SketchStudio() {
       octx.fillStyle = p.color; octx.fillRect(gx - 3, gy0 + gh * (1 - depthNorm) - 3, 14, 6)
       octx.fillStyle = 'rgba(255,255,255,0.55)'; octx.font = '10px system-ui'; octx.fillText('proche', gx - 34, gy0 + 4); octx.fillText('loin', gx - 24, gy0 + gh)
 
-      cam.az += (cam.targetAz - cam.az) * 0.15; cam.polar += (cam.targetPolar - cam.polar) * 0.15
-      applyCam(); renderer.render(scene, camera)
+      // Camera : the manual manipulator (arcball) owns it when the option is on ; otherwise
+      // the gesture/mouse spherical orbit does. On toggle-off we re-sync the spherical state.
+      if (arcball && p.manualNav) {
+        if (!arcActive) { arcActive = true; orbitEnabled = false; arcball.enabled = true; arcball.setGizmosVisible(true) }
+        arcball.update()
+        cam.radius = camera.position.distanceTo(target)   // keep the draw-plane scale in sync
+      } else {
+        if (arcActive) {
+          arcActive = false; if (arcball) { arcball.enabled = false; arcball.setGizmosVisible(false) }
+          orbitEnabled = true
+          cam.radius = clamp(1.2, 9, camera.position.distanceTo(target) || cam.radius)
+          cam.polar = Math.acos(clamp(-1, 1, camera.position.y / Math.max(1e-3, cam.radius)))
+          cam.az = Math.atan2(camera.position.x, camera.position.z)
+          cam.targetAz = cam.az; cam.targetPolar = cam.polar
+        }
+        cam.az += (cam.targetAz - cam.az) * 0.15; cam.polar += (cam.targetPolar - cam.polar) * 0.15
+        applyCam()
+      }
+      renderer.render(scene, camera)
       // composite the recording frame (webcam + 3D + hand overlay)
       if (recActive && recCtx && recCanvas) {
         const w = recCanvas.width, h = recCanvas.height
@@ -720,6 +750,7 @@ export function SketchStudio() {
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
       for (const s of strokesRef.current) s.group.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose() })
       strokesRef.current = []; try { gizmo?.dispose() } catch { /* noop */ }
+      try { arcball?.dispose() } catch { /* noop */ }
       if (h2.group) h2.group.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose() })
       try { if (recActive && recorder) recorder.stop() } catch { /* noop */ }
       renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
@@ -766,6 +797,7 @@ export function SketchStudio() {
           <Field label={`Profondeur 3D (main proche/loin) — ×${depthScale.toFixed(1)}`}><input type="range" min={0} max={3} step={0.1} value={depthScale} onChange={(e) => setDepthScale(+e.target.value)} style={rngStyle} /></Field>
           <label style={chkRow}><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} style={{ accentColor: '#00f0ff' }} /> ▦ Grille de repère</label>
           <label style={chkRow}><input type="checkbox" checked={showSkeleton} onChange={(e) => setShowSkeleton(e.target.checked)} style={{ accentColor: '#00f0ff' }} /> ✋ Squelette de la main</label>
+          <label style={chkRow} title="Affiche un manipulateur 3D (sphère + anneaux) : glisse pour orbiter, molette pour zoomer"><input type="checkbox" checked={manualNav} onChange={(e) => setManualNav(e.target.checked)} style={{ accentColor: '#00f0ff' }} /> 🧭 Manipuler la vue (souris)</label>
 
           <Field label="Image de référence (à décalquer)">
             <div style={{ display: 'flex', gap: 6 }}><button onClick={() => fileRef.current?.click()} style={{ ...selStyle, flex: 1 }}>📥 Importer</button>{refUrl && <button onClick={() => { URL.revokeObjectURL(refUrl); setRefUrl(null) }} style={{ ...selStyle, flex: 1, background: 'rgba(255,40,100,0.2)', borderColor: 'rgba(255,40,100,0.4)' }}>Retirer</button>}</div>
