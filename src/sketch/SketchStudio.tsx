@@ -194,7 +194,7 @@ export function SketchStudio() {
   const [panelOpen, setPanelOpen] = useState(true)
   const [count, setCount] = useState(0)
   const [recording, setRecording] = useState(false)
-  const recCmdRef = useRef<null | 'start' | 'stop'>(null)
+  const recCtl = useRef<{ start: () => void; stop: () => void } | null>(null)
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
@@ -397,12 +397,11 @@ export function SketchStudio() {
       recorder.start(); recActive = true; setRecording(true); setStatus('● Enregistrement…')
     }
     const stopRec = () => { if (recActive && recorder) { recorder.stop(); recActive = false; setRecording(false) } }
+    recCtl.current = { start: startRec, stop: stopRec }   // called directly from the button (instant)
 
     const loop = () => {
       if (!running) return
       const p = paramsRef.current
-      if (recCmdRef.current === 'start') { startRec(); recCmdRef.current = null }
-      if (recCmdRef.current === 'stop') { stopRec(); recCmdRef.current = null }
       const nowT = performance.now()
       const frameDt = clamp(0.001, 0.05, (nowT - lastFrameT) / 1000)
       lastFrameT = nowT
@@ -673,7 +672,7 @@ export function SketchStudio() {
 
           <div style={{ display: 'flex', gap: 8 }}><button onClick={() => { undoRef.current = true }} style={{ ...selStyle, flex: 1 }}>↶ Annuler</button><button onClick={() => { recenterRef.current = true }} style={{ ...selStyle, flex: 1 }}>⊙ Vue</button><button onClick={() => { clearRef.current = true }} style={{ ...selStyle, flex: 1, background: 'rgba(255,40,100,0.2)', borderColor: 'rgba(255,40,100,0.4)' }} title="Efface le calque actif">Effacer</button></div>
           <div style={{ fontSize: 10, color: '#00f0ff', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Export ({count} traits)</div>
-          <button onClick={() => { recCmdRef.current = recording ? 'stop' : 'start' }} style={{ ...selStyle, marginBottom: 8, background: recording ? 'rgba(255,40,60,0.35)' : 'rgba(255,255,255,0.1)', borderColor: recording ? '#ff2840' : 'rgba(255,255,255,0.2)' }}>
+          <button onClick={() => { recording ? recCtl.current?.stop() : recCtl.current?.start() }} style={{ ...selStyle, marginBottom: 8, background: recording ? 'rgba(255,40,60,0.35)' : 'rgba(255,255,255,0.1)', borderColor: recording ? '#ff2840' : 'rgba(255,255,255,0.2)' }}>
             {recording ? '⏹ Arrêter l\'enregistrement' : '🔴 Enregistrer une vidéo (WebM)'}
           </button>
           <div style={{ display: 'flex', gap: 8 }}><button onClick={exportPng} style={{ ...selStyle, flex: 1 }}>📸 PNG</button><button onClick={() => { exportRef.current = 'glb' }} style={{ ...selStyle, flex: 1 }}>🧊 .glb</button><button onClick={() => { exportRef.current = 'stl' }} style={{ ...selStyle, flex: 1 }} title="Maillage étanche pour impression 3D">🖨️ .stl</button></div>
