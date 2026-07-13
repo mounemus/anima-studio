@@ -91,6 +91,66 @@ function buildStrokeGeometry(pts: THREE.Vector3[], r: number | number[], capped:
   return geoms.length === 1 ? geoms[0] : mergeGeometries(geoms, false)
 }
 
+/** Resample a polyline to exactly `n` points, evenly spaced by arc length. */
+function resamplePolyline(pts: THREE.Vector3[], n: number): THREE.Vector3[] {
+  if (pts.length === 0) return []
+  if (pts.length === 1 || n <= 1) return Array.from({ length: Math.max(1, n) }, () => pts[0].clone())
+  const L = [0]; for (let i = 1; i < pts.length; i++) L.push(L[i - 1] + pts[i].distanceTo(pts[i - 1]))
+  const total = L[L.length - 1]
+  if (total < 1e-6) return Array.from({ length: n }, () => pts[0].clone())
+  const out: THREE.Vector3[] = []
+  for (let k = 0; k < n; k++) {
+    const d = (k / (n - 1)) * total
+    let i = 1; while (i < pts.length && L[i] < d) i++
+    const i0 = i - 1, seg = (L[i] - L[i0]) || 1, t = clamp(0, 1, (d - L[i0]) / seg)
+    out.push(pts[i0].clone().lerp(pts[i], t))
+  }
+  return out
+}
+
+/** Loft a filled membrane (ruled surface) between two strokes. Corresponding points
+ *  along the two arc-length-resampled curves are bridged with quads. When `thick` > 0
+ *  the sheet is extruded into a watertight thin shell (a closed manifold: front +
+ *  back sheets stitched by boundary walls) so the result exports as a solid. */
+function buildLoftGeometry(aPts: THREE.Vector3[], bPts: THREE.Vector3[], thick: number): THREE.BufferGeometry | null {
+  const N = clamp(2, 220, Math.round(Math.max(aPts.length, bPts.length, 2)))
+  const A = resamplePolyline(aPts, N), B = resamplePolyline(bPts, N)
+  if (A.length < 2 || B.length < 2) return null
+  // ruled sheet : row A = verts 0..N-1, row B = verts N..2N-1
+  const sheetPos: number[] = [], sheetIdx: number[] = []
+  for (const v of A) sheetPos.push(v.x, v.y, v.z)
+  for (const v of B) sheetPos.push(v.x, v.y, v.z)
+  for (let i = 0; i < N - 1; i++) { const a0 = i, a1 = i + 1, b0 = N + i, b1 = N + i + 1; sheetIdx.push(a0, b0, a1, a1, b0, b1) }
+  if (thick <= 0) {
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.Float32BufferAttribute(sheetPos, 3)); g.setIndex(sheetIdx); g.computeVertexNormals()
+    return g
+  }
+  const base = new THREE.BufferGeometry()
+  base.setAttribute('position', new THREE.Float32BufferAttribute(sheetPos, 3)); base.setIndex(sheetIdx); base.computeVertexNormals()
+  const nrm = base.getAttribute('normal') as THREE.BufferAttribute
+  const V = 2 * N, h = thick * 0.5
+  const pos: number[] = [], idx: number[] = []
+  for (let k = 0; k < V; k++) pos.push(sheetPos[k * 3] + nrm.getX(k) * h, sheetPos[k * 3 + 1] + nrm.getY(k) * h, sheetPos[k * 3 + 2] + nrm.getZ(k) * h)   // front 0..V-1
+  for (let k = 0; k < V; k++) pos.push(sheetPos[k * 3] - nrm.getX(k) * h, sheetPos[k * 3 + 1] - nrm.getY(k) * h, sheetPos[k * 3 + 2] - nrm.getZ(k) * h)   // back  V..2V-1
+  for (let i = 0; i < sheetIdx.length; i += 3) { const a = sheetIdx[i], b = sheetIdx[i + 1], c = sheetIdx[i + 2]; idx.push(a, b, c); idx.push(V + a, V + c, V + b) }   // front + reversed back
+  const edges: [number, number][] = []
+  for (let i = 0; i < N - 1; i++) edges.push([i, i + 1])            // A rail boundary
+  for (let i = 0; i < N - 1; i++) edges.push([N + i + 1, N + i])    // B rail boundary
+  edges.push([N, 0]); edges.push([N - 1, 2 * N - 1])               // start + end cap edges
+  for (const [u, v] of edges) { idx.push(u, v, V + v); idx.push(u, V + v, V + u) }   // side walls
+  base.dispose()
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals()
+  return g
+}
+
+/** Double-sided lit material for lofted surfaces. */
+function makeSurfaceMaterial(hex: string): THREE.Material {
+  const c = new THREE.Color(hex)
+  return new THREE.MeshStandardMaterial({ color: c, side: THREE.DoubleSide, metalness: 0.35, roughness: 0.5, transparent: true, opacity: 0.94, emissive: c.clone().multiplyScalar(0.18) })
+}
+
 /** Variable-radius tube via parallel-transport frames + optional sphere caps. */
 function buildVarTube(pts: THREE.Vector3[], radii: number[], radial = 8, capped = false): THREE.BufferGeometry | null {
   const N = pts.length
@@ -176,7 +236,7 @@ function shapePolylines(a: THREE.Vector3, b: THREE.Vector3, shape: ShapeKind): T
   return []
 }
 
-interface StrokeRec { copies: THREE.Vector3[][]; radii: number[] | null; radius: number; hex: string; brush: BrushKind; group: THREE.Group; layerId: string }
+interface StrokeRec { copies: THREE.Vector3[][]; radii: number[] | null; radius: number; hex: string; brush: BrushKind; group: THREE.Group; layerId: string; kind?: 'surface'; closed?: boolean }
 
 export function SketchStudio() {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -199,6 +259,7 @@ export function SketchStudio() {
   const [showGrid, setShowGrid] = useState(true)
   const [showSkeleton, setShowSkeleton] = useState(true)
   const [manualNav, setManualNav] = useState(false)
+  const [surfaceClosed, setSurfaceClosed] = useState(false)
   const [bgMode, setBgMode] = useState<BgMode>('webcam')
   const [refUrl, setRefUrl] = useState<string | null>(null)
   const [refOpacity, setRefOpacity] = useState(0.5)
@@ -212,10 +273,10 @@ export function SketchStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, layers, activeLayer, xform, bgMode })
+  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, surfaceClosed, layers, activeLayer, xform, bgMode })
   paramsRef.current = { color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, layers, activeLayer, xform, bgMode }
 
-  const clearRef = useRef(false), undoRef = useRef(false), recenterRef = useRef(false)
+  const clearRef = useRef(false), undoRef = useRef(false), recenterRef = useRef(false), surfaceRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
   const strokesRef = useRef<StrokeRec[]>([])
 
@@ -253,6 +314,11 @@ export function SketchStudio() {
       if (M.equals(new THREE.Matrix4())) return
       for (const s of strokesRef.current) {
         for (const cp of s.copies) for (const v of cp) v.applyMatrix4(M)
+        if (s.kind === 'surface') {
+          const child = s.group.children[0] as THREE.Mesh | undefined
+          if (child) { const geo = buildLoftGeometry(s.copies[0], s.copies[1] ?? s.copies[0], s.closed ? s.radius : 0); if (geo) { child.geometry.dispose(); child.geometry = geo } }
+          continue
+        }
         let mi = 0
         for (const child of s.group.children) { const m = child as THREE.Mesh; const geo = buildStrokeGeometry(s.copies[mi] ?? s.copies[0], s.radii ?? s.radius, true); if (geo) { m.geometry.dispose(); m.geometry = geo } mi++ }
       }
@@ -463,6 +529,10 @@ export function SketchStudio() {
       const recs = strokesRef.current
       if (!recs.length) { setStatus('Rien à exporter — trace d\'abord un croquis.'); return }
       const build = (s: StrokeRec): THREE.BufferGeometry[] => {
+        if (s.kind === 'surface') {
+          const g = buildLoftGeometry(s.copies[0], s.copies[1] ?? s.copies[0], s.closed ? Math.max(0.012, s.radius) : 0.012)
+          return g ? [g] : []   // always give exports a solid shell so the mesh stays watertight
+        }
         if (s.brush === 'airbrush') {
           const pts = s.copies[0] ?? [], step = Math.max(1, Math.ceil(pts.length / 800)), geoms: THREE.BufferGeometry[] = []
           for (let i = 0; i < pts.length; i += step) { const v = pts[i]; const sph = new THREE.SphereGeometry(s.radius * 1.4, 6, 5); sph.translate(v.x, v.y, v.z); geoms.push(sph) }
@@ -512,6 +582,23 @@ export function SketchStudio() {
       if (clearRef.current) { strokesRef.current = strokesRef.current.filter((s) => { if (s.layerId === p.activeLayer) { disposeGroup(s.group); return false } return true }); setCount(strokesRef.current.length); if (aGroup) disposeGroup(aGroup); if (sPreview) disposeGroup(sPreview); aGroup = sPreview = null; aCopies = []; aMeshes = []; aIsAir = false; aAir = null; aAirPts = []; wasDrawing = false; onState = false; graceLeft = 0; eu1.first = true; if (h2.group) disposeGroup(h2.group); h2.group = null; h2.copies = []; h2.meshes = []; h2.drawing = false; h2.euro.first = true; clearRef.current = false }
       if (undoRef.current) { for (let i = strokesRef.current.length - 1; i >= 0; i--) { if (strokesRef.current[i].layerId === p.activeLayer) { disposeGroup(strokesRef.current[i].group); strokesRef.current.splice(i, 1); setCount(strokesRef.current.length); break } } undoRef.current = false }
       if (recenterRef.current) { cam.targetAz = 0; cam.targetPolar = Math.PI / 2; recenterRef.current = false }
+      if (surfaceRef.current) {
+        surfaceRef.current = false
+        const solids = strokesRef.current.filter((s) => s.brush !== 'airbrush' && s.kind !== 'surface')
+        if (solids.length < 2) setStatus('Trace au moins 2 traits pour tendre une surface.')
+        else {
+          const s1 = solids[solids.length - 2], s2 = solids[solids.length - 1]
+          const thick = p.surfaceClosed ? Math.max(0.012, (s1.radius + s2.radius) * 0.5) : 0
+          const geo = buildLoftGeometry(s1.copies[0], s2.copies[0], thick)
+          if (geo) {
+            const grp = new THREE.Group(); const m = new THREE.Mesh(geo, makeSurfaceMaterial(p.color)); m.frustumCulled = false; grp.add(m)
+            activeLayerGroup().add(grp)
+            strokesRef.current.push({ copies: [s1.copies[0].map((v) => v.clone()), s2.copies[0].map((v) => v.clone())], radii: null, radius: thick, hex: p.color, brush: 'tube', group: grp, layerId: p.activeLayer, kind: 'surface', closed: p.surfaceClosed })
+            setCount(strokesRef.current.length)
+            setStatus(p.surfaceClosed ? '🧊 Surface fermée (étanche) tendue entre les 2 derniers traits.' : '🧊 Membrane tendue entre les 2 derniers traits.')
+          } else setStatus('Traits trop courts pour tendre une surface.')
+        }
+      }
       if (exportRef.current) { doExport(exportRef.current); exportRef.current = null }
       // sync layers + gizmo from React state
       { const wanted = new Set(p.layers.map((l) => l.id)); for (const l of p.layers) ensureLayer(l.id).visible = l.visible; for (const [id, g] of layerGroups) { if (!wanted.has(id)) { disposeGroup(g); layerGroups.delete(id); strokesRef.current = strokesRef.current.filter((s) => s.layerId !== id); setCount(strokesRef.current.length) } } }
@@ -787,6 +874,9 @@ export function SketchStudio() {
           <Field label={`Lissage de ligne — ${Math.round(smooth * 100)}%`}><input type="range" min={0} max={0.9} step={0.05} value={smooth} onChange={(e) => setSmooth(+e.target.value)} style={rngStyle} /></Field>
           <Field label="Forme (posée aux deux points)"><select value={shape} onChange={(e) => { setShape(e.target.value as ShapeKind); setEraser(false) }} style={selStyle}>{SHAPES.map((s) => <option key={s.kind} value={s.kind}>{s.label}</option>)}</select></Field>
           <button onClick={() => setEraser((v) => !v)} style={{ ...selStyle, marginBottom: 12, background: eraser ? 'rgba(255,80,80,0.28)' : 'rgba(255,255,255,0.1)', borderColor: eraser ? 'rgba(255,80,80,0.6)' : 'rgba(255,255,255,0.2)' }}>🧽 Gomme 3D {eraser ? '— ACTIVE' : ''}</button>
+
+          <button onClick={() => { surfaceRef.current = true }} title="Tend une membrane pleine entre les deux derniers traits tracés" style={{ ...selStyle, marginBottom: 6, background: 'rgba(0,240,255,0.14)', borderColor: 'rgba(0,240,255,0.4)' }}>🧊 Surface entre 2 traits</button>
+          <label style={{ ...chkRow, marginBottom: 12 }} title="Extrude la membrane en une coque fermée épaisse (maillage étanche imprimable)"><input type="checkbox" checked={surfaceClosed} onChange={(e) => setSurfaceClosed(e.target.checked)} style={{ accentColor: '#00f0ff' }} /> 🧱 Surface fermée (étanche, volume)</label>
 
           <Field label="Couleur & épaisseur"><div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: 40, height: 30, border: 'none', background: 'none', cursor: 'pointer' }} /><input type="range" min={2} max={24} value={size} onChange={(e) => setSize(+e.target.value)} style={{ ...rngStyle, flex: 1 }} /><span style={{ fontSize: 12, width: 20, textAlign: 'right' }}>{size}</span></div></Field>
           <Field label="Geste de tracé"><select value={drawMode} onChange={(e) => setDrawMode(e.target.value as DrawMode)} style={selStyle}><option value="pinch">✌️ Pince (pouce + index)</option><option value="index">☝️ Index levé</option></select></Field>
