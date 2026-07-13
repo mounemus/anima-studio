@@ -443,12 +443,14 @@ export function SketchStudio() {
           // + 4-frame debounce so a stray frame can't flip into orbit mid-stroke.
           const tipDist = (t: number) => Math.hypot(lm[t].x - lm[9].x, lm[t].y - lm[9].y) / hs
           const thumbIndexApart = Math.hypot(lm[TIP_THUMB].x - lm[TIP_INDEX].x, lm[TIP_THUMB].y - lm[TIP_INDEX].y) / hs
-          const curlT = fistState ? 1.25 : 0.9
+          // Relaxed so a normal fist is easy to make; the pinch is still excluded because a
+          // pinch brings thumb+index together (apart < 0.5) and !onState blocks it while drawing.
+          const curlT = fistState ? 1.35 : 1.0
           const allCurled = tipDist(8) < curlT && tipDist(12) < curlT && tipDist(16) < curlT && tipDist(20) < curlT
-          const rawFist = allCurled && thumbIndexApart > 0.7
+          const rawFist = allCurled && thumbIndexApart > 0.5
           fistState = rawFist
           fistFrames = rawFist ? Math.min(fistFrames + 1, 12) : 0
-          const fist = fistFrames >= 4 && !onState
+          const fist = fistFrames >= 3 && !onState
           const sx = (1 - idx.x) * overlay.width, sy = idx.y * overlay.height
           const radius = Math.max(0.004, p.size * 0.0016 * cam.radius * (BRUSHES.find((b) => b.kind === p.brush)?.rMul ?? 1))
 
