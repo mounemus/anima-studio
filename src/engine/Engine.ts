@@ -519,6 +519,9 @@ export class Engine {
       // GPU organisms read this in their sim shader (packModifiers). CPU organisms
       // ignore it and get the same modifiers via applyModifiers() below.
       ;(this.organism as any).modifiers = this.currentScene.modifiers ?? []
+      // Publish zone polygons every frame so the GPU zoneWalls containment (packModifiers)
+      // sees them too — the CPU applyModifiers path below only runs for CPU organisms.
+      setZonePolygons(this.currentScene.mapping?.shapes ?? [])
       this.organism.update(dt)
       // Layer behavior modifiers on top of the base organism update.
       // The organism owns its position/velocity Float32Arrays; we expose them via

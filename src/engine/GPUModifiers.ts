@@ -7,16 +7,18 @@
  * fields directly into the GPU sim fragment shader, exactly like [[GPUObstacles.ts]]
  * injects OBSTACLE_GLSL.
  *
- * Ported modifiers: vortex, gravityWell, magneticBands (as additive forces) and
- * pulseGate (as a per-frame velocity multiplier `uPulseVelScale`). colorCycle is
- * palette-only and already handled in the Engine; zoneWalls stays CPU-only (it
- * overlaps the per-zone obstacle feature).
+ * Ported modifiers: vortex, gravityWell, magneticBands (as additive forces),
+ * pulseGate (as a per-frame velocity multiplier `uPulseVelScale`) and zoneWalls
+ * (polygon containment — agents are pushed back inside the mapping zone). colorCycle
+ * is palette-only and already handled in the Engine.
  */
 import * as THREE from 'three'
 import { senseBus } from '../senses/SenseBus'
-import type { Modifier } from './Modifiers'
+import { _zonePolygons } from './Modifiers'
+import type { Modifier, ModifierZoneWalls } from './Modifiers'
 
 export const MAX_GPU_MODS = 8
+export const MAX_CONTAIN = 32   // zoneWalls polygon vertex cap
 
 /** GLSL declaring the modifier uniforms + `modifierForce(pos)`. Inject once per
  *  sim shader (after OBSTACLE_GLSL). The caller must also apply `vel *= uPulseVelScale`. */
@@ -26,6 +28,35 @@ export const MODIFIER_GLSL = `
   uniform vec2  uModCenter[${MAX_GPU_MODS}];
   uniform vec4  uModParam[${MAX_GPU_MODS}];  // packed per-type params
   uniform float uPulseVelScale;              // pulseGate: velocity multiplier this frame
+  // zoneWalls (Parois de zones) — polygon containment in world coords
+  uniform float uContainOn;
+  uniform int   uContainCount;
+  uniform vec2  uContainPts[${MAX_CONTAIN}];
+  uniform float uContainMargin;
+  uniform float uContainStiff;
+
+  bool _inContain(vec2 p) {
+    bool inside = false; vec2 prev = uContainPts[0];
+    for (int i = 0; i < ${MAX_CONTAIN}; i++) { if (i >= uContainCount) break; prev = uContainPts[i]; }
+    for (int i = 0; i < ${MAX_CONTAIN}; i++) { if (i >= uContainCount) break; vec2 cur = uContainPts[i];
+      if (((cur.y > p.y) != (prev.y > p.y)) && (p.x < (prev.x - cur.x) * (p.y - cur.y) / (prev.y - cur.y) + cur.x)) inside = !inside;
+      prev = cur; }
+    return inside;
+  }
+  vec2 containForce(vec2 pos) {
+    if (uContainOn < 0.5 || uContainCount < 3) return vec2(0.0);
+    float best = 1e9; vec2 nearest = pos; vec2 prev = uContainPts[0];
+    for (int i = 0; i < ${MAX_CONTAIN}; i++) { if (i >= uContainCount) break; prev = uContainPts[i]; }
+    for (int i = 0; i < ${MAX_CONTAIN}; i++) { if (i >= uContainCount) break; vec2 cur = uContainPts[i];
+      vec2 ab = cur - prev; float t = clamp(dot(pos - prev, ab) / max(1e-6, dot(ab, ab)), 0.0, 1.0);
+      vec2 c = prev + ab * t; float d = distance(pos, c); if (d < best) { best = d; nearest = c; } prev = cur; }
+    if (_inContain(pos)) {
+      if (best < uContainMargin) { vec2 dir = pos - nearest; float l = length(dir); if (l < 1e-5) return vec2(0.0); return (dir / l) * (uContainMargin - best) * uContainStiff; }
+      return vec2(0.0);
+    }
+    vec2 dir = nearest - pos; float l = length(dir); if (l < 1e-5) return vec2(0.0);
+    return (dir / l) * uContainStiff * (1.0 + best);
+  }
 
   vec2 modifierForce(vec2 pos) {
     vec2 f = vec2(0.0);
@@ -67,6 +98,7 @@ export const MODIFIER_GLSL = `
         f.y += (targetY - pos.y) * pr.y;
       }
     }
+    f += containForce(pos);
     return f;
   }
 `
@@ -79,6 +111,11 @@ export function makeModifierUniforms(): Record<string, THREE.IUniform> {
     uModCenter: { value: Array.from({ length: MAX_GPU_MODS }, () => new THREE.Vector2()) },
     uModParam: { value: Array.from({ length: MAX_GPU_MODS }, () => new THREE.Vector4()) },
     uPulseVelScale: { value: 1 },
+    uContainOn: { value: 0 },
+    uContainCount: { value: 0 },
+    uContainPts: { value: Array.from({ length: MAX_CONTAIN }, () => new THREE.Vector2()) },
+    uContainMargin: { value: 0.12 },
+    uContainStiff: { value: 1 },
   }
 }
 
@@ -135,12 +172,31 @@ export function packModifiers(
         if (!Number.isFinite(beat)) beat = 0
         pulse *= 1 + (m.intensity - 1) * beat
       }
-      // colorCycle → palette hue-shift in Engine ; zoneWalls → CPU-only.
+      // colorCycle → palette hue-shift in Engine.
     }
   }
   for (let i = n; i < MAX_GPU_MODS; i++) types[i] = 0
   uniforms.uModCount.value = n
   uniforms.uPulseVelScale.value = pulse
+
+  // zoneWalls (Parois de zones) : confine agents inside the mapping zone polygon.
+  const zw = modifiers?.find((m) => m.enabled && m.kind === 'zoneWalls') as ModifierZoneWalls | undefined
+  if (zw && _zonePolygons.length > 0) {
+    let poly = _zonePolygons[0].points
+    for (const zp of _zonePolygons) if (zp.points.length > poly.length) poly = zp.points   // largest zone
+    let pts = poly
+    if (pts.length > MAX_CONTAIN) { const step = pts.length / MAX_CONTAIN; const dec: typeof pts = []; for (let i = 0; i < MAX_CONTAIN; i++) dec.push(pts[Math.floor(i * step)]); pts = dec }
+    const cnt = Math.min(pts.length, MAX_CONTAIN)
+    const cpts = uniforms.uContainPts.value as THREE.Vector2[]
+    for (let i = 0; i < cnt; i++) cpts[i].set((pts[i].x - 0.5) * 2 * aspect, (0.5 - pts[i].y) * 2)
+    uniforms.uContainOn.value = 1
+    uniforms.uContainCount.value = cnt
+    uniforms.uContainMargin.value = Math.max(0.02, zw.margin) * 2
+    uniforms.uContainStiff.value = Math.max(0.2, zw.stiffness) * 0.25
+  } else {
+    uniforms.uContainOn.value = 0
+    uniforms.uContainCount.value = 0
+  }
 }
 
 /** Shared point-sprite fragment snippet: sample an optional texture at gl_PointCoord.

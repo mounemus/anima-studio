@@ -1245,8 +1245,14 @@ function BehaviorModifiers() {
                 <Slider label="Aspiration" value={m.pull} min={-1} max={1} step={0.05} onChange={(v) => update(m.id, { pull: v })} format={(v) => v.toFixed(2)} />
                 <label style={{ display: 'flex', gap: 6, fontSize: 11, marginTop: 4, cursor: 'pointer' }}>
                   <input type="checkbox" checked={m.center === 'hand'} onChange={(e) => update(m.id, { center: e.target.checked ? 'hand' : { x: 0.5, y: 0.5 } })} />
-                  Centrer sur la main
+                  Centrer sur la main <span style={{ color: 'var(--text-mute)' }}>(sinon position fixe ci-dessous)</span>
                 </label>
+                {m.center !== 'hand' && (
+                  <>
+                    <Slider label="Centre X" value={(m.center as { x: number; y: number }).x} min={0} max={1} step={0.01} onChange={(v) => update(m.id, { center: { ...(m.center as { x: number; y: number }), x: v } })} format={(v) => v.toFixed(2)} />
+                    <Slider label="Centre Y" value={(m.center as { x: number; y: number }).y} min={0} max={1} step={0.01} onChange={(v) => update(m.id, { center: { ...(m.center as { x: number; y: number }), y: v } })} format={(v) => v.toFixed(2)} />
+                  </>
+                )}
               </>
             )}
             {m.kind === 'colorCycle' && (
