@@ -37,7 +37,9 @@ const Z_AXIS = new THREE.Vector3(0, 0, 1)
 const UP = new THREE.Vector3(0, 1, 0)
 const clamp = (a: number, b: number, v: number) => Math.max(a, Math.min(b, v))
 
-type BrushKind = 'tube' | 'neon' | 'marker' | 'metal' | 'wire' | 'calligA' | 'airbrush'
+type BrushKind = 'tube' | 'neon' | 'marker' | 'metal' | 'wire' | 'calligA' | 'airbrush' | 'light'
+type LightGradient = 'warm' | 'rainbow' | 'mono'
+interface LightOpt { mode: LightGradient; cycle: number; hex: string; glow: number }
 type DrawMode = 'pinch' | 'index'
 type BgMode = 'webcam' | 'black'
 type ShapeKind = 'free' | 'line' | 'circle' | 'rect' | 'box'
@@ -51,6 +53,7 @@ const BRUSHES: { kind: BrushKind; label: string; rMul: number }[] = [
   { kind: 'wire', label: '✨ Fil fin', rMul: 0.45 },
   { kind: 'calligA', label: '✒️ Calligraphie arabe (plume large)', rMul: 1.35 },
   { kind: 'airbrush', label: '💨 Aérographe (spray doux)', rMul: 1.4 },
+  { kind: 'light', label: '🔦 Light painting (traînée lumineuse)', rMul: 1 },
 ]
 const SHAPES: { kind: ShapeKind; label: string }[] = [
   { kind: 'free', label: '✏️ Libre (main levée)' }, { kind: 'line', label: '📏 Ligne droite' },
@@ -72,6 +75,7 @@ function makeBrushMaterial(kind: BrushKind, hex: string): THREE.Material {
     case 'marker': return new THREE.MeshBasicMaterial({ color })
     case 'metal': return new THREE.MeshStandardMaterial({ color, metalness: 0.95, roughness: 0.22 })
     case 'wire': return new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false })
+    case 'light': return new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.96, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })
     case 'calligA': return new THREE.MeshStandardMaterial({ color, metalness: 0.15, roughness: 0.5 })
     case 'tube': default: return new THREE.MeshStandardMaterial({ color, metalness: 0.1, roughness: 0.55 })
   }
@@ -79,7 +83,44 @@ function makeBrushMaterial(kind: BrushKind, hex: string): THREE.Material {
 
 /** Constant-radius tube (TubeGeometry) or, when `r` is an array, a variable-radius
  *  tube (calligraphie). Optionally closed by end-cap spheres → maillage étanche. */
-function buildStrokeGeometry(pts: THREE.Vector3[], r: number | number[], capped: boolean): THREE.BufferGeometry | null {
+/** Color of a light-painting trail at a normalized position `frac` (0→1 along the
+ *  stroke). Warm = orange→pale-yellow bands ; rainbow = hue sweep ; mono = base hue
+ *  with brightness bands. `cycle` sets how many bands run along the trail. */
+function lightGradientColor(frac: number, mode: LightGradient, cycle: number, base: THREE.Color): THREE.Color {
+  if (mode === 'rainbow') return new THREE.Color().setHSL(((frac * cycle) % 1 + 1) % 1, 1, 0.55)
+  const band = 0.5 + 0.5 * Math.sin(frac * cycle * Math.PI * 2)
+  if (mode === 'warm') return new THREE.Color().setHSL(0.055 + 0.055 * band, 1, 0.42 + 0.4 * band)
+  const hsl = { h: 0, s: 0, l: 0 }; base.getHSL(hsl)
+  return new THREE.Color().setHSL(hsl.h, Math.max(0.4, hsl.s), clamp(0.3, 0.85, hsl.l * (0.7 + 0.9 * band)))
+}
+
+/** Light-painting trail : a bright emissive tube with a gradient along its length,
+ *  wrapped in a dimmer, fatter halo tube — additive blending fakes the long-exposure
+ *  bloom of real light painting. One merged geometry (fits the one-mesh-per-copy pipeline). */
+function buildLightGeometry(pts: THREE.Vector3[], r: number, light: LightOpt): THREE.BufferGeometry | null {
+  const base = new THREE.Color(light.hex)
+  const colorAt = (frac: number) => lightGradientColor(frac, light.mode, Math.max(1, light.cycle), base)
+  if (pts.length === 1) {
+    const s = new THREE.SphereGeometry(Math.max(0.004, r), 10, 8); s.translate(pts[0].x, pts[0].y, pts[0].z)
+    const cnt = s.getAttribute('position').count, cols = new Float32Array(cnt * 3), c = colorAt(0)
+    for (let i = 0; i < cnt; i++) { cols[i * 3] = c.r; cols[i * 3 + 1] = c.g; cols[i * 3 + 2] = c.b }
+    s.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3)); return s
+  }
+  if (pts.length < 2) return null
+  const curve = new THREE.CatmullRomCurve3(pts)
+  const tub = Math.max(4, Math.min(700, pts.length * 4)), RAD = 8, ringV = RAD + 1
+  const mk = (radius: number, intensity: number) => {
+    const g = new THREE.TubeGeometry(curve, tub, Math.max(0.002, radius), RAD, false)
+    const pos = g.getAttribute('position'), cnt = pos.count, cols = new Float32Array(cnt * 3)
+    for (let idx = 0; idx < cnt; idx++) { const frac = tub > 0 ? Math.floor(idx / ringV) / tub : 0; const c = colorAt(frac); cols[idx * 3] = Math.min(1, c.r * intensity); cols[idx * 3 + 1] = Math.min(1, c.g * intensity); cols[idx * 3 + 2] = Math.min(1, c.b * intensity) }
+    g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3)); return g
+  }
+  const inner = mk(r, 1), halo = mk(r * (1.8 + light.glow * 3), 0.22 + light.glow * 0.2)
+  return mergeGeometries([halo, inner], false)
+}
+
+function buildStrokeGeometry(pts: THREE.Vector3[], r: number | number[], capped: boolean, light?: LightOpt): THREE.BufferGeometry | null {
+  if (light) return buildLightGeometry(pts, Array.isArray(r) ? (r[0] ?? 0.01) : r, light)
   if (Array.isArray(r)) return buildVarTube(pts, r, 8, capped)
   const geoms: THREE.BufferGeometry[] = []
   if (pts.length >= 2) {
@@ -236,7 +277,7 @@ function shapePolylines(a: THREE.Vector3, b: THREE.Vector3, shape: ShapeKind): T
   return []
 }
 
-interface StrokeRec { copies: THREE.Vector3[][]; radii: number[] | null; radius: number; hex: string; brush: BrushKind; group: THREE.Group; layerId: string; kind?: 'surface'; closed?: boolean }
+interface StrokeRec { copies: THREE.Vector3[][]; radii: number[] | null; radius: number; hex: string; brush: BrushKind; group: THREE.Group; layerId: string; kind?: 'surface'; closed?: boolean; light?: LightOpt }
 
 /** A camera-pose keyframe on the animation timeline (spherical coords around target). */
 interface Keyframe { id: string; az: number; polar: number; radius: number }
@@ -263,6 +304,9 @@ export function SketchStudio() {
   const [showSkeleton, setShowSkeleton] = useState(true)
   const [manualNav, setManualNav] = useState(false)
   const [surfaceClosed, setSurfaceClosed] = useState(false)
+  const [lightGradient, setLightGradient] = useState<LightGradient>('warm')
+  const [lightBands, setLightBands] = useState(3)
+  const [lightGlow, setLightGlow] = useState(0.5)
   const [keyframes, setKeyframes] = useState<Keyframe[]>([])
   const [tlPlaying, setTlPlaying] = useState(false)
   const [tlDuration, setTlDuration] = useState(8)
@@ -282,8 +326,8 @@ export function SketchStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, surfaceClosed, keyframes, tlDuration, tlLoop, turntable, turntableSpeed, layers, activeLayer, xform, bgMode })
-  paramsRef.current = { color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, surfaceClosed, keyframes, tlDuration, tlLoop, turntable, turntableSpeed, layers, activeLayer, xform, bgMode }
+  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, surfaceClosed, lightGradient, lightBands, lightGlow, keyframes, tlDuration, tlLoop, turntable, turntableSpeed, layers, activeLayer, xform, bgMode })
+  paramsRef.current = { color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, manualNav, surfaceClosed, lightGradient, lightBands, lightGlow, keyframes, tlDuration, tlLoop, turntable, turntableSpeed, layers, activeLayer, xform, bgMode }
 
   const clearRef = useRef(false), undoRef = useRef(false), recenterRef = useRef(false), surfaceRef = useRef(false)
   const tlAddRef = useRef(false), tlCmdRef = useRef<null | 'play' | 'stop'>(null), kfSeqRef = useRef(0)
@@ -315,6 +359,11 @@ export function SketchStudio() {
     const ensureLayer = (id: string) => { let g = layerGroups.get(id); if (!g) { g = new THREE.Group(); strokeGroup.add(g); layerGroups.set(id, g) } return g }
     ensureLayer('L1')
     const activeLayerGroup = () => ensureLayer(paramsRef.current.activeLayer)
+    // Light-painting geometry options for a given brush/color (undefined = normal brush).
+    const lightArg = (brush: BrushKind, hex: string): LightOpt | undefined => {
+      const pp = paramsRef.current
+      return brush === 'light' ? { mode: pp.lightGradient, cycle: pp.lightBands, hex, glow: pp.lightGlow } : undefined
+    }
 
     // ── Gizmo de transformation (TransformControls) sur tout le croquis ──
     let gizmo: TransformControls | null = null, gizmoHelper: THREE.Object3D | null = null
@@ -330,7 +379,7 @@ export function SketchStudio() {
           continue
         }
         let mi = 0
-        for (const child of s.group.children) { const m = child as THREE.Mesh; const geo = buildStrokeGeometry(s.copies[mi] ?? s.copies[0], s.radii ?? s.radius, true); if (geo) { m.geometry.dispose(); m.geometry = geo } mi++ }
+        for (const child of s.group.children) { const m = child as THREE.Mesh; const geo = buildStrokeGeometry(s.copies[mi] ?? s.copies[0], s.radii ?? s.radius, true, s.light); if (geo) { m.geometry.dispose(); m.geometry = geo } mi++ }
       }
       strokeGroup.position.set(0, 0, 0); strokeGroup.rotation.set(0, 0, 0); strokeGroup.scale.set(1, 1, 1); strokeGroup.updateMatrix()
     }
@@ -463,7 +512,8 @@ export function SketchStudio() {
     const rebuildActive = () => {
       if (!aGroup || aIsAir) return
       const rArg = rArgFor(paramsRef.current)
-      for (let c = 0; c < aMeshes.length; c++) { const g = buildStrokeGeometry(aCopies[c], rArg, false); if (g) { aMeshes[c].geometry.dispose(); aMeshes[c].geometry = g } }
+      const la = lightArg(paramsRef.current.brush, paramsRef.current.color)
+      for (let c = 0; c < aMeshes.length; c++) { const g = buildStrokeGeometry(aCopies[c], rArg, false, la); if (g) { aMeshes[c].geometry.dispose(); aMeshes[c].geometry = g } }
     }
     const finalizeFree = () => {
       const p = paramsRef.current
@@ -474,8 +524,9 @@ export function SketchStudio() {
       }
       if (aGroup && aCopies[0]?.length >= 2) {
         const rArg = rArgFor(p); const rArr = Array.isArray(rArg) ? rArg : null
-        for (let c = 0; c < aMeshes.length; c++) { const g = buildStrokeGeometry(aCopies[c], rArg, true); if (g) { aMeshes[c].geometry.dispose(); aMeshes[c].geometry = g } }
-        strokesRef.current.push({ copies: aCopies, radii: rArr, radius: aRadius, hex: p.color, brush: p.brush, group: aGroup, layerId: aLayerId })
+        const la = lightArg(p.brush, p.color)
+        for (let c = 0; c < aMeshes.length; c++) { const g = buildStrokeGeometry(aCopies[c], rArg, true, la); if (g) { aMeshes[c].geometry.dispose(); aMeshes[c].geometry = g } }
+        strokesRef.current.push({ copies: aCopies, radii: rArr, radius: aRadius, hex: p.color, brush: p.brush, group: aGroup, layerId: aLayerId, light: la })
         setCount(strokesRef.current.length)
       } else if (aGroup) disposeGroup(aGroup)
       aGroup = null; aMat = null; aCopies = []; aRadii = []; aMeshes = []
@@ -487,8 +538,9 @@ export function SketchStudio() {
       for (const pl of polys) {
         const copies = expandPolyline(pl, p.sym, p.radialN)
         const grp = new THREE.Group(); const meshes: THREE.Mesh[] = []
-        for (const cp of copies) { const geo = buildStrokeGeometry(cp, sRadius, true); if (geo) { const m = new THREE.Mesh(geo, makeBrushMaterial(p.brush, p.color)); m.frustumCulled = false; grp.add(m); meshes.push(m) } }
-        if (meshes.length) { activeLayerGroup().add(grp); strokesRef.current.push({ copies, radii: null, radius: sRadius, hex: p.color, brush: p.brush, group: grp, layerId: p.activeLayer }) }
+        const la = lightArg(p.brush, p.color)
+        for (const cp of copies) { const geo = buildStrokeGeometry(cp, sRadius, true, la); if (geo) { const m = new THREE.Mesh(geo, makeBrushMaterial(p.brush, p.color)); m.frustumCulled = false; grp.add(m); meshes.push(m) } }
+        if (meshes.length) { activeLayerGroup().add(grp); strokesRef.current.push({ copies, radii: null, radius: sRadius, hex: p.color, brush: p.brush, group: grp, layerId: p.activeLayer, light: la }) }
       }
       setCount(strokesRef.current.length)
     }
@@ -500,13 +552,14 @@ export function SketchStudio() {
     interface Hand2 { copies: THREE.Vector3[][]; radii: number[]; meshes: THREE.Mesh[]; group: THREE.Group | null; mat: THREE.Material | null; radius: number; layerId: string; nibRef: THREE.Vector3; drawing: boolean; onState: boolean; grace: number; lastWp: THREE.Vector3 | null; euro: Euro }
     const h2: Hand2 = { copies: [], radii: [], meshes: [], group: null, mat: null, radius: 0.01, layerId: 'L1', nibRef: new THREE.Vector3(1, 0, 0), drawing: false, onState: false, grace: 0, lastWp: null, euro: mkEuro() }
     const rArg2 = (): number | number[] => { const p = paramsRef.current; if (p.brush === 'calligA') return calligRadii(h2.copies[0], h2.radius, h2.nibRef); if (p.caligraphy) return h2.radii; return h2.radius }
-    const rebuild2 = () => { if (!h2.group) return; const r = rArg2(); for (let c = 0; c < h2.meshes.length; c++) { const g = buildStrokeGeometry(h2.copies[c], r, false); if (g) { h2.meshes[c].geometry.dispose(); h2.meshes[c].geometry = g } } }
+    const rebuild2 = () => { if (!h2.group) return; const r = rArg2(); const la = lightArg(paramsRef.current.brush, paramsRef.current.color); for (let c = 0; c < h2.meshes.length; c++) { const g = buildStrokeGeometry(h2.copies[c], r, false, la); if (g) { h2.meshes[c].geometry.dispose(); h2.meshes[c].geometry = g } } }
     const finalize2 = () => {
       const p = paramsRef.current
       if (h2.group && h2.copies[0]?.length >= 2) {
         const r = rArg2(); const rArr = Array.isArray(r) ? r : null
-        for (let c = 0; c < h2.meshes.length; c++) { const g = buildStrokeGeometry(h2.copies[c], r, true); if (g) { h2.meshes[c].geometry.dispose(); h2.meshes[c].geometry = g } }
-        strokesRef.current.push({ copies: h2.copies, radii: rArr, radius: h2.radius, hex: p.color, brush: p.brush, group: h2.group, layerId: h2.layerId }); setCount(strokesRef.current.length)
+        const la = lightArg(p.brush, p.color)
+        for (let c = 0; c < h2.meshes.length; c++) { const g = buildStrokeGeometry(h2.copies[c], r, true, la); if (g) { h2.meshes[c].geometry.dispose(); h2.meshes[c].geometry = g } }
+        strokesRef.current.push({ copies: h2.copies, radii: rArr, radius: h2.radius, hex: p.color, brush: p.brush, group: h2.group, layerId: h2.layerId, light: la }); setCount(strokesRef.current.length)
       } else if (h2.group) disposeGroup(h2.group)
       h2.group = null; h2.mat = null; h2.copies = []; h2.radii = []; h2.meshes = []; h2.drawing = false
     }
@@ -735,7 +788,7 @@ export function SketchStudio() {
               if (!wasDrawing) { sAnchor = wp.clone(); sKind = p.shape; sRadius = radius; sMat = makeBrushMaterial(p.brush, p.color); sPreview = new THREE.Group(); strokeGroup.add(sPreview) }
               if (sPreview) {
                 for (let i = sPreview.children.length - 1; i >= 0; i--) { const m = sPreview.children[i] as THREE.Mesh; m.geometry?.dispose(); sPreview.remove(m) }
-                for (const pl of shapePolylines(sAnchor, sEnd, sKind)) for (const cp of expandPolyline(pl, p.sym, p.radialN)) { const geo = buildStrokeGeometry(cp, sRadius, false); if (geo) { const m = new THREE.Mesh(geo, sMat!); m.frustumCulled = false; sPreview.add(m) } }
+                { const la = lightArg(p.brush, p.color); for (const pl of shapePolylines(sAnchor, sEnd, sKind)) for (const cp of expandPolyline(pl, p.sym, p.radialN)) { const geo = buildStrokeGeometry(cp, sRadius, false, la); if (geo) { const m = new THREE.Mesh(geo, sMat!); m.frustumCulled = false; sPreview.add(m) } } }
               }
               wasDrawing = true
             } else if (on) {
@@ -916,6 +969,12 @@ export function SketchStudio() {
 
           <Field label="Pinceau"><select value={brush} onChange={(e) => { setBrush(e.target.value as BrushKind); setEraser(false) }} style={selStyle}>{BRUSHES.map((b) => <option key={b.kind} value={b.kind}>{b.label}</option>)}</select></Field>
           {brush === 'calligA' && <Field label={`Angle de plume — ${nibAngle}°`}><input type="range" min={0} max={180} value={nibAngle} onChange={(e) => setNibAngle(+e.target.value)} style={rngStyle} /></Field>}
+          {brush === 'light' && <div style={{ background: 'rgba(0,240,255,0.06)', border: '1px solid rgba(0,240,255,0.2)', borderRadius: 8, padding: 10, marginBottom: 12 }}>
+            <Field label="Dégradé de la traînée"><select value={lightGradient} onChange={(e) => setLightGradient(e.target.value as LightGradient)} style={selStyle}><option value="warm">🔥 Chaud (orange→jaune)</option><option value="rainbow">🌈 Arc-en-ciel</option><option value="mono">🎨 Ma couleur (dégradée)</option></select></Field>
+            <Field label={`Bandes de lumière — ${lightBands}`}><input type="range" min={1} max={12} step={1} value={lightBands} onChange={(e) => setLightBands(+e.target.value)} style={rngStyle} /></Field>
+            <div style={{ marginBottom: 0 }}><div style={{ fontSize: 11, color: '#00f0ff', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 5 }}>{`Lueur (halo) — ${Math.round(lightGlow * 100)}%`}</div><input type="range" min={0} max={1} step={0.05} value={lightGlow} onChange={(e) => setLightGlow(+e.target.value)} style={rngStyle} /></div>
+            <p style={{ color: '#888', fontSize: 10, margin: '8px 0 0', lineHeight: 1.35 }}>Traînée lumineuse additive facon photo longue-exposition — superbe sur fond noir.</p>
+          </div>}
           {brush !== 'airbrush' && <label style={chkRow}><input type="checkbox" checked={caligraphy} onChange={(e) => setCaligraphy(e.target.checked)} style={{ accentColor: '#00f0ff' }} /> ✒️ Épaisseur selon vitesse</label>}
           <Field label={`Lissage de ligne — ${Math.round(smooth * 100)}%`}><input type="range" min={0} max={0.9} step={0.05} value={smooth} onChange={(e) => setSmooth(+e.target.value)} style={rngStyle} /></Field>
           <Field label="Forme (posée aux deux points)"><select value={shape} onChange={(e) => { setShape(e.target.value as ShapeKind); setEraser(false) }} style={selStyle}>{SHAPES.map((s) => <option key={s.kind} value={s.kind}>{s.label}</option>)}</select></Field>
