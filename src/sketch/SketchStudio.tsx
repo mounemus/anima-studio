@@ -298,6 +298,7 @@ export function SketchStudio() {
     // Primary-hand lock + adaptive depth (works far / standing)
     let primaryPos: { x: number; y: number } | null = null
     let handScaleMax = 0.16   // running max palm size → auto-calibrates near/far
+    let fistState = false, fistFrames = 0   // robust fist detection (hysteresis + debounce)
     let lastFrameT = performance.now()
     // One-Euro filter (precise, low-lag hand smoothing) — per world component
     let euFirst = true, euX = 0, euY = 0, euZ = 0, euDX = 0, euDY = 0, euDZ = 0
@@ -413,10 +414,18 @@ export function SketchStudio() {
           // Palm size (scale-invariant reference). Auto-calibrating depth : near = when the
           // hand is close to its recent max size, far = small → works standing / far away.
           const hs = Math.max(0.02, Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y))
-          handScaleMax = Math.max(hs, handScaleMax * 0.997)
+          handScaleMax = Math.max(hs, handScaleMax * 0.97)   // recalibrates the near-ref in ~0.5s
           depthNorm = clamp(0, 1, (hs / handScaleMax - 0.45) / 0.55)
-          const folded = (t: number, pp: number) => lm[t].y > lm[pp].y
-          const fist = folded(8, 6) && folded(12, 10) && folded(16, 14) && folded(20, 18)
+          // Robust FIST : every fingertip curled INTO the palm (distance to palm centre,
+          // normalized by hand size). Distinguishes a real fist from a pinch/index gesture
+          // (where fingers point AWAY from the palm). Hysteresis + 3-frame debounce so a
+          // stray frame never flips into orbit mode mid-stroke.
+          const tipDist = (t: number) => Math.hypot(lm[t].x - lm[9].x, lm[t].y - lm[9].y) / hs
+          const curlT = fistState ? 1.25 : 0.92
+          const rawFist = tipDist(8) < curlT && tipDist(12) < curlT && tipDist(16) < curlT && tipDist(20) < curlT
+          fistState = rawFist
+          fistFrames = rawFist ? Math.min(fistFrames + 1, 12) : 0
+          const fist = fistFrames >= 3
           const sx = (1 - idx.x) * overlay.width, sy = idx.y * overlay.height
           const radius = Math.max(0.004, p.size * 0.0016 * cam.radius * (BRUSHES.find((b) => b.kind === p.brush)?.rMul ?? 1))
 
@@ -517,6 +526,7 @@ export function SketchStudio() {
           else { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false; onState = false }
           navPrev = null; lastRawWp = null; euFirst = true
         }
+        if (hands.length === 0) { fistFrames = 0; fistState = false }
       }
 
       if (cursor) {
