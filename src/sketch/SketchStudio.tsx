@@ -97,30 +97,44 @@ function lightGradientColor(frac: number, mode: LightGradient, cycle: number, ba
 /** Light-painting trail : a bright emissive tube with a gradient along its length,
  *  wrapped in a dimmer, fatter halo tube — additive blending fakes the long-exposure
  *  bloom of real light painting. One merged geometry (fits the one-mesh-per-copy pipeline). */
-function buildLightGeometry(pts: THREE.Vector3[], r: number, light: LightOpt): THREE.BufferGeometry | null {
+function buildLightGeometry(pts: THREE.Vector3[], r: number, light: LightOpt, full: boolean): THREE.BufferGeometry | null {
   const base = new THREE.Color(light.hex)
   const colorAt = (frac: number) => lightGradientColor(frac, light.mode, Math.max(1, light.cycle), base)
-  if (pts.length === 1) {
-    const s = new THREE.SphereGeometry(Math.max(0.004, r), 10, 8); s.translate(pts[0].x, pts[0].y, pts[0].z)
-    const cnt = s.getAttribute('position').count, cols = new Float32Array(cnt * 3), c = colorAt(0)
-    for (let i = 0; i < cnt; i++) { cols[i * 3] = c.r; cols[i * 3 + 1] = c.g; cols[i * 3 + 2] = c.b }
-    s.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3)); return s
+  // colour every vertex of an already-built geometry by a constant fraction (for caps).
+  const paintUniform = (g: THREE.BufferGeometry, frac: number, intensity: number) => {
+    const cnt = g.getAttribute('position').count, cols = new Float32Array(cnt * 3), c = colorAt(frac)
+    for (let i = 0; i < cnt; i++) { cols[i * 3] = Math.min(1, c.r * intensity); cols[i * 3 + 1] = Math.min(1, c.g * intensity); cols[i * 3 + 2] = Math.min(1, c.b * intensity) }
+    g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3)); return g
   }
+  if (pts.length === 1) { const s = new THREE.SphereGeometry(Math.max(0.004, r), 12, 10); s.translate(pts[0].x, pts[0].y, pts[0].z); return paintUniform(s, 0, 1) }
   if (pts.length < 2) return null
   const curve = new THREE.CatmullRomCurve3(pts)
-  const tub = Math.max(4, Math.min(700, pts.length * 4)), RAD = 8, ringV = RAD + 1
-  const mk = (radius: number, intensity: number) => {
-    const g = new THREE.TubeGeometry(curve, tub, Math.max(0.002, radius), RAD, false)
-    const pos = g.getAttribute('position'), cnt = pos.count, cols = new Float32Array(cnt * 3)
+  const tub = Math.max(4, Math.min(700, pts.length * 4))
+  // one tube shell, coloured along its length; radial resolution scales with radius.
+  const mk = (radius: number, intensity: number, rad: number) => {
+    const ringV = rad + 1
+    const g = new THREE.TubeGeometry(curve, tub, Math.max(0.002, radius), rad, false)
+    const cnt = g.getAttribute('position').count, cols = new Float32Array(cnt * 3)
     for (let idx = 0; idx < cnt; idx++) { const frac = tub > 0 ? Math.floor(idx / ringV) / tub : 0; const c = colorAt(frac); cols[idx * 3] = Math.min(1, c.r * intensity); cols[idx * 3 + 1] = Math.min(1, c.g * intensity); cols[idx * 3 + 2] = Math.min(1, c.b * intensity) }
     g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3)); return g
   }
-  const inner = mk(r, 1), halo = mk(r * (1.8 + light.glow * 3), 0.22 + light.glow * 0.2)
-  return mergeGeometries([halo, inner], false)
+  // Live preview (full=false) : just a smooth bright core — cheap to rebuild each frame.
+  if (!full) return mk(r, 1, 12)
+  // Finalized : bright smooth core + concentric dimmer shells → soft glow with no hard
+  // edge (fakes long-exposure bloom), plus rounded end caps so trails don't cut flat.
+  const g = clamp(0, 1, light.glow)
+  const geoms: THREE.BufferGeometry[] = [
+    mk(r * (3.2 + g * 5), 0.09 + g * 0.07, 8),
+    mk(r * (2.0 + g * 2.5), 0.16 + g * 0.10, 10),
+    mk(r * (1.35 + g * 1.0), 0.30, 12),
+    mk(r, 1, 16),
+  ]
+  for (const [pt, fr] of [[pts[0], 0], [pts[pts.length - 1], 1]] as [THREE.Vector3, number][]) { const s = new THREE.SphereGeometry(r, 12, 10); s.translate(pt.x, pt.y, pt.z); geoms.push(paintUniform(s, fr, 1)) }
+  return mergeGeometries(geoms, false)
 }
 
 function buildStrokeGeometry(pts: THREE.Vector3[], r: number | number[], capped: boolean, light?: LightOpt): THREE.BufferGeometry | null {
-  if (light) return buildLightGeometry(pts, Array.isArray(r) ? (r[0] ?? 0.01) : r, light)
+  if (light) return buildLightGeometry(pts, Array.isArray(r) ? (r[0] ?? 0.01) : r, light, capped)
   if (Array.isArray(r)) return buildVarTube(pts, r, 8, capped)
   const geoms: THREE.BufferGeometry[] = []
   if (pts.length >= 2) {
