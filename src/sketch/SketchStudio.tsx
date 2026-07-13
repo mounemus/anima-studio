@@ -193,11 +193,13 @@ export function SketchStudio() {
   const [xform, setXform] = useState<null | 'translate' | 'rotate' | 'scale'>(null)
   const [panelOpen, setPanelOpen] = useState(true)
   const [count, setCount] = useState(0)
+  const [recording, setRecording] = useState(false)
+  const recCmdRef = useRef<null | 'start' | 'stop'>(null)
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, layers, activeLayer, xform })
-  paramsRef.current = { color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, layers, activeLayer, xform }
+  const paramsRef = useRef({ color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, layers, activeLayer, xform, bgMode })
+  paramsRef.current = { color, brush, shape, eraser, caligraphy, smooth, nibAngle, size, drawMode, sym, radialN, depthScale, showGrid, showSkeleton, layers, activeLayer, xform, bgMode }
 
   const clearRef = useRef(false), undoRef = useRef(false), recenterRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
@@ -379,9 +381,28 @@ export function SketchStudio() {
       }
     }
 
+    // ── Enregistrement vidéo : composite webcam + 3D + overlay → WebM ──
+    let recCanvas: HTMLCanvasElement | null = null, recCtx: CanvasRenderingContext2D | null = null
+    let recorder: MediaRecorder | null = null, recChunks: Blob[] = [], recActive = false
+    const startRec = () => {
+      if (recActive) return
+      recCanvas = document.createElement('canvas'); recCanvas.width = overlay.width; recCanvas.height = overlay.height
+      recCtx = recCanvas.getContext('2d')
+      const stream = recCanvas.captureStream(30)
+      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm'
+      recChunks = []
+      recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000 })
+      recorder.ondataavailable = (e) => { if (e.data.size) recChunks.push(e.data) }
+      recorder.onstop = () => { downloadBlob(new Blob(recChunks, { type: 'video/webm' }), `sketch-ar-${Date.now()}.webm`); recChunks = []; setStatus('Vidéo enregistrée (WebM).') }
+      recorder.start(); recActive = true; setRecording(true); setStatus('● Enregistrement…')
+    }
+    const stopRec = () => { if (recActive && recorder) { recorder.stop(); recActive = false; setRecording(false) } }
+
     const loop = () => {
       if (!running) return
       const p = paramsRef.current
+      if (recCmdRef.current === 'start') { startRec(); recCmdRef.current = null }
+      if (recCmdRef.current === 'stop') { stopRec(); recCmdRef.current = null }
       const nowT = performance.now()
       const frameDt = clamp(0.001, 0.05, (nowT - lastFrameT) / 1000)
       lastFrameT = nowT
@@ -544,6 +565,14 @@ export function SketchStudio() {
 
       cam.az += (cam.targetAz - cam.az) * 0.15; cam.polar += (cam.targetPolar - cam.polar) * 0.15
       applyCam(); renderer.render(scene, camera)
+      // composite the recording frame (webcam + 3D + hand overlay)
+      if (recActive && recCtx && recCanvas) {
+        const w = recCanvas.width, h = recCanvas.height
+        if (p.bgMode === 'webcam' && video.readyState >= 2) { recCtx.save(); recCtx.translate(w, 0); recCtx.scale(-1, 1); recCtx.drawImage(video, 0, 0, w, h); recCtx.restore() }
+        else { recCtx.fillStyle = '#05060f'; recCtx.fillRect(0, 0, w, h) }
+        recCtx.drawImage(renderer.domElement, 0, 0, w, h)
+        recCtx.drawImage(overlay, 0, 0, w, h)
+      }
       rafId = requestAnimationFrame(loop)
     }
 
@@ -572,6 +601,7 @@ export function SketchStudio() {
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
       for (const s of strokesRef.current) s.group.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose() })
       strokesRef.current = []; try { gizmo?.dispose() } catch { /* noop */ }
+      try { if (recActive && recorder) recorder.stop() } catch { /* noop */ }
       renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
     }
   }, [])
@@ -643,6 +673,9 @@ export function SketchStudio() {
 
           <div style={{ display: 'flex', gap: 8 }}><button onClick={() => { undoRef.current = true }} style={{ ...selStyle, flex: 1 }}>↶ Annuler</button><button onClick={() => { recenterRef.current = true }} style={{ ...selStyle, flex: 1 }}>⊙ Vue</button><button onClick={() => { clearRef.current = true }} style={{ ...selStyle, flex: 1, background: 'rgba(255,40,100,0.2)', borderColor: 'rgba(255,40,100,0.4)' }} title="Efface le calque actif">Effacer</button></div>
           <div style={{ fontSize: 10, color: '#00f0ff', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Export ({count} traits)</div>
+          <button onClick={() => { recCmdRef.current = recording ? 'stop' : 'start' }} style={{ ...selStyle, marginBottom: 8, background: recording ? 'rgba(255,40,60,0.35)' : 'rgba(255,255,255,0.1)', borderColor: recording ? '#ff2840' : 'rgba(255,255,255,0.2)' }}>
+            {recording ? '⏹ Arrêter l\'enregistrement' : '🔴 Enregistrer une vidéo (WebM)'}
+          </button>
           <div style={{ display: 'flex', gap: 8 }}><button onClick={exportPng} style={{ ...selStyle, flex: 1 }}>📸 PNG</button><button onClick={() => { exportRef.current = 'glb' }} style={{ ...selStyle, flex: 1 }}>🧊 .glb</button><button onClick={() => { exportRef.current = 'stl' }} style={{ ...selStyle, flex: 1 }} title="Maillage étanche pour impression 3D">🖨️ .stl</button></div>
           <p style={{ color: '#777', fontSize: 10, marginTop: 10, marginBottom: 0, lineHeight: 1.4 }}>Poing = orbite/zoom · main proche/loin = profondeur z · souris = tourner · molette = zoom · .stl = solide imprimable</p>
         </div>
