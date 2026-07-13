@@ -340,20 +340,22 @@ export function SketchStudio() {
       octx.restore()
     }
     let lastFrameT = performance.now()
-    // One-Euro filter (precise, low-lag hand smoothing) — per world component
-    let euFirst = true, euX = 0, euY = 0, euZ = 0, euDX = 0, euDY = 0, euDZ = 0
+    // One-Euro filter (precise, low-lag) — per-hand state object so each hand smooths itself.
+    type Euro = { first: boolean; x: number; y: number; z: number; dx: number; dy: number; dz: number }
+    const mkEuro = (): Euro => ({ first: true, x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0 })
     const euAlpha = (cut: number, dt: number) => { const tau = 1 / (2 * Math.PI * cut); return 1 / (1 + tau / dt) }
-    const oneEuro = (v: THREE.Vector3, minCut: number, dt: number): THREE.Vector3 => {
-      if (euFirst) { euX = v.x; euY = v.y; euZ = v.z; euDX = euDY = euDZ = 0; euFirst = false; return v.clone() }
+    const oneEuro = (e: Euro, v: THREE.Vector3, minCut: number, dt: number): THREE.Vector3 => {
+      if (e.first) { e.x = v.x; e.y = v.y; e.z = v.z; e.dx = e.dy = e.dz = 0; e.first = false; return v.clone() }
       const beta = 0.02, dcut = 1.2, aD = euAlpha(dcut, dt)
-      euDX = aD * ((v.x - euX) / dt) + (1 - aD) * euDX
-      euDY = aD * ((v.y - euY) / dt) + (1 - aD) * euDY
-      euDZ = aD * ((v.z - euZ) / dt) + (1 - aD) * euDZ
-      euX += euAlpha(minCut + beta * Math.abs(euDX), dt) * (v.x - euX)
-      euY += euAlpha(minCut + beta * Math.abs(euDY), dt) * (v.y - euY)
-      euZ += euAlpha(minCut + beta * Math.abs(euDZ), dt) * (v.z - euZ)
-      return new THREE.Vector3(euX, euY, euZ)
+      e.dx = aD * ((v.x - e.x) / dt) + (1 - aD) * e.dx
+      e.dy = aD * ((v.y - e.y) / dt) + (1 - aD) * e.dy
+      e.dz = aD * ((v.z - e.z) / dt) + (1 - aD) * e.dz
+      e.x += euAlpha(minCut + beta * Math.abs(e.dx), dt) * (v.x - e.x)
+      e.y += euAlpha(minCut + beta * Math.abs(e.dy), dt) * (v.y - e.y)
+      e.z += euAlpha(minCut + beta * Math.abs(e.dz), dt) * (v.z - e.z)
+      return new THREE.Vector3(e.x, e.y, e.z)
     }
+    const eu1 = mkEuro()
 
     const rArgFor = (p: typeof paramsRef.current): number | number[] => {
       if (p.brush === 'calligA' && p.shape === 'free') return calligRadii(aCopies[0], aRadius, aNibRef)
@@ -391,6 +393,57 @@ export function SketchStudio() {
         if (meshes.length) { activeLayerGroup().add(grp); strokesRef.current.push({ copies, radii: null, radius: sRadius, hex: p.color, brush: p.brush, group: grp, layerId: p.activeLayer }) }
       }
       setCount(strokesRef.current.length)
+    }
+
+    // ── SECOND HAND (bimanuel) : tracé libre simultané, état indépendant. Le chemin
+    // principal (formes / gomme / aérographe / orbite / menu) reste inchangé ; la 2ᵉ main
+    // fait du tracé libre en tube avec la couleur/pinceau/taille/symétrie courants. ──
+    type LM = { x: number; y: number; z: number }[]
+    interface Hand2 { copies: THREE.Vector3[][]; radii: number[]; meshes: THREE.Mesh[]; group: THREE.Group | null; mat: THREE.Material | null; radius: number; layerId: string; nibRef: THREE.Vector3; drawing: boolean; onState: boolean; grace: number; lastWp: THREE.Vector3 | null; euro: Euro }
+    const h2: Hand2 = { copies: [], radii: [], meshes: [], group: null, mat: null, radius: 0.01, layerId: 'L1', nibRef: new THREE.Vector3(1, 0, 0), drawing: false, onState: false, grace: 0, lastWp: null, euro: mkEuro() }
+    const rArg2 = (): number | number[] => { const p = paramsRef.current; if (p.brush === 'calligA') return calligRadii(h2.copies[0], h2.radius, h2.nibRef); if (p.caligraphy) return h2.radii; return h2.radius }
+    const rebuild2 = () => { if (!h2.group) return; const r = rArg2(); for (let c = 0; c < h2.meshes.length; c++) { const g = buildStrokeGeometry(h2.copies[c], r, false); if (g) { h2.meshes[c].geometry.dispose(); h2.meshes[c].geometry = g } } }
+    const finalize2 = () => {
+      const p = paramsRef.current
+      if (h2.group && h2.copies[0]?.length >= 2) {
+        const r = rArg2(); const rArr = Array.isArray(r) ? r : null
+        for (let c = 0; c < h2.meshes.length; c++) { const g = buildStrokeGeometry(h2.copies[c], r, true); if (g) { h2.meshes[c].geometry.dispose(); h2.meshes[c].geometry = g } }
+        strokesRef.current.push({ copies: h2.copies, radii: rArr, radius: h2.radius, hex: p.color, brush: p.brush, group: h2.group, layerId: h2.layerId }); setCount(strokesRef.current.length)
+      } else if (h2.group) disposeGroup(h2.group)
+      h2.group = null; h2.mat = null; h2.copies = []; h2.radii = []; h2.meshes = []; h2.drawing = false
+    }
+    const drawSecondHand = (lm2: LM, hs2: number, r2: number, dt: number) => {
+      const p = paramsRef.current
+      if (p.shape !== 'free' || p.eraser || p.brush === 'airbrush') { if (h2.drawing) finalize2(); return }
+      const pinch = Math.hypot(lm2[TIP_THUMB].x - lm2[TIP_INDEX].x, lm2[TIP_THUMB].y - lm2[TIP_INDEX].y) / hs2
+      let rawOn: boolean
+      if (p.drawMode === 'pinch') rawOn = h2.onState ? pinch < 0.62 : pinch < 0.42
+      else { const idxUp = (lm2[PIP_INDEX].y - lm2[TIP_INDEX].y) / hs2; const midFold = (lm2[TIP_MIDDLE].y - lm2[PIP_INDEX].y) / hs2; rawOn = h2.onState ? (idxUp > -0.15) : (idxUp > 0.25 && midFold > -0.15) }
+      h2.onState = rawOn; if (rawOn) h2.grace = GRACE
+      const ndcX = (1 - lm2[TIP_INDEX].x) * 2 - 1, ndcY = -(lm2[TIP_INDEX].y * 2 - 1)
+      const depthNorm2 = clamp(0, 1, (hs2 / handScaleMax - 0.45) / 0.55)
+      const wp = drawPoint(ndcX, ndcY, depthNorm2, p.depthScale)
+      const dp = oneEuro(h2.euro, wp, 0.35 + (1 - p.smooth) * 6.5, dt)
+      const speed = h2.lastWp ? dp.distanceTo(h2.lastWp) : 0; h2.lastWp = dp.clone()
+      const calR = r2 * clamp(0.32, 1.6, 1.45 - speed * 6)
+      if (rawOn) {
+        if (!h2.drawing) {
+          h2.mat = makeBrushMaterial(p.brush, p.color); h2.radius = r2; h2.layerId = p.activeLayer
+          const fwd = new THREE.Vector3().subVectors(target, camera.position).normalize(); const rgt = new THREE.Vector3().crossVectors(fwd, camera.up).normalize(); const upv = new THREE.Vector3().crossVectors(rgt, fwd).normalize(); const ang = p.nibAngle * Math.PI / 180
+          h2.nibRef = rgt.multiplyScalar(Math.cos(ang)).add(upv.multiplyScalar(Math.sin(ang))).normalize()
+          const k = symCount(p.sym, p.radialN)
+          h2.copies = expandPoint(dp, p.sym, p.radialN).map((v) => [v]); h2.radii = [calR]
+          h2.group = new THREE.Group(); h2.meshes = []
+          for (let c = 0; c < k; c++) { const m = new THREE.Mesh(new THREE.BufferGeometry(), h2.mat); m.frustumCulled = false; h2.group.add(m); h2.meshes.push(m) }
+          activeLayerGroup().add(h2.group)
+        } else {
+          const last = h2.copies[0][h2.copies[0].length - 1]
+          if (dp.distanceTo(last) > Math.max(0.006, r2 * 0.55)) { const cs = expandPoint(dp, p.sym, p.radialN); for (let c = 0; c < h2.copies.length; c++) { h2.copies[c].push(cs[c]); if (h2.copies[c].length > 500) h2.copies[c].shift() } h2.radii.push(calR); if (h2.radii.length > 500) h2.radii.shift() }
+        }
+        rebuild2(); h2.drawing = true
+      } else if (h2.drawing) { if (h2.grace > 0) h2.grace--; else finalize2() }
+      const sx = (1 - lm2[TIP_INDEX].x) * overlay.width, sy = lm2[TIP_INDEX].y * overlay.height
+      octx.beginPath(); octx.arc(sx, sy, rawOn ? 13 : 7, 0, Math.PI * 2); octx.globalAlpha = 0.7; octx.fillStyle = rawOn ? p.color : 'rgba(255,255,255,0.5)'; octx.fill(); octx.globalAlpha = 1; octx.lineWidth = 2; octx.strokeStyle = p.color; octx.stroke()
     }
 
     const doExport = (fmt: 'stl' | 'glb') => {
@@ -443,7 +496,7 @@ export function SketchStudio() {
       const nowT = performance.now()
       const frameDt = clamp(0.001, 0.05, (nowT - lastFrameT) / 1000)
       lastFrameT = nowT
-      if (clearRef.current) { strokesRef.current = strokesRef.current.filter((s) => { if (s.layerId === p.activeLayer) { disposeGroup(s.group); return false } return true }); setCount(strokesRef.current.length); if (aGroup) disposeGroup(aGroup); if (sPreview) disposeGroup(sPreview); aGroup = sPreview = null; aCopies = []; aMeshes = []; aIsAir = false; aAir = null; aAirPts = []; wasDrawing = false; onState = false; graceLeft = 0; euFirst = true; clearRef.current = false }
+      if (clearRef.current) { strokesRef.current = strokesRef.current.filter((s) => { if (s.layerId === p.activeLayer) { disposeGroup(s.group); return false } return true }); setCount(strokesRef.current.length); if (aGroup) disposeGroup(aGroup); if (sPreview) disposeGroup(sPreview); aGroup = sPreview = null; aCopies = []; aMeshes = []; aIsAir = false; aAir = null; aAirPts = []; wasDrawing = false; onState = false; graceLeft = 0; eu1.first = true; if (h2.group) disposeGroup(h2.group); h2.group = null; h2.copies = []; h2.meshes = []; h2.drawing = false; h2.euro.first = true; clearRef.current = false }
       if (undoRef.current) { for (let i = strokesRef.current.length - 1; i >= 0; i--) { if (strokesRef.current[i].layerId === p.activeLayer) { disposeGroup(strokesRef.current[i].group); strokesRef.current.splice(i, 1); setCount(strokesRef.current.length); break } } undoRef.current = false }
       if (recenterRef.current) { cam.targetAz = 0; cam.targetPolar = Math.PI / 2; recenterRef.current = false }
       if (exportRef.current) { doExport(exportRef.current); exportRef.current = null }
@@ -494,9 +547,11 @@ export function SketchStudio() {
             // transform mode : le gizmo (souris) gère la pose ; pas de dessin à la main
             navPrev = null
             if (wasDrawing) { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false }
+            if (h2.drawing) finalize2()
           } else if (fist) {
             // ── NAVIGATE : poing fermé → orbite + zoom par la main ──
             if (wasDrawing) { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false }
+            if (h2.drawing) finalize2()
             const hx = lm[9].x, hy = lm[9].y
             if (navPrev) {
               cam.targetAz -= (hx - navPrev.x) * 4
@@ -525,7 +580,7 @@ export function SketchStudio() {
             const wp = drawPoint(ndcX, ndcY, depthNorm, p.depthScale)
             // One-Euro : suivi précis et peu laggé (le slider Lissage règle le cutoff)
             const minCut = 0.35 + (1 - p.smooth) * 6.5
-            const dp = oneEuro(wp, minCut, frameDt)
+            const dp = oneEuro(eu1, wp, minCut, frameDt)
             const speed = lastRawWp ? dp.distanceTo(lastRawWp) : 0; lastRawWp = dp.clone()
             const calR = radius * clamp(0.32, 1.6, 1.45 - speed * 6)
 
@@ -577,6 +632,12 @@ export function SketchStudio() {
               if (graceLeft > 0 && !p.eraser) { graceLeft-- }
               else { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false }
             }
+            // SECOND HAND (bimanuel) : tracé libre simultané avec une 2e main (≠ primaire,
+            // ni paume-menu ni poing). Elle dessine en même temps que la main principale.
+            let sIdx = -1
+            for (let i = 0; i < hands.length; i++) { const g = gestures[i]?.[0]?.categoryName; if (i !== pi && g !== 'Open_Palm' && g !== 'Closed_Fist') { sIdx = i; break } }
+            if (sIdx >= 0) { const lm2 = hands[sIdx] as unknown as LM; const hs2 = Math.max(0.02, Math.hypot(lm2[0].x - lm2[9].x, lm2[0].y - lm2[9].y)); drawSecondHand(lm2, hs2, radius, frameDt) }
+            else if (h2.drawing) { if (h2.grace > 0) h2.grace--; else finalize2() }
           }
 
           if (p.showSkeleton) {
@@ -603,9 +664,9 @@ export function SketchStudio() {
           // Hand momentarily lost → bridge with grace too, then commit.
           if (graceLeft > 0) { graceLeft-- }
           else { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false; onState = false }
-          navPrev = null; lastRawWp = null; euFirst = true
+          navPrev = null; lastRawWp = null; eu1.first = true
         }
-        if (hands.length === 0) { fistFrames = 0 }
+        if (hands.length === 0) { fistFrames = 0; if (h2.drawing) { if (h2.grace > 0) h2.grace--; else finalize2() } h2.euro.first = true }
       }
 
       if (cursor) {
@@ -659,6 +720,7 @@ export function SketchStudio() {
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
       for (const s of strokesRef.current) s.group.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose() })
       strokesRef.current = []; try { gizmo?.dispose() } catch { /* noop */ }
+      if (h2.group) h2.group.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose() })
       try { if (recActive && recorder) recorder.stop() } catch { /* noop */ }
       renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
     }
