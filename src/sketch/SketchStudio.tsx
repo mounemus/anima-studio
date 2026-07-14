@@ -476,7 +476,7 @@ export function SketchStudio() {
     let fistFrames = 0   // debounce on the ML Closed_Fist gesture
     // Radial (marking) menu — opened by a hand's Open_Palm, selected by flicking out + dwell
     // Radial menu (seconds-based, hysteretic — stable & easy to aim).
-    let menuOpen = false, menuCenter = { x: 0, y: 0 }, menuArmed = -1, menuDwell = 0, menuCooldown = 0, menuGrace = 0
+    let menuOpen = false, menuCenter = { x: 0, y: 0 }, menuArmed = -1, menuDwell = 0, menuCooldown = 0, menuGrace = 0, menuProg = 0
     const MENU_R = 92, MENU_ENTER = 48, MENU_STAY = 30, MENU_DWELL = 0.5, MENU_GRACE = 0.28, MENU_COOLDOWN = 0.6, MENU_CUT = 2.4
     const applyWedge = (i: number) => {
       const w = WEDGES[i]; if (!w) return
@@ -876,20 +876,21 @@ export function SketchStudio() {
             if (armed >= 0 && armed === menuArmed) menuDwell += frameDt
             else if (armed >= 0) { menuArmed = armed; menuDwell = 0 }
             else menuDwell = Math.max(0, menuDwell - frameDt * 1.5)   // back in dead-zone → decay, don't hard-reset
-            if (menuArmed >= 0 && menuDwell >= MENU_DWELL) { applyWedge(menuArmed); menuOpen = false; menuArmed = -1; menuDwell = 0; menuCooldown = MENU_COOLDOWN; menuEuro.first = true }
-            if (menuOpen) drawRadialMenu(menuArmed, menuDwell / MENU_DWELL, { x: sp.x, y: sp.y })
+            if (menuArmed >= 0 && menuDwell >= MENU_DWELL) { applyWedge(menuArmed); menuOpen = false; menuArmed = -1; menuDwell = 0; menuProg = 0; menuCooldown = MENU_COOLDOWN; menuEuro.first = true }
+            if (menuOpen) { menuProg += (menuDwell / MENU_DWELL - menuProg) * 0.3; drawRadialMenu(menuArmed, menuProg, { x: sp.x, y: sp.y }) }
           } else if (menuOpen && menuGrace > 0) {
             // Open_Palm briefly misclassified → hold the menu (frozen) instead of closing/reopening
             menuGrace -= frameDt; menuDwell = Math.max(0, menuDwell - frameDt)
-            drawRadialMenu(menuArmed, menuDwell / MENU_DWELL, null)
-          } else { menuOpen = false; menuArmed = -1; menuDwell = 0; menuEuro.first = true }
+            menuProg += (menuDwell / MENU_DWELL - menuProg) * 0.3
+            drawRadialMenu(menuArmed, menuProg, null)
+          } else { menuOpen = false; menuArmed = -1; menuDwell = 0; menuProg = 0; menuEuro.first = true }
         } else if (wasDrawing) {
           // Hand momentarily lost → bridge with grace too, then commit.
           if (graceLeft > 0) { graceLeft-- }
           else { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false; onState = false }
           navPrev = null; lastRawWp = null; eu1.first = true
         }
-        if (hands.length === 0) { fistFrames = 0; if (h2.drawing) { if (h2.grace > 0) h2.grace--; else finalize2() } h2.euro.first = true; if (menuOpen) { menuGrace -= frameDt; menuDwell = Math.max(0, menuDwell - frameDt); if (menuGrace <= 0) { menuOpen = false; menuArmed = -1; menuDwell = 0; menuEuro.first = true } } }
+        if (hands.length === 0) { fistFrames = 0; if (h2.drawing) { if (h2.grace > 0) h2.grace--; else finalize2() } h2.euro.first = true; if (menuOpen) { menuGrace -= frameDt; menuDwell = Math.max(0, menuDwell - frameDt); if (menuGrace <= 0) { menuOpen = false; menuArmed = -1; menuDwell = 0; menuProg = 0; menuEuro.first = true } } }
       }
 
       if (cursor) {
