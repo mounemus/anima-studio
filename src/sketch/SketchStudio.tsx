@@ -709,12 +709,16 @@ export function SketchStudio() {
       { const wanted = new Set(p.layers.map((l) => l.id)); for (const l of p.layers) ensureLayer(l.id).visible = l.visible; for (const [id, g] of layerGroups) { if (!wanted.has(id)) { disposeGroup(g); layerGroups.delete(id); strokesRef.current = strokesRef.current.filter((s) => s.layerId !== id); setCount(strokesRef.current.length) } } }
       if (gizmo) { const want = !!p.xform; gizmo.enabled = want; if (gizmoHelper) gizmoHelper.visible = want; if (want && p.xform) gizmo.setMode(p.xform) }
       grid.visible = p.showGrid
-      octx.clearRect(0, 0, overlay.width, overlay.height)
       let cursor: { x: number; y: number; on: boolean; mode: 'draw' | 'erase' | 'nav' } | null = null
       let depthNorm = 0.5
 
+      // Overlay is only cleared+redrawn when a NEW webcam frame arrives. The render loop
+      // (rAF, ~60fps) runs faster than the webcam (~30fps) ; clearing every rAF but drawing
+      // only on new frames made the overlay (menu, cursor, gauge) blink at ~30Hz. Skipping
+      // both on unchanged frames keeps the last overlay on screen → rock-steady.
       if (video.readyState >= 2 && video.currentTime !== lastVideoTime && landmarker) {
         lastVideoTime = video.currentTime
+        octx.clearRect(0, 0, overlay.width, overlay.height)
         const res = landmarker.recognizeForVideo(video, performance.now())
         const hands = res.landmarks ?? []
         const gestures = res.gestures ?? []
@@ -891,20 +895,20 @@ export function SketchStudio() {
           navPrev = null; lastRawWp = null; eu1.first = true
         }
         if (hands.length === 0) { fistFrames = 0; if (h2.drawing) { if (h2.grace > 0) h2.grace--; else finalize2() } h2.euro.first = true; if (menuOpen) { menuGrace -= frameDt; menuDwell = Math.max(0, menuDwell - frameDt); if (menuGrace <= 0) { menuOpen = false; menuArmed = -1; menuArmedShown = -1; menuDwell = 0; menuProg = 0; menuEuro.first = true } } }
-      }
 
-      if (cursor) {
-        octx.beginPath(); octx.arc(cursor.x, cursor.y, cursor.mode === 'nav' ? 20 : cursor.on ? 15 : 8, 0, Math.PI * 2)
-        octx.fillStyle = cursor.mode === 'nav' ? 'rgba(255,200,0,0.35)' : cursor.mode === 'erase' ? 'rgba(255,80,80,0.5)' : (cursor.on ? p.color : 'rgba(255,255,255,0.55)')
-        octx.globalAlpha = 0.8; octx.fill(); octx.globalAlpha = 1
-        octx.lineWidth = 2; octx.strokeStyle = cursor.mode === 'nav' ? '#ffc800' : cursor.mode === 'erase' ? '#ff5050' : p.color; octx.stroke()
-        if (cursor.mode === 'nav') { octx.fillStyle = '#ffc800'; octx.font = 'bold 12px system-ui'; octx.fillText('ORBITE (poing) — tourne · avance/recule = zoom', cursor.x + 24, cursor.y) }
+        if (cursor) {
+          octx.beginPath(); octx.arc(cursor.x, cursor.y, cursor.mode === 'nav' ? 20 : cursor.on ? 15 : 8, 0, Math.PI * 2)
+          octx.fillStyle = cursor.mode === 'nav' ? 'rgba(255,200,0,0.35)' : cursor.mode === 'erase' ? 'rgba(255,80,80,0.5)' : (cursor.on ? p.color : 'rgba(255,255,255,0.55)')
+          octx.globalAlpha = 0.8; octx.fill(); octx.globalAlpha = 1
+          octx.lineWidth = 2; octx.strokeStyle = cursor.mode === 'nav' ? '#ffc800' : cursor.mode === 'erase' ? '#ff5050' : p.color; octx.stroke()
+          if (cursor.mode === 'nav') { octx.fillStyle = '#ffc800'; octx.font = 'bold 12px system-ui'; octx.fillText('ORBITE (poing) — tourne · avance/recule = zoom', cursor.x + 24, cursor.y) }
+        }
+        // depth gauge
+        const gx = overlay.width - 34, gy0 = overlay.height * 0.28, gh = overlay.height * 0.44
+        octx.fillStyle = 'rgba(255,255,255,0.12)'; octx.fillRect(gx, gy0, 8, gh)
+        octx.fillStyle = p.color; octx.fillRect(gx - 3, gy0 + gh * (1 - depthNorm) - 3, 14, 6)
+        octx.fillStyle = 'rgba(255,255,255,0.55)'; octx.font = '10px system-ui'; octx.fillText('proche', gx - 34, gy0 + 4); octx.fillText('loin', gx - 24, gy0 + gh)
       }
-      // depth gauge
-      const gx = overlay.width - 34, gy0 = overlay.height * 0.28, gh = overlay.height * 0.44
-      octx.fillStyle = 'rgba(255,255,255,0.12)'; octx.fillRect(gx, gy0, 8, gh)
-      octx.fillStyle = p.color; octx.fillRect(gx - 3, gy0 + gh * (1 - depthNorm) - 3, 14, 6)
-      octx.fillStyle = 'rgba(255,255,255,0.55)'; octx.font = '10px system-ui'; octx.fillText('proche', gx - 34, gy0 + 4); octx.fillText('loin', gx - 24, gy0 + gh)
 
       // Camera : timeline playback owns it first ; then the manual manipulator (arcball) ;
       // otherwise the gesture/mouse spherical orbit (with optional turntable) does.
