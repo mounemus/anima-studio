@@ -476,7 +476,7 @@ export function SketchStudio() {
     let fistFrames = 0   // debounce on the ML Closed_Fist gesture
     // Radial (marking) menu — opened by a hand's Open_Palm, selected by flicking out + dwell
     // Radial menu (seconds-based, hysteretic — stable & easy to aim).
-    let menuOpen = false, menuCenter = { x: 0, y: 0 }, menuArmed = -1, menuDwell = 0, menuCooldown = 0, menuGrace = 0, menuProg = 0
+    let menuOpen = false, menuCenter = { x: 0, y: 0 }, menuArmed = -1, menuDwell = 0, menuCooldown = 0, menuGrace = 0, menuProg = 0, menuArmedShown = -1
     const MENU_R = 92, MENU_ENTER = 48, MENU_STAY = 30, MENU_DWELL = 0.5, MENU_GRACE = 0.28, MENU_COOLDOWN = 0.6, MENU_CUT = 2.4
     const applyWedge = (i: number) => {
       const w = WEDGES[i]; if (!w) return
@@ -484,25 +484,25 @@ export function SketchStudio() {
       else if (w.type === 'brush') { const list = BRUSHES.map((b) => b.kind); const cur = list.indexOf(paramsRef.current.brush); const nx = list[(cur + 1) % list.length]; setBrush(nx); setEraser(false); setStatus('Pinceau : ' + nx) }
       else if (w.type === 'eraser') { setEraser((v) => !v); setStatus('Gomme basculée') }
     }
-    const drawRadialMenu = (armed: number, progress: number, ptr: { x: number; y: number } | null) => {
+    const drawRadialMenu = (armed: number, armedShown: number, progress: number, ptr: { x: number; y: number } | null) => {
       const cx = menuCenter.x, cy = menuCenter.y, R = MENU_R, n = WEDGES.length
+      const wedgePos = (i: number) => { const a = (i / n) * Math.PI * 2; return { x: cx + Math.cos(a) * R, y: cy + Math.sin(a) * R } }
       octx.save()
       octx.beginPath(); octx.arc(cx, cy, R + 26, 0, Math.PI * 2); octx.fillStyle = 'rgba(8,10,16,0.6)'; octx.fill()
       // dead-zone hub + pointer line for orientation
       octx.beginPath(); octx.arc(cx, cy, MENU_ENTER, 0, Math.PI * 2); octx.strokeStyle = 'rgba(255,255,255,0.18)'; octx.lineWidth = 1.5; octx.stroke()
       if (ptr) { octx.beginPath(); octx.moveTo(cx, cy); octx.lineTo(ptr.x, ptr.y); octx.strokeStyle = 'rgba(0,240,255,0.5)'; octx.lineWidth = 2; octx.stroke(); octx.beginPath(); octx.arc(ptr.x, ptr.y, 6, 0, Math.PI * 2); octx.fillStyle = '#00f0ff'; octx.fill() }
       for (let i = 0; i < n; i++) {
-        const a = (i / n) * Math.PI * 2, w = WEDGES[i]
-        const wx = cx + Math.cos(a) * R, wy = cy + Math.sin(a) * R
-        const on = i === armed
+        const w = WEDGES[i], { x: wx, y: wy } = wedgePos(i), on = i === armed
         octx.beginPath(); octx.arc(wx, wy, on ? 27 : 20, 0, Math.PI * 2)
         octx.fillStyle = w.type === 'color' ? w.hex : (on ? '#00f0ff' : 'rgba(255,255,255,0.18)')
         octx.globalAlpha = on ? 1 : 0.85; octx.fill(); octx.globalAlpha = 1
         octx.lineWidth = on ? 4 : 2; octx.strokeStyle = on ? '#fff' : 'rgba(255,255,255,0.5)'; octx.stroke()
-        // dwell progress ring around the armed wedge
-        if (on && progress > 0) { octx.beginPath(); octx.arc(wx, wy, 33, -Math.PI / 2, -Math.PI / 2 + Math.min(1, progress) * Math.PI * 2); octx.strokeStyle = '#fff'; octx.lineWidth = 4; octx.stroke() }
         if (w.type !== 'color') { octx.fillStyle = on ? '#001018' : '#ccc'; octx.font = 'bold 11px system-ui'; octx.textAlign = 'center'; octx.fillText(w.label.slice(0, 8), wx, wy + 3) }
       }
+      // dwell progress ring : anchored on the LAST-aimed wedge and gated on the smoothed
+      // progress → stays visible even if the instantaneous armed state flickers at the edge.
+      if (armedShown >= 0 && progress > 0.02) { const { x: wx, y: wy } = wedgePos(armedShown); octx.beginPath(); octx.arc(wx, wy, 33, -Math.PI / 2, -Math.PI / 2 + Math.min(1, progress) * Math.PI * 2); octx.strokeStyle = '#fff'; octx.lineWidth = 4; octx.stroke() }
       octx.fillStyle = 'rgba(255,255,255,0.85)'; octx.font = 'bold 11px system-ui'; octx.textAlign = 'center'
       octx.fillText('pousse la paume vers un secteur, maintiens', cx, cy - R - 14)
       octx.restore()
@@ -874,23 +874,23 @@ export function SketchStudio() {
               armed = nearest
             } else armed = -1
             if (armed >= 0 && armed === menuArmed) menuDwell += frameDt
-            else if (armed >= 0) { menuArmed = armed; menuDwell = 0 }
+            else if (armed >= 0) { menuArmed = armed; menuArmedShown = armed; menuDwell = 0 }
             else menuDwell = Math.max(0, menuDwell - frameDt * 1.5)   // back in dead-zone → decay, don't hard-reset
-            if (menuArmed >= 0 && menuDwell >= MENU_DWELL) { applyWedge(menuArmed); menuOpen = false; menuArmed = -1; menuDwell = 0; menuProg = 0; menuCooldown = MENU_COOLDOWN; menuEuro.first = true }
-            if (menuOpen) { menuProg += (menuDwell / MENU_DWELL - menuProg) * 0.3; drawRadialMenu(menuArmed, menuProg, { x: sp.x, y: sp.y }) }
+            if (menuArmed >= 0 && menuDwell >= MENU_DWELL) { applyWedge(menuArmed); menuOpen = false; menuArmed = -1; menuArmedShown = -1; menuDwell = 0; menuProg = 0; menuCooldown = MENU_COOLDOWN; menuEuro.first = true }
+            if (menuOpen) { menuProg += (menuDwell / MENU_DWELL - menuProg) * 0.3; drawRadialMenu(menuArmed, menuArmedShown, menuProg, { x: sp.x, y: sp.y }) }
           } else if (menuOpen && menuGrace > 0) {
             // Open_Palm briefly misclassified → hold the menu (frozen) instead of closing/reopening
             menuGrace -= frameDt; menuDwell = Math.max(0, menuDwell - frameDt)
             menuProg += (menuDwell / MENU_DWELL - menuProg) * 0.3
-            drawRadialMenu(menuArmed, menuProg, null)
-          } else { menuOpen = false; menuArmed = -1; menuDwell = 0; menuProg = 0; menuEuro.first = true }
+            drawRadialMenu(menuArmed, menuArmedShown, menuProg, null)
+          } else { menuOpen = false; menuArmed = -1; menuArmedShown = -1; menuDwell = 0; menuProg = 0; menuEuro.first = true }
         } else if (wasDrawing) {
           // Hand momentarily lost → bridge with grace too, then commit.
           if (graceLeft > 0) { graceLeft-- }
           else { if (sPreview) commitShape(); else finalizeFree(); wasDrawing = false; onState = false }
           navPrev = null; lastRawWp = null; eu1.first = true
         }
-        if (hands.length === 0) { fistFrames = 0; if (h2.drawing) { if (h2.grace > 0) h2.grace--; else finalize2() } h2.euro.first = true; if (menuOpen) { menuGrace -= frameDt; menuDwell = Math.max(0, menuDwell - frameDt); if (menuGrace <= 0) { menuOpen = false; menuArmed = -1; menuDwell = 0; menuProg = 0; menuEuro.first = true } } }
+        if (hands.length === 0) { fistFrames = 0; if (h2.drawing) { if (h2.grace > 0) h2.grace--; else finalize2() } h2.euro.first = true; if (menuOpen) { menuGrace -= frameDt; menuDwell = Math.max(0, menuDwell - frameDt); if (menuGrace <= 0) { menuOpen = false; menuArmed = -1; menuArmedShown = -1; menuDwell = 0; menuProg = 0; menuEuro.first = true } } }
       }
 
       if (cursor) {
