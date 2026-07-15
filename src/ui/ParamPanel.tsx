@@ -158,383 +158,7 @@ export function ParamPanel() {
             </select>
 
             <h3>Paramètres</h3>
-            {current.organism.kind === 'boids' && (
-              <>
-                <Slider label="Population" value={v.count} min={100} max={100000} step={100} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Cohésion" value={v.cohesion} min={0} max={2} onChange={(x) => patchValues({ cohesion: x })} />
-                <Slider label="Séparation" value={v.separation} min={0} max={2} onChange={(x) => patchValues({ separation: x })} />
-                <Slider label="Alignement" value={v.alignment} min={0} max={2} onChange={(x) => patchValues({ alignment: x })} />
-                <Slider label="Vitesse" value={v.speed} min={0.1} max={3} onChange={(x) => patchValues({ speed: x })} />
-                <Slider label="Vision" value={v.vision} min={0.1} max={1} onChange={(x) => patchValues({ vision: x })} />
-                <Slider label="Taille" value={v.size} min={0.005} max={0.05} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
-                <div style={{ marginTop: 8 }}>
-                  <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>Bords</label>
-                  <select value={(v as any).edges ?? 'wrap'} onChange={(e) => patchValues({ edges: e.target.value } as any)} style={{ width: '100%', fontSize: 12, marginTop: 2 }}>
-                    <option value="wrap">🔁 Wrap (traverse les bords)</option>
-                    <option value="wall">🧱 Mur (rebond)</option>
-                    <option value="free">🕊️ Libre (aucun bord)</option>
-                  </select>
-                </div>
-              </>
-            )}
-            {current.organism.kind === 'particles' && (
-              <>
-                <Slider label="Population" value={v.count} min={500} max={100000} step={500} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Vitesse" value={v.speed} min={0.1} max={3} onChange={(x) => patchValues({ speed: x })} />
-                <Slider label="Taille de la poussière" value={v.size} min={0.2} max={8} step={0.1} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(1)} />
-                <Slider label="Dispersion" value={v.spread} min={0.2} max={2} onChange={(x) => patchValues({ spread: x })} />
-                <Slider label="Gravité" value={v.gravity} min={-1} max={1} onChange={(x) => patchValues({ gravity: x })} />
-                <Slider label="Turbulence" value={v.turbulence} min={0} max={2} onChange={(x) => patchValues({ turbulence: x })} />
-                <div className="palette-row" style={{ marginTop: 8 }}>
-                  <label>Bords</label>
-                  <select
-                    value={(v as any).boundary ?? 'respawn'}
-                    onChange={(e) => patchValues({ boundary: e.target.value })}
-                    title="Comportement quand une particule sort de l'écran"
-                  >
-                    <option value="respawn">♻️ Respawn (recyclage central)</option>
-                    <option value="wrap">🔁 Wrap (passe par les bords — pluie infinie)</option>
-                    <option value="kill">💀 Kill (disparaît — la population baisse)</option>
-                  </select>
-                </div>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 4, marginBottom: 0, lineHeight: 1.35 }}>
-                  Pour un effet pluie/neige continu : choisis <strong>Wrap</strong> + gravité positive +
-                  un obstacle circulaire <em>"avoid"</em> en bas (le "parapluie").
-                </p>
-              </>
-            )}
-            {current.organism.kind === 'tendrils' && (
-              <>
-                <Slider label="Nombre" value={v.count} min={4} max={80} step={1} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Longueur" value={v.length} min={8} max={64} step={1} onChange={(x) => patchValues({ length: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Vitesse" value={v.speed} min={0.1} max={2} onChange={(x) => patchValues({ speed: x })} />
-                <Slider label="Torsion" value={v.twist} min={0} max={4} onChange={(x) => patchValues({ twist: x })} />
-                <Slider label="Épaisseur" value={v.thickness ?? 0.01} min={0.004} max={0.08} step={0.002} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(3)} />
-              </>
-            )}
-            {current.organism.kind === 'cells' && (
-              <>
-                <Slider label="Population" value={v.count} min={4} max={50000} step={50} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Pulsation" value={v.pulse} min={0} max={3} onChange={(x) => patchValues({ pulse: x })} />
-                <Slider label="Taille" value={v.size} min={0.4} max={3} onChange={(x) => patchValues({ size: x })} />
-                <Slider label="Attraction" value={v.attraction} min={0} max={2} onChange={(x) => patchValues({ attraction: x })} />
-                <Slider label="Répulsion" value={v.repulsion} min={0} max={2} onChange={(x) => patchValues({ repulsion: x })} />
-                <div className="palette-row" style={{ marginTop: 8 }}>
-                  <label>Bords</label>
-                  <select
-                    value={(v as any).boundary ?? 'bounce'}
-                    onChange={(e) => patchValues({ boundary: e.target.value })}
-                    title="Comportement des cellules aux bords de l'écran"
-                  >
-                    <option value="bounce">↩️ Rebond (par défaut)</option>
-                    <option value="wrap">🔁 Wrap (traverse les bords)</option>
-                  </select>
-                </div>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 4, marginBottom: 0, lineHeight: 1.35 }}>
-                  En mode <strong>Wrap</strong> avec un flux directionnel vers le bas, les cellules
-                  s'écoulent en continu au lieu de s'accumuler contre le bord.
-                </p>
-              </>
-            )}
-            {current.organism.kind === 'worms' && (
-              <>
-                <Slider label="Nombre" value={v.count} min={2} max={40} step={1} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Segments" value={v.segments} min={8} max={48} step={1} onChange={(x) => patchValues({ segments: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Vitesse" value={v.speed} min={0.1} max={2} onChange={(x) => patchValues({ speed: x })} />
-                <Slider label="Torsion" value={v.twist} min={0} max={3} onChange={(x) => patchValues({ twist: x })} />
-                <Slider label="Longueur segment" value={v.segLen} min={0.01} max={0.06} step={0.002} onChange={(x) => patchValues({ segLen: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="Épaisseur" value={v.thickness ?? 0.01} min={0.004} max={0.08} step={0.002} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(3)} />
-              </>
-            )}
-            {current.organism.kind === 'spores' && (
-              <>
-                <Slider label="Population" value={v.count} min={100} max={2500} step={50} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Vitesse" value={v.speed} min={0.1} max={2} onChange={(x) => patchValues({ speed: x })} />
-                <Slider label="Taille de base" value={v.size} min={0.005} max={0.04} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="Force du bloom" value={v.bloomGain} min={0.1} max={1.5} step={0.05} onChange={(x) => patchValues({ bloomGain: x })} />
-                <Slider label="Décrescendo bloom" value={v.bloomDecay} min={0.2} max={3} step={0.05} onChange={(x) => patchValues({ bloomDecay: x })} />
-              </>
-            )}
-            {current.organism.kind === 'psychedelic' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Galaxie swirling 3D-feel — la main décale le centre, le pinch accélère, les graves pulsent, les aigus vibrent.
-                </p>
-                <Slider label="Points (grille²)" value={v.count} min={400} max={6400} step={100} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => `${Math.round(Math.sqrt(x))}²`} />
-                <Slider label="Vitesse rotation" value={v.speed} min={0.1} max={3} onChange={(x) => patchValues({ speed: x })} />
-                <Slider label="Fréquence interne" value={v.freq} min={1} max={10} step={0.1} onChange={(x) => patchValues({ freq: x })} />
-                <Slider label="Échelle" value={v.scale} min={0.3} max={2} step={0.05} onChange={(x) => patchValues({ scale: x })} />
-                <Slider label="Taille points" value={v.size} min={0.5} max={6} step={0.1} onChange={(x) => patchValues({ size: x })} />
-              </>
-            )}
-            {current.organism.kind === 'mandala' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Géométrie sacrée multi-couches — la main x contrôle les bras (3-16), pinch ouvre le centre, audio bass = respiration. Active les connecteurs pour les étoiles inscrites.
-                </p>
-                <Slider label="Bras" value={v.arms} min={3} max={24} step={1} onChange={(x) => patchValues({ arms: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Points par bras" value={v.pointsPerArm} min={16} max={128} step={4} onChange={(x) => patchValues({ pointsPerArm: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Couches superposées" value={v.layers ?? 1} min={1} max={3} step={1} onChange={(x) => patchValues({ layers: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Connecteurs (skip-lignes)" value={v.connectors ?? 0} min={0} max={6} step={1} onChange={(x) => patchValues({ connectors: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Opacité connecteurs" value={v.connectorOpacity ?? 0.4} min={0} max={1} step={0.05} onChange={(x) => patchValues({ connectorOpacity: x })} format={(x) => `${Math.round(x * 100)}%`} />
-                <Slider label="Rayon extérieur" value={v.outerRadius} min={0.2} max={1.2} step={0.02} onChange={(x) => patchValues({ outerRadius: x })} />
-                <Slider label="Rayon intérieur" value={v.innerRadius} min={0} max={0.5} step={0.01} onChange={(x) => patchValues({ innerRadius: x })} />
-                <Slider label="Ondulations" value={v.waves} min={0} max={8} step={0.1} onChange={(x) => patchValues({ waves: x })} />
-                <Slider label="Vitesse ondulation" value={v.freq} min={0.1} max={3} step={0.05} onChange={(x) => patchValues({ freq: x })} />
-                <Slider label="Rotation" value={v.rotation} min={-2} max={2} step={0.05} onChange={(x) => patchValues({ rotation: x })} />
-                <Slider label="Épaisseur points" value={v.thickness} min={0.001} max={0.03} step={0.0005} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(4)} />
-              </>
-            )}
-            {current.organism.kind === 'fractal' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Julia set GPU — la fractale s'anime toute seule (orbit, zoom respire, rotation). La main pilote c en live, pinch zoome, audio bass pulse la luminosité.
-                </p>
-                <Slider label="Itérations (précision)" value={v.iterations} min={32} max={256} step={4} onChange={(x) => patchValues({ iterations: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Zoom" value={v.zoom} min={0.3} max={5} step={0.05} onChange={(x) => patchValues({ zoom: x })} />
-                <Slider label="c réel (cx)" value={v.cx} min={-1} max={1} step={0.005} onChange={(x) => patchValues({ cx: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="c imaginaire (cy)" value={v.cy} min={-1} max={1} step={0.005} onChange={(x) => patchValues({ cy: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="Suivi main" value={v.followHand} min={0} max={1} step={0.05} onChange={(x) => patchValues({ followHand: x })} format={(x) => `${Math.round(x * 100)}%`} />
-                <Slider label="Vitesse orbite (auto)" value={v.orbitSpeed ?? 0.3} min={0} max={2} step={0.02} onChange={(x) => patchValues({ orbitSpeed: x })} />
-                <Slider label="Rayon orbite (auto)" value={v.orbitRadius ?? 0.12} min={0} max={0.5} step={0.005} onChange={(x) => patchValues({ orbitRadius: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="Rotation plan (auto)" value={v.rotation ?? 0.15} min={-1} max={1} step={0.02} onChange={(x) => patchValues({ rotation: x })} />
-                <Slider label="Respiration zoom" value={v.zoomBreath ?? 0.08} min={0} max={0.5} step={0.01} onChange={(x) => patchValues({ zoomBreath: x })} />
-                <Slider label="Rayon échappement" value={v.bailout} min={2} max={20} step={0.5} onChange={(x) => patchValues({ bailout: x })} />
-                <Slider label="Luminosité" value={v.brightness} min={0.3} max={2.5} step={0.05} onChange={(x) => patchValues({ brightness: x })} />
-              </>
-            )}
-            {current.organism.kind === 'reactiondiffusion' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Simulation chimique Gray-Scott GPU. La main "peint" des graines de V, audio bass = nourriture, audio high = mort. Change le preset pour explorer.
-                </p>
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Preset</div>
-                  <select value={(v as any).preset ?? 'coral'} onChange={(e) => patchValues({ preset: e.target.value as any })} style={{ width: '100%', fontSize: 12 }}>
-                    <option value="coral">🪸 Coral (organique)</option>
-                    <option value="spots">⚫ Spots (taches)</option>
-                    <option value="mitosis">🌀 Mitosis (spirales)</option>
-                    <option value="fingerprint">👆 Fingerprint (empreinte)</option>
-                    <option value="worms">🪱 Worms (vers)</option>
-                    <option value="maze">🧩 Maze (labyrinthe)</option>
-                    <option value="pulse">💗 Pulse (pulsations)</option>
-                  </select>
-                </div>
-                <Slider label="Feed (F)" value={v.F} min={0.005} max={0.08} step={0.001} onChange={(x) => patchValues({ F: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="Kill (k)" value={v.k} min={0.04} max={0.075} step={0.001} onChange={(x) => patchValues({ k: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="Résolution" value={v.resolution} min={128} max={1024} step={64} onChange={(x) => patchValues({ resolution: Math.round(x) })} format={(x) => `${Math.round(x)}²`} />
-                <Slider label="Steps / frame" value={v.stepsPerFrame} min={1} max={16} step={1} onChange={(x) => patchValues({ stepsPerFrame: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Splat size" value={v.splatSize} min={0.01} max={0.2} step={0.005} onChange={(x) => patchValues({ splatSize: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="Splat strength" value={v.splatStrength} min={0} max={1} step={0.05} onChange={(x) => patchValues({ splatStrength: x })} />
-                <Slider label="Contraste" value={v.contrast} min={0.5} max={3} step={0.1} onChange={(x) => patchValues({ contrast: x })} />
-              </>
-            )}
-            {current.organism.kind === 'cellularautomata' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Automate cellulaire GPU. La main "dessine" des cellules vivantes, audio bass kick = reseed aléatoire, audio mid = vitesse de tick.
-                </p>
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Règle</div>
-                  <select value={(v as any).rule ?? 'conway'} onChange={(e) => patchValues({ rule: e.target.value as any })} style={{ width: '100%', fontSize: 12 }}>
-                    <option value="conway">Conway B3/S23 — Game of Life classique</option>
-                    <option value="highlife">HighLife B36/S23 — réplicateurs</option>
-                    <option value="seeds">Seeds B2/S — explose</option>
-                    <option value="daedalus">Daedalus B3/S012-8 — croissance</option>
-                    <option value="maze">Maze B3/S12345 — labyrinthe</option>
-                    <option value="replicator">Replicator B1357/S1357 — autoréplique tout</option>
-                  </select>
-                </div>
-                <Slider label="Résolution" value={v.resolution} min={64} max={512} step={32} onChange={(x) => patchValues({ resolution: Math.round(x) })} format={(x) => `${Math.round(x)}²`} />
-                <Slider label="Vitesse (ticks/sec)" value={v.ticksPerSec} min={1} max={60} step={1} onChange={(x) => patchValues({ ticksPerSec: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Trail (fade)" value={v.ageDecay} min={0.5} max={0.99} step={0.005} onChange={(x) => patchValues({ ageDecay: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="Brush size" value={v.brushSize} min={0.005} max={0.1} step={0.005} onChange={(x) => patchValues({ brushSize: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="Brush strength" value={v.brushStrength} min={0} max={1} step={0.05} onChange={(x) => patchValues({ brushStrength: x })} />
-                <Slider label="Auto-reseed (bass)" value={v.autoReseed} min={0} max={1} step={0.05} onChange={(x) => patchValues({ autoReseed: x })} />
-              </>
-            )}
-            {current.organism.kind === 'hilbert' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Courbe de Hilbert space-filling. Ordre N = 4^N points. La main pull la courbe, audio bass pulse, autoProgress dessine progressivement.
-                </p>
-                <Slider label="Ordre" value={v.order} min={1} max={7} step={1} onChange={(x) => patchValues({ order: Math.round(x) })} format={(x) => `${Math.round(x)} (${Math.pow(4, Math.round(x))} pts)`} />
-                <Slider label="Échelle" value={v.scale} min={0.3} max={1.5} step={0.02} onChange={(x) => patchValues({ scale: x })} />
-                <Slider label="Progress" value={v.progress} min={0} max={1} step={0.01} onChange={(x) => patchValues({ progress: x })} format={(x) => `${Math.round(x * 100)}%`} />
-                <Slider label="Auto-progress" value={v.autoProgress} min={0} max={2} step={0.02} onChange={(x) => patchValues({ autoProgress: x })} />
-                <Slider label="Rotation (rad/s)" value={v.rotation} min={-2} max={2} step={0.05} onChange={(x) => patchValues({ rotation: x })} />
-                <Slider label="Épaisseur points" value={v.thickness} min={0.001} max={0.02} step={0.0005} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(4)} />
-                <Slider label="Attraction main" value={v.handPull} min={0} max={1} step={0.05} onChange={(x) => patchValues({ handPull: x })} />
-                <Slider label="Décalage teinte" value={v.hueAlongCurve} min={0} max={1} step={0.05} onChange={(x) => patchValues({ hueAlongCurve: x })} />
-                <label style={{ display: 'flex', gap: 6, fontSize: 11, marginTop: 4, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={!!v.showPoints} onChange={(e) => patchValues({ showPoints: e.target.checked ? 1 : 0 })} />
-                  Afficher les sommets (points sur la courbe)
-                </label>
-              </>
-            )}
-            {current.organism.kind === 'menger' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Éponge de Menger 3D — fractale cubique récursive navigable. La main x change la vitesse d'orbite, la main y le tilt vertical, pinch zoome, audio bass pulse l'échelle, audio high décale la teinte.
-                </p>
-                <Slider label="Profondeur (subdivisions)" value={v.depth} min={1} max={4} step={1} onChange={(x) => patchValues({ depth: Math.round(x) })} format={(x) => `${Math.round(x)} (${Math.pow(20, Math.round(x))} cubes)`} />
-                <Slider label="Vitesse orbite auto" value={v.autoOrbitSpeed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ autoOrbitSpeed: x })} />
-                <Slider label="FOV (deg)" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Torsion" value={v.twistAmount} min={0} max={2} step={0.05} onChange={(x) => patchValues({ twistAmount: x })} />
-                <Slider label="Taille cube (fraction)" value={v.cubeSize} min={0.6} max={1.05} step={0.01} onChange={(x) => patchValues({ cubeSize: x })} />
-                <Slider label="Lumière ambiante" value={v.ambient} min={0} max={1} step={0.05} onChange={(x) => patchValues({ ambient: x })} />
-                <Slider label="Bloom (gain palette)" value={v.bloom} min={0} max={1} step={0.05} onChange={(x) => patchValues({ bloom: x })} />
-              </>
-            )}
-            {current.organism.kind === 'supershape3d' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Surface 3D paramétrique (Paul Bourke). Selon (m1,m2,n1-n6), tu obtiens sphères, étoiles, fleurs, créatures alien. Main x = orbite, main y = morph m1↔m2 en live, audio bass = rondeur, morphSpeed = auto-évolution.
-                </p>
-                <Slider label="m1 (symétrie latitude)" value={v.m1} min={0} max={16} step={0.1} onChange={(x) => patchValues({ m1: x })} format={(x) => x.toFixed(1)} />
-                <Slider label="n1 (rondeur lat)" value={v.n1} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n1: x })} />
-                <Slider label="n2 (étirement lat)" value={v.n2} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n2: x })} />
-                <Slider label="n3 (anti-étirement lat)" value={v.n3} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n3: x })} />
-                <Slider label="m2 (symétrie longitude)" value={v.m2} min={0} max={16} step={0.1} onChange={(x) => patchValues({ m2: x })} format={(x) => x.toFixed(1)} />
-                <Slider label="n4 (rondeur lon)" value={v.n4} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n4: x })} />
-                <Slider label="n5 (étirement lon)" value={v.n5} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n5: x })} />
-                <Slider label="n6 (anti-étirement lon)" value={v.n6} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n6: x })} />
-                <Slider label="Résolution (grille)" value={v.resolution} min={16} max={128} step={4} onChange={(x) => patchValues({ resolution: Math.round(x) })} format={(x) => `${Math.round(x)}²`} />
-                <Slider label="Échelle" value={v.scale} min={0.3} max={2} step={0.05} onChange={(x) => patchValues({ scale: x })} />
-                <Slider label="Orbite caméra" value={v.autoOrbitSpeed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ autoOrbitSpeed: x })} />
-                <Slider label="FOV" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Vitesse morph auto" value={v.morphSpeed} min={0} max={2} step={0.05} onChange={(x) => patchValues({ morphSpeed: x })} />
-                <Slider label="Taille points" value={v.pointSize} min={0.5} max={6} step={0.1} onChange={(x) => patchValues({ pointSize: x })} />
-                <label style={{ display: 'flex', gap: 6, fontSize: 11, marginTop: 4, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={!!v.wireframe} onChange={(e) => patchValues({ wireframe: e.target.checked ? 1 : 0 })} />
-                  Wireframe (lignes entre sommets)
-                </label>
-              </>
-            )}
-            {current.organism.kind === 'swarm3d' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Boids en 3D — main x = cohésion, main y = séparation, audio mid = vitesse, audio high = alignement. <strong>Glisse la souris</strong> pour orbiter, <strong>molette</strong> pour zoomer.
-                </p>
-                <Slider label="Population" value={v.count} min={50} max={3000} step={50} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Vitesse max" value={v.speed} min={0.1} max={3} step={0.05} onChange={(x) => patchValues({ speed: x })} />
-                <Slider label="Cohésion" value={v.cohesion} min={0} max={2} step={0.05} onChange={(x) => patchValues({ cohesion: x })} />
-                <Slider label="Séparation" value={v.separation} min={0} max={2} step={0.05} onChange={(x) => patchValues({ separation: x })} />
-                <Slider label="Alignement" value={v.alignment} min={0} max={2} step={0.05} onChange={(x) => patchValues({ alignment: x })} />
-                <Slider label="Rayon perception" value={v.vision} min={0.05} max={0.5} step={0.01} onChange={(x) => patchValues({ vision: x })} format={(x) => x.toFixed(2)} />
-                <Slider label="Taille cube" value={v.bounds} min={0.6} max={1.5} step={0.05} onChange={(x) => patchValues({ bounds: x })} />
-                <Slider label="Taille points" value={v.pointSize} min={0.5} max={6} step={0.1} onChange={(x) => patchValues({ pointSize: x })} />
-                <Slider label="Orbite caméra" value={v.autoOrbitSpeed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ autoOrbitSpeed: x })} />
-                <Slider label="FOV" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Opacité (trail)" value={v.trail} min={0} max={1} step={0.05} onChange={(x) => patchValues({ trail: x })} />
-              </>
-            )}
-            {current.organism.kind === 'crystal' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Cristal qui pousse par accrétion. Audio bass = vitesse de cristallisation, audio high = nouveaux nucléi, main = position des prochains cubes. <strong>Glisse la souris</strong> pour orbiter.
-                </p>
-                <Slider label="Cubes max" value={v.maxCubes} min={200} max={4000} step={100} onChange={(x) => patchValues({ maxCubes: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Vitesse croissance" value={v.growthRate} min={1} max={30} step={0.5} onChange={(x) => patchValues({ growthRate: x })} />
-                <Slider label="Résolution grille" value={v.gridResolution} min={16} max={64} step={2} onChange={(x) => patchValues({ gridResolution: Math.round(x) })} format={(x) => `${Math.round(x)}³`} />
-                <Slider label="Taille cube (fraction)" value={v.cubeSize} min={0.6} max={1.05} step={0.02} onChange={(x) => patchValues({ cubeSize: x })} />
-                <Slider label="Orbite caméra" value={v.autoOrbitSpeed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ autoOrbitSpeed: x })} />
-                <Slider label="FOV" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Lumière ambiante" value={v.ambient} min={0} max={1} step={0.05} onChange={(x) => patchValues({ ambient: x })} />
-                <Slider label="Émissif (glow)" value={v.emissive} min={0} max={0.5} step={0.02} onChange={(x) => patchValues({ emissive: x })} />
-              </>
-            )}
-            {current.organism.kind === 'murmuration' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Ballet aérien d'oiseaux (simulation <strong>GPU</strong> — jusqu'à 100 000). La main agit comme un <strong>prédateur</strong> qui fait fuir le banc (pinch = puissance). Audio bass = ampli battement, mid = vitesse, high = nervosité du groupe. Active la <strong>caméra</strong> + un obstacle <strong>silhouette</strong> pour que ton corps repousse le banc.
-                </p>
-                <Slider label="Nombre d'oiseaux" value={v.count} min={500} max={100000} step={500} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Cohésion (rapprochement)" value={v.cohesion} min={0} max={2} step={0.05} onChange={(x) => patchValues({ cohesion: x })} />
-                <Slider label="Séparation (anti-collision)" value={v.separation} min={0} max={3} step={0.05} onChange={(x) => patchValues({ separation: x })} />
-                <Slider label="Alignement (suivi vol)" value={v.alignment} min={0} max={3} step={0.05} onChange={(x) => patchValues({ alignment: x })} />
-                <Slider label="Swirl (tourbillon collectif)" value={v.swirl} min={0} max={2} step={0.05} onChange={(x) => patchValues({ swirl: x })} />
-                <Slider label="Vitesse vol" value={v.speed} min={0.1} max={3} step={0.05} onChange={(x) => patchValues({ speed: x })} />
-                <Slider label="Vision (rayon)" value={v.vision} min={0.05} max={0.5} step={0.01} onChange={(x) => patchValues({ vision: x })} format={(x) => x.toFixed(2)} />
-                <Slider label="Taille oiseau" value={v.size} min={0.005} max={0.04} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="Vitesse battement ailes (Hz)" value={v.flapSpeed} min={1} max={30} step={0.5} onChange={(x) => patchValues({ flapSpeed: x })} format={(x) => x.toFixed(1)} />
-                <Slider label="Amplitude battement" value={v.flapAmplitude} min={0} max={1.2} step={0.02} onChange={(x) => patchValues({ flapAmplitude: x })} />
-                <Slider label="Réponse prédateur (main)" value={v.predatorResponse} min={0} max={3} step={0.05} onChange={(x) => patchValues({ predatorResponse: x })} />
-                <Slider label="Profondeur (étalement Z)" value={v.depthSpread} min={0} max={1} step={0.05} onChange={(x) => patchValues({ depthSpread: x })} />
-                <Slider label="Traînée" value={v.trail} min={0.5} max={0.999} step={0.005} onChange={(x) => patchValues({ trail: x })} format={(x) => x.toFixed(3)} />
-                <div style={{ marginTop: 8 }}>
-                  <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>Bords</label>
-                  <select value={(v as any).edges ?? 'wall'} onChange={(e) => patchValues({ edges: e.target.value } as any)} style={{ width: '100%', fontSize: 12, marginTop: 2 }}>
-                    <option value="wrap">🔁 Wrap (traverse les bords)</option>
-                    <option value="wall">🧱 Mur (rebond)</option>
-                    <option value="free">🕊️ Libre (aucun bord)</option>
-                  </select>
-                </div>
-              </>
-            )}
-            {current.organism.kind === 'instrument' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8, lineHeight: 1.5 }}>
-                  🎼 <strong>Harpe de lumière</strong> — active la <strong>Caméra</strong> + le tracking main.
-                  Tes doigts traversent les cordes pour les <strong>pincer</strong> : chaque corde joue sa note.
-                  Le son sort du polysynth interne ; active OSC pour piloter Ableton/un mixeur pro.
-                </p>
-                <Slider label="Cordes (notes)" value={v.strings} min={4} max={24} step={1} onChange={(x) => patchValues({ strings: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <div style={{ marginTop: 6 }}>
-                  <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>Gamme</label>
-                  <select value={(v as any).scale ?? 'penta-minor'} onChange={(e) => patchValues({ scale: e.target.value } as any)} style={{ width: '100%', fontSize: 12, marginTop: 2 }}>
-                    <option value="penta-minor">Pentatonique mineure (méditatif)</option>
-                    <option value="penta-major">Pentatonique majeure (lumineux)</option>
-                    <option value="minor">Mineure (mélancolique)</option>
-                    <option value="major">Majeure (joyeux)</option>
-                    <option value="dorian">Dorien (jazz / cool)</option>
-                    <option value="chromatic">Chromatique (12 notes)</option>
-                  </select>
-                </div>
-                <Slider label="Note grave (root MIDI)" value={v.root} min={36} max={60} step={1} onChange={(x) => patchValues({ root: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Vibration (vitesse)" value={v.waveSpeed} min={0} max={20} step={0.5} onChange={(x) => patchValues({ waveSpeed: x })} format={(x) => x.toFixed(1)} />
-                <Slider label="Amortissement corde" value={v.decay} min={0.8} max={0.995} step={0.005} onChange={(x) => patchValues({ decay: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="Taille des points" value={v.size} min={0.005} max={0.05} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
-                <Slider label="Sensibilité vélocité" value={v.velScale} min={2} max={20} step={0.5} onChange={(x) => patchValues({ velScale: x })} format={(x) => x.toFixed(1)} />
-                <label style={{ display: 'flex', gap: 6, fontSize: 12, cursor: 'pointer', marginTop: 6 }}>
-                  <input type="checkbox" checked={!!(v as any).osc} onChange={(e) => patchValues({ osc: e.target.checked ? 1 : 0 } as any)} />
-                  🛰️ Émettre les notes en OSC (<code>/anima/note</code> → Ableton)
-                </label>
-                <InstrumentMixer />
-              </>
-            )}
-            {current.organism.kind === 'mathcurve' && (
-              <>
-                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
-                  Courbe paramétrique math — choisis une formule, ajuste ses paramètres a/b/c/d. La main x/y dérive a/b en live.
-                </p>
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Formule</div>
-                  <select
-                    value={(v as any).formula ?? 'lissajous'}
-                    onChange={(e) => patchValues({ formula: e.target.value as any })}
-                    style={{ width: '100%', fontSize: 12 }}
-                  >
-                    <option value="lissajous">∞ Lissajous (a, b, d=phase)</option>
-                    <option value="rose">🌹 Rose / Rhodonea (a=pétales, b, c)</option>
-                    <option value="spirograph">⚙ Spirograph (a=R, b=tours, c=r, d=offset)</option>
-                    <option value="butterfly">🦋 Butterfly de Fay (a, b)</option>
-                    <option value="lorenz">🦋 Lorenz attractor (chaos, a=vitesse)</option>
-                    <option value="heart">❤ Cardioïde / cœur (a, b)</option>
-                  </select>
-                </div>
-                <Slider label="Échantillons" value={v.samples} min={100} max={4000} step={50} onChange={(x) => patchValues({ samples: Math.round(x) })} format={(x) => Math.round(x).toString()} />
-                <Slider label="Cycles (périodes)" value={v.cycles} min={0.1} max={10} step={0.1} onChange={(x) => patchValues({ cycles: x })} format={(x) => x.toFixed(1)} />
-                <Slider label="Paramètre a" value={v.a} min={0.1} max={12} step={0.1} onChange={(x) => patchValues({ a: x })} format={(x) => x.toFixed(2)} />
-                <Slider label="Paramètre b" value={v.b} min={0.1} max={12} step={0.1} onChange={(x) => patchValues({ b: x })} format={(x) => x.toFixed(2)} />
-                <Slider label="Paramètre c" value={v.c} min={0} max={5} step={0.05} onChange={(x) => patchValues({ c: x })} format={(x) => x.toFixed(2)} />
-                <Slider label="Paramètre d (phase)" value={v.d} min={-3.14} max={3.14} step={0.05} onChange={(x) => patchValues({ d: x })} format={(x) => x.toFixed(2)} />
-                <Slider label="Échelle" value={v.scale} min={0.1} max={2} step={0.05} onChange={(x) => patchValues({ scale: x })} />
-                <Slider label="Vitesse animation" value={v.speed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ speed: x })} />
-                <Slider label="Épaisseur points" value={v.thickness} min={0.001} max={0.02} step={0.0005} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(4)} />
-                <Slider label="Opacité ligne" value={v.lineOpacity} min={0} max={1} step={0.05} onChange={(x) => patchValues({ lineOpacity: x })} format={(x) => `${Math.round(x * 100)}%`} />
-              </>
-            )}
+            <OrganismValues kind={current.organism.kind} v={v} patchValues={patchValues} />
           </div>
         )}
 
@@ -2442,8 +2066,21 @@ function ShapeContentEditor({ shape, update }: { shape: import('../types/scene')
       delete next.organismValues
       update({ content: next })
     } else {
-      update({ content: { ...content, type: 'organism', organismKind: kind } })
+      // Seed this zone's own values from the species preset. Values of the PREVIOUS species
+      // are dropped — their keys don't apply to the new one. (Presets carry the string fields
+      // like formula/preset/rule that ORGANISM_DEFAULTS omits, so prefer them.)
+      const values = { ...(ORGANISM_PRESETS[kind] ?? ORGANISM_DEFAULTS[kind]) }
+      update({ content: { ...content, type: 'organism', organismKind: kind, organismValues: values } })
     }
+  }
+  // This zone's dedicated-organism values + a partial patcher, mirroring the scene organism's
+  // `patchOrganismValues`. The Engine already reads content.organismValues and pushes them to
+  // the live instance via updateParams() — no rebuild, so sliders respond immediately.
+  const zoneValues = (content.organismKind
+    ? content.organismValues ?? ORGANISM_PRESETS[content.organismKind] ?? ORGANISM_DEFAULTS[content.organismKind] ?? {}
+    : {}) as Record<string, number>
+  const patchZoneValues = (patch: Record<string, number>) => {
+    update({ content: { ...content, organismValues: { ...zoneValues, ...patch } } })
   }
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2549,8 +2186,23 @@ function ShapeContentEditor({ shape, update }: { shape: import('../types/scene')
           </select>
           <p style={{ fontSize: 10, color: 'var(--text-mute)', marginTop: 5, lineHeight: 1.4 }}>
             <strong>Partagé</strong> : la zone affiche l'organisme principal de la scène.<br />
-            <strong>Dédié</strong> : cette zone simule SON propre organisme (paramètres par défaut), indépendant des autres zones.
+            <strong>Dédié</strong> : cette zone simule SON propre organisme, réglable ci-dessous et indépendant des autres zones.
           </p>
+          {content.organismKind && (
+            <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1 }}>Paramètres de cette zone</div>
+                <button
+                  onClick={() => update({ content: { ...content, organismValues: { ...(ORGANISM_PRESETS[content.organismKind!] ?? ORGANISM_DEFAULTS[content.organismKind!]) } } })}
+                  style={{ fontSize: 10, padding: '2px 6px' }}
+                  title="Rétablit les paramètres par défaut de cette espèce pour cette zone"
+                >
+                  ↺ Défauts
+                </button>
+              </div>
+              <OrganismValues kind={content.organismKind} v={zoneValues} patchValues={patchZoneValues} />
+            </div>
+          )}
         </div>
       )}
       <Slider
@@ -2632,6 +2284,393 @@ function CalibrationProfiles() {
           </div>
         ))}
       </div>
+    </>
+  )
+}
+
+/** Per-species parameter controls (sliders + selects).
+ *  Shared by the scene organism panel and by a zone's dedicated organism instance :
+ *  `v` holds the current values, `patchValues` merges a partial patch into them. */
+function OrganismValues({ kind, v, patchValues }: { kind: OrganismKind; v: Record<string, number>; patchValues: (patch: Record<string, number>) => void }) {
+  return (
+    <>
+            {kind === 'boids' && (
+              <>
+                <Slider label="Population" value={v.count} min={100} max={100000} step={100} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Cohésion" value={v.cohesion} min={0} max={2} onChange={(x) => patchValues({ cohesion: x })} />
+                <Slider label="Séparation" value={v.separation} min={0} max={2} onChange={(x) => patchValues({ separation: x })} />
+                <Slider label="Alignement" value={v.alignment} min={0} max={2} onChange={(x) => patchValues({ alignment: x })} />
+                <Slider label="Vitesse" value={v.speed} min={0.1} max={3} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Vision" value={v.vision} min={0.1} max={1} onChange={(x) => patchValues({ vision: x })} />
+                <Slider label="Taille" value={v.size} min={0.005} max={0.05} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>Bords</label>
+                  <select value={(v as any).edges ?? 'wrap'} onChange={(e) => patchValues({ edges: e.target.value } as any)} style={{ width: '100%', fontSize: 12, marginTop: 2 }}>
+                    <option value="wrap">🔁 Wrap (traverse les bords)</option>
+                    <option value="wall">🧱 Mur (rebond)</option>
+                    <option value="free">🕊️ Libre (aucun bord)</option>
+                  </select>
+                </div>
+              </>
+            )}
+            {kind === 'particles' && (
+              <>
+                <Slider label="Population" value={v.count} min={500} max={100000} step={500} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vitesse" value={v.speed} min={0.1} max={3} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Taille de la poussière" value={v.size} min={0.2} max={8} step={0.1} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(1)} />
+                <Slider label="Dispersion" value={v.spread} min={0.2} max={2} onChange={(x) => patchValues({ spread: x })} />
+                <Slider label="Gravité" value={v.gravity} min={-1} max={1} onChange={(x) => patchValues({ gravity: x })} />
+                <Slider label="Turbulence" value={v.turbulence} min={0} max={2} onChange={(x) => patchValues({ turbulence: x })} />
+                <div className="palette-row" style={{ marginTop: 8 }}>
+                  <label>Bords</label>
+                  <select
+                    value={(v as any).boundary ?? 'respawn'}
+                    onChange={(e) => patchValues({ boundary: e.target.value })}
+                    title="Comportement quand une particule sort de l'écran"
+                  >
+                    <option value="respawn">♻️ Respawn (recyclage central)</option>
+                    <option value="wrap">🔁 Wrap (passe par les bords — pluie infinie)</option>
+                    <option value="kill">💀 Kill (disparaît — la population baisse)</option>
+                  </select>
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 4, marginBottom: 0, lineHeight: 1.35 }}>
+                  Pour un effet pluie/neige continu : choisis <strong>Wrap</strong> + gravité positive +
+                  un obstacle circulaire <em>"avoid"</em> en bas (le "parapluie").
+                </p>
+              </>
+            )}
+            {kind === 'tendrils' && (
+              <>
+                <Slider label="Nombre" value={v.count} min={4} max={80} step={1} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Longueur" value={v.length} min={8} max={64} step={1} onChange={(x) => patchValues({ length: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vitesse" value={v.speed} min={0.1} max={2} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Torsion" value={v.twist} min={0} max={4} onChange={(x) => patchValues({ twist: x })} />
+                <Slider label="Épaisseur" value={v.thickness ?? 0.01} min={0.004} max={0.08} step={0.002} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(3)} />
+              </>
+            )}
+            {kind === 'cells' && (
+              <>
+                <Slider label="Population" value={v.count} min={4} max={50000} step={50} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Pulsation" value={v.pulse} min={0} max={3} onChange={(x) => patchValues({ pulse: x })} />
+                <Slider label="Taille" value={v.size} min={0.4} max={3} onChange={(x) => patchValues({ size: x })} />
+                <Slider label="Attraction" value={v.attraction} min={0} max={2} onChange={(x) => patchValues({ attraction: x })} />
+                <Slider label="Répulsion" value={v.repulsion} min={0} max={2} onChange={(x) => patchValues({ repulsion: x })} />
+                <div className="palette-row" style={{ marginTop: 8 }}>
+                  <label>Bords</label>
+                  <select
+                    value={(v as any).boundary ?? 'bounce'}
+                    onChange={(e) => patchValues({ boundary: e.target.value })}
+                    title="Comportement des cellules aux bords de l'écran"
+                  >
+                    <option value="bounce">↩️ Rebond (par défaut)</option>
+                    <option value="wrap">🔁 Wrap (traverse les bords)</option>
+                  </select>
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 4, marginBottom: 0, lineHeight: 1.35 }}>
+                  En mode <strong>Wrap</strong> avec un flux directionnel vers le bas, les cellules
+                  s'écoulent en continu au lieu de s'accumuler contre le bord.
+                </p>
+              </>
+            )}
+            {kind === 'worms' && (
+              <>
+                <Slider label="Nombre" value={v.count} min={2} max={40} step={1} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Segments" value={v.segments} min={8} max={48} step={1} onChange={(x) => patchValues({ segments: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vitesse" value={v.speed} min={0.1} max={2} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Torsion" value={v.twist} min={0} max={3} onChange={(x) => patchValues({ twist: x })} />
+                <Slider label="Longueur segment" value={v.segLen} min={0.01} max={0.06} step={0.002} onChange={(x) => patchValues({ segLen: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Épaisseur" value={v.thickness ?? 0.01} min={0.004} max={0.08} step={0.002} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(3)} />
+              </>
+            )}
+            {kind === 'spores' && (
+              <>
+                <Slider label="Population" value={v.count} min={100} max={2500} step={50} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vitesse" value={v.speed} min={0.1} max={2} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Taille de base" value={v.size} min={0.005} max={0.04} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Force du bloom" value={v.bloomGain} min={0.1} max={1.5} step={0.05} onChange={(x) => patchValues({ bloomGain: x })} />
+                <Slider label="Décrescendo bloom" value={v.bloomDecay} min={0.2} max={3} step={0.05} onChange={(x) => patchValues({ bloomDecay: x })} />
+              </>
+            )}
+            {kind === 'psychedelic' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Galaxie swirling 3D-feel — la main décale le centre, le pinch accélère, les graves pulsent, les aigus vibrent.
+                </p>
+                <Slider label="Points (grille²)" value={v.count} min={400} max={6400} step={100} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => `${Math.round(Math.sqrt(x))}²`} />
+                <Slider label="Vitesse rotation" value={v.speed} min={0.1} max={3} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Fréquence interne" value={v.freq} min={1} max={10} step={0.1} onChange={(x) => patchValues({ freq: x })} />
+                <Slider label="Échelle" value={v.scale} min={0.3} max={2} step={0.05} onChange={(x) => patchValues({ scale: x })} />
+                <Slider label="Taille points" value={v.size} min={0.5} max={6} step={0.1} onChange={(x) => patchValues({ size: x })} />
+              </>
+            )}
+            {kind === 'mandala' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Géométrie sacrée multi-couches — la main x contrôle les bras (3-16), pinch ouvre le centre, audio bass = respiration. Active les connecteurs pour les étoiles inscrites.
+                </p>
+                <Slider label="Bras" value={v.arms} min={3} max={24} step={1} onChange={(x) => patchValues({ arms: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Points par bras" value={v.pointsPerArm} min={16} max={128} step={4} onChange={(x) => patchValues({ pointsPerArm: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Couches superposées" value={v.layers ?? 1} min={1} max={3} step={1} onChange={(x) => patchValues({ layers: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Connecteurs (skip-lignes)" value={v.connectors ?? 0} min={0} max={6} step={1} onChange={(x) => patchValues({ connectors: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Opacité connecteurs" value={v.connectorOpacity ?? 0.4} min={0} max={1} step={0.05} onChange={(x) => patchValues({ connectorOpacity: x })} format={(x) => `${Math.round(x * 100)}%`} />
+                <Slider label="Rayon extérieur" value={v.outerRadius} min={0.2} max={1.2} step={0.02} onChange={(x) => patchValues({ outerRadius: x })} />
+                <Slider label="Rayon intérieur" value={v.innerRadius} min={0} max={0.5} step={0.01} onChange={(x) => patchValues({ innerRadius: x })} />
+                <Slider label="Ondulations" value={v.waves} min={0} max={8} step={0.1} onChange={(x) => patchValues({ waves: x })} />
+                <Slider label="Vitesse ondulation" value={v.freq} min={0.1} max={3} step={0.05} onChange={(x) => patchValues({ freq: x })} />
+                <Slider label="Rotation" value={v.rotation} min={-2} max={2} step={0.05} onChange={(x) => patchValues({ rotation: x })} />
+                <Slider label="Épaisseur points" value={v.thickness} min={0.001} max={0.03} step={0.0005} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(4)} />
+              </>
+            )}
+            {kind === 'fractal' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Julia set GPU — la fractale s'anime toute seule (orbit, zoom respire, rotation). La main pilote c en live, pinch zoome, audio bass pulse la luminosité.
+                </p>
+                <Slider label="Itérations (précision)" value={v.iterations} min={32} max={256} step={4} onChange={(x) => patchValues({ iterations: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Zoom" value={v.zoom} min={0.3} max={5} step={0.05} onChange={(x) => patchValues({ zoom: x })} />
+                <Slider label="c réel (cx)" value={v.cx} min={-1} max={1} step={0.005} onChange={(x) => patchValues({ cx: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="c imaginaire (cy)" value={v.cy} min={-1} max={1} step={0.005} onChange={(x) => patchValues({ cy: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Suivi main" value={v.followHand} min={0} max={1} step={0.05} onChange={(x) => patchValues({ followHand: x })} format={(x) => `${Math.round(x * 100)}%`} />
+                <Slider label="Vitesse orbite (auto)" value={v.orbitSpeed ?? 0.3} min={0} max={2} step={0.02} onChange={(x) => patchValues({ orbitSpeed: x })} />
+                <Slider label="Rayon orbite (auto)" value={v.orbitRadius ?? 0.12} min={0} max={0.5} step={0.005} onChange={(x) => patchValues({ orbitRadius: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Rotation plan (auto)" value={v.rotation ?? 0.15} min={-1} max={1} step={0.02} onChange={(x) => patchValues({ rotation: x })} />
+                <Slider label="Respiration zoom" value={v.zoomBreath ?? 0.08} min={0} max={0.5} step={0.01} onChange={(x) => patchValues({ zoomBreath: x })} />
+                <Slider label="Rayon échappement" value={v.bailout} min={2} max={20} step={0.5} onChange={(x) => patchValues({ bailout: x })} />
+                <Slider label="Luminosité" value={v.brightness} min={0.3} max={2.5} step={0.05} onChange={(x) => patchValues({ brightness: x })} />
+              </>
+            )}
+            {kind === 'reactiondiffusion' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Simulation chimique Gray-Scott GPU. La main "peint" des graines de V, audio bass = nourriture, audio high = mort. Change le preset pour explorer.
+                </p>
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Preset</div>
+                  <select value={(v as any).preset ?? 'coral'} onChange={(e) => patchValues({ preset: e.target.value as any })} style={{ width: '100%', fontSize: 12 }}>
+                    <option value="coral">🪸 Coral (organique)</option>
+                    <option value="spots">⚫ Spots (taches)</option>
+                    <option value="mitosis">🌀 Mitosis (spirales)</option>
+                    <option value="fingerprint">👆 Fingerprint (empreinte)</option>
+                    <option value="worms">🪱 Worms (vers)</option>
+                    <option value="maze">🧩 Maze (labyrinthe)</option>
+                    <option value="pulse">💗 Pulse (pulsations)</option>
+                  </select>
+                </div>
+                <Slider label="Feed (F)" value={v.F} min={0.005} max={0.08} step={0.001} onChange={(x) => patchValues({ F: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Kill (k)" value={v.k} min={0.04} max={0.075} step={0.001} onChange={(x) => patchValues({ k: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Résolution" value={v.resolution} min={128} max={1024} step={64} onChange={(x) => patchValues({ resolution: Math.round(x) })} format={(x) => `${Math.round(x)}²`} />
+                <Slider label="Steps / frame" value={v.stepsPerFrame} min={1} max={16} step={1} onChange={(x) => patchValues({ stepsPerFrame: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Splat size" value={v.splatSize} min={0.01} max={0.2} step={0.005} onChange={(x) => patchValues({ splatSize: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Splat strength" value={v.splatStrength} min={0} max={1} step={0.05} onChange={(x) => patchValues({ splatStrength: x })} />
+                <Slider label="Contraste" value={v.contrast} min={0.5} max={3} step={0.1} onChange={(x) => patchValues({ contrast: x })} />
+              </>
+            )}
+            {kind === 'cellularautomata' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Automate cellulaire GPU. La main "dessine" des cellules vivantes, audio bass kick = reseed aléatoire, audio mid = vitesse de tick.
+                </p>
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Règle</div>
+                  <select value={(v as any).rule ?? 'conway'} onChange={(e) => patchValues({ rule: e.target.value as any })} style={{ width: '100%', fontSize: 12 }}>
+                    <option value="conway">Conway B3/S23 — Game of Life classique</option>
+                    <option value="highlife">HighLife B36/S23 — réplicateurs</option>
+                    <option value="seeds">Seeds B2/S — explose</option>
+                    <option value="daedalus">Daedalus B3/S012-8 — croissance</option>
+                    <option value="maze">Maze B3/S12345 — labyrinthe</option>
+                    <option value="replicator">Replicator B1357/S1357 — autoréplique tout</option>
+                  </select>
+                </div>
+                <Slider label="Résolution" value={v.resolution} min={64} max={512} step={32} onChange={(x) => patchValues({ resolution: Math.round(x) })} format={(x) => `${Math.round(x)}²`} />
+                <Slider label="Vitesse (ticks/sec)" value={v.ticksPerSec} min={1} max={60} step={1} onChange={(x) => patchValues({ ticksPerSec: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Trail (fade)" value={v.ageDecay} min={0.5} max={0.99} step={0.005} onChange={(x) => patchValues({ ageDecay: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Brush size" value={v.brushSize} min={0.005} max={0.1} step={0.005} onChange={(x) => patchValues({ brushSize: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Brush strength" value={v.brushStrength} min={0} max={1} step={0.05} onChange={(x) => patchValues({ brushStrength: x })} />
+                <Slider label="Auto-reseed (bass)" value={v.autoReseed} min={0} max={1} step={0.05} onChange={(x) => patchValues({ autoReseed: x })} />
+              </>
+            )}
+            {kind === 'hilbert' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Courbe de Hilbert space-filling. Ordre N = 4^N points. La main pull la courbe, audio bass pulse, autoProgress dessine progressivement.
+                </p>
+                <Slider label="Ordre" value={v.order} min={1} max={7} step={1} onChange={(x) => patchValues({ order: Math.round(x) })} format={(x) => `${Math.round(x)} (${Math.pow(4, Math.round(x))} pts)`} />
+                <Slider label="Échelle" value={v.scale} min={0.3} max={1.5} step={0.02} onChange={(x) => patchValues({ scale: x })} />
+                <Slider label="Progress" value={v.progress} min={0} max={1} step={0.01} onChange={(x) => patchValues({ progress: x })} format={(x) => `${Math.round(x * 100)}%`} />
+                <Slider label="Auto-progress" value={v.autoProgress} min={0} max={2} step={0.02} onChange={(x) => patchValues({ autoProgress: x })} />
+                <Slider label="Rotation (rad/s)" value={v.rotation} min={-2} max={2} step={0.05} onChange={(x) => patchValues({ rotation: x })} />
+                <Slider label="Épaisseur points" value={v.thickness} min={0.001} max={0.02} step={0.0005} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(4)} />
+                <Slider label="Attraction main" value={v.handPull} min={0} max={1} step={0.05} onChange={(x) => patchValues({ handPull: x })} />
+                <Slider label="Décalage teinte" value={v.hueAlongCurve} min={0} max={1} step={0.05} onChange={(x) => patchValues({ hueAlongCurve: x })} />
+                <label style={{ display: 'flex', gap: 6, fontSize: 11, marginTop: 4, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!v.showPoints} onChange={(e) => patchValues({ showPoints: e.target.checked ? 1 : 0 })} />
+                  Afficher les sommets (points sur la courbe)
+                </label>
+              </>
+            )}
+            {kind === 'menger' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Éponge de Menger 3D — fractale cubique récursive navigable. La main x change la vitesse d'orbite, la main y le tilt vertical, pinch zoome, audio bass pulse l'échelle, audio high décale la teinte.
+                </p>
+                <Slider label="Profondeur (subdivisions)" value={v.depth} min={1} max={4} step={1} onChange={(x) => patchValues({ depth: Math.round(x) })} format={(x) => `${Math.round(x)} (${Math.pow(20, Math.round(x))} cubes)`} />
+                <Slider label="Vitesse orbite auto" value={v.autoOrbitSpeed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ autoOrbitSpeed: x })} />
+                <Slider label="FOV (deg)" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Torsion" value={v.twistAmount} min={0} max={2} step={0.05} onChange={(x) => patchValues({ twistAmount: x })} />
+                <Slider label="Taille cube (fraction)" value={v.cubeSize} min={0.6} max={1.05} step={0.01} onChange={(x) => patchValues({ cubeSize: x })} />
+                <Slider label="Lumière ambiante" value={v.ambient} min={0} max={1} step={0.05} onChange={(x) => patchValues({ ambient: x })} />
+                <Slider label="Bloom (gain palette)" value={v.bloom} min={0} max={1} step={0.05} onChange={(x) => patchValues({ bloom: x })} />
+              </>
+            )}
+            {kind === 'supershape3d' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Surface 3D paramétrique (Paul Bourke). Selon (m1,m2,n1-n6), tu obtiens sphères, étoiles, fleurs, créatures alien. Main x = orbite, main y = morph m1↔m2 en live, audio bass = rondeur, morphSpeed = auto-évolution.
+                </p>
+                <Slider label="m1 (symétrie latitude)" value={v.m1} min={0} max={16} step={0.1} onChange={(x) => patchValues({ m1: x })} format={(x) => x.toFixed(1)} />
+                <Slider label="n1 (rondeur lat)" value={v.n1} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n1: x })} />
+                <Slider label="n2 (étirement lat)" value={v.n2} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n2: x })} />
+                <Slider label="n3 (anti-étirement lat)" value={v.n3} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n3: x })} />
+                <Slider label="m2 (symétrie longitude)" value={v.m2} min={0} max={16} step={0.1} onChange={(x) => patchValues({ m2: x })} format={(x) => x.toFixed(1)} />
+                <Slider label="n4 (rondeur lon)" value={v.n4} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n4: x })} />
+                <Slider label="n5 (étirement lon)" value={v.n5} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n5: x })} />
+                <Slider label="n6 (anti-étirement lon)" value={v.n6} min={0.1} max={4} step={0.05} onChange={(x) => patchValues({ n6: x })} />
+                <Slider label="Résolution (grille)" value={v.resolution} min={16} max={128} step={4} onChange={(x) => patchValues({ resolution: Math.round(x) })} format={(x) => `${Math.round(x)}²`} />
+                <Slider label="Échelle" value={v.scale} min={0.3} max={2} step={0.05} onChange={(x) => patchValues({ scale: x })} />
+                <Slider label="Orbite caméra" value={v.autoOrbitSpeed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ autoOrbitSpeed: x })} />
+                <Slider label="FOV" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vitesse morph auto" value={v.morphSpeed} min={0} max={2} step={0.05} onChange={(x) => patchValues({ morphSpeed: x })} />
+                <Slider label="Taille points" value={v.pointSize} min={0.5} max={6} step={0.1} onChange={(x) => patchValues({ pointSize: x })} />
+                <label style={{ display: 'flex', gap: 6, fontSize: 11, marginTop: 4, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!v.wireframe} onChange={(e) => patchValues({ wireframe: e.target.checked ? 1 : 0 })} />
+                  Wireframe (lignes entre sommets)
+                </label>
+              </>
+            )}
+            {kind === 'swarm3d' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Boids en 3D — main x = cohésion, main y = séparation, audio mid = vitesse, audio high = alignement. <strong>Glisse la souris</strong> pour orbiter, <strong>molette</strong> pour zoomer.
+                </p>
+                <Slider label="Population" value={v.count} min={50} max={3000} step={50} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vitesse max" value={v.speed} min={0.1} max={3} step={0.05} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Cohésion" value={v.cohesion} min={0} max={2} step={0.05} onChange={(x) => patchValues({ cohesion: x })} />
+                <Slider label="Séparation" value={v.separation} min={0} max={2} step={0.05} onChange={(x) => patchValues({ separation: x })} />
+                <Slider label="Alignement" value={v.alignment} min={0} max={2} step={0.05} onChange={(x) => patchValues({ alignment: x })} />
+                <Slider label="Rayon perception" value={v.vision} min={0.05} max={0.5} step={0.01} onChange={(x) => patchValues({ vision: x })} format={(x) => x.toFixed(2)} />
+                <Slider label="Taille cube" value={v.bounds} min={0.6} max={1.5} step={0.05} onChange={(x) => patchValues({ bounds: x })} />
+                <Slider label="Taille points" value={v.pointSize} min={0.5} max={6} step={0.1} onChange={(x) => patchValues({ pointSize: x })} />
+                <Slider label="Orbite caméra" value={v.autoOrbitSpeed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ autoOrbitSpeed: x })} />
+                <Slider label="FOV" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Opacité (trail)" value={v.trail} min={0} max={1} step={0.05} onChange={(x) => patchValues({ trail: x })} />
+              </>
+            )}
+            {kind === 'crystal' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Cristal qui pousse par accrétion. Audio bass = vitesse de cristallisation, audio high = nouveaux nucléi, main = position des prochains cubes. <strong>Glisse la souris</strong> pour orbiter.
+                </p>
+                <Slider label="Cubes max" value={v.maxCubes} min={200} max={4000} step={100} onChange={(x) => patchValues({ maxCubes: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vitesse croissance" value={v.growthRate} min={1} max={30} step={0.5} onChange={(x) => patchValues({ growthRate: x })} />
+                <Slider label="Résolution grille" value={v.gridResolution} min={16} max={64} step={2} onChange={(x) => patchValues({ gridResolution: Math.round(x) })} format={(x) => `${Math.round(x)}³`} />
+                <Slider label="Taille cube (fraction)" value={v.cubeSize} min={0.6} max={1.05} step={0.02} onChange={(x) => patchValues({ cubeSize: x })} />
+                <Slider label="Orbite caméra" value={v.autoOrbitSpeed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ autoOrbitSpeed: x })} />
+                <Slider label="FOV" value={v.fov} min={30} max={90} step={1} onChange={(x) => patchValues({ fov: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Lumière ambiante" value={v.ambient} min={0} max={1} step={0.05} onChange={(x) => patchValues({ ambient: x })} />
+                <Slider label="Émissif (glow)" value={v.emissive} min={0} max={0.5} step={0.02} onChange={(x) => patchValues({ emissive: x })} />
+              </>
+            )}
+            {kind === 'murmuration' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Ballet aérien d'oiseaux (simulation <strong>GPU</strong> — jusqu'à 100 000). La main agit comme un <strong>prédateur</strong> qui fait fuir le banc (pinch = puissance). Audio bass = ampli battement, mid = vitesse, high = nervosité du groupe. Active la <strong>caméra</strong> + un obstacle <strong>silhouette</strong> pour que ton corps repousse le banc.
+                </p>
+                <Slider label="Nombre d'oiseaux" value={v.count} min={500} max={100000} step={500} onChange={(x) => patchValues({ count: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Cohésion (rapprochement)" value={v.cohesion} min={0} max={2} step={0.05} onChange={(x) => patchValues({ cohesion: x })} />
+                <Slider label="Séparation (anti-collision)" value={v.separation} min={0} max={3} step={0.05} onChange={(x) => patchValues({ separation: x })} />
+                <Slider label="Alignement (suivi vol)" value={v.alignment} min={0} max={3} step={0.05} onChange={(x) => patchValues({ alignment: x })} />
+                <Slider label="Swirl (tourbillon collectif)" value={v.swirl} min={0} max={2} step={0.05} onChange={(x) => patchValues({ swirl: x })} />
+                <Slider label="Vitesse vol" value={v.speed} min={0.1} max={3} step={0.05} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Vision (rayon)" value={v.vision} min={0.05} max={0.5} step={0.01} onChange={(x) => patchValues({ vision: x })} format={(x) => x.toFixed(2)} />
+                <Slider label="Taille oiseau" value={v.size} min={0.005} max={0.04} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Vitesse battement ailes (Hz)" value={v.flapSpeed} min={1} max={30} step={0.5} onChange={(x) => patchValues({ flapSpeed: x })} format={(x) => x.toFixed(1)} />
+                <Slider label="Amplitude battement" value={v.flapAmplitude} min={0} max={1.2} step={0.02} onChange={(x) => patchValues({ flapAmplitude: x })} />
+                <Slider label="Réponse prédateur (main)" value={v.predatorResponse} min={0} max={3} step={0.05} onChange={(x) => patchValues({ predatorResponse: x })} />
+                <Slider label="Profondeur (étalement Z)" value={v.depthSpread} min={0} max={1} step={0.05} onChange={(x) => patchValues({ depthSpread: x })} />
+                <Slider label="Traînée" value={v.trail} min={0.5} max={0.999} step={0.005} onChange={(x) => patchValues({ trail: x })} format={(x) => x.toFixed(3)} />
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>Bords</label>
+                  <select value={(v as any).edges ?? 'wall'} onChange={(e) => patchValues({ edges: e.target.value } as any)} style={{ width: '100%', fontSize: 12, marginTop: 2 }}>
+                    <option value="wrap">🔁 Wrap (traverse les bords)</option>
+                    <option value="wall">🧱 Mur (rebond)</option>
+                    <option value="free">🕊️ Libre (aucun bord)</option>
+                  </select>
+                </div>
+              </>
+            )}
+            {kind === 'instrument' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8, lineHeight: 1.5 }}>
+                  🎼 <strong>Harpe de lumière</strong> — active la <strong>Caméra</strong> + le tracking main.
+                  Tes doigts traversent les cordes pour les <strong>pincer</strong> : chaque corde joue sa note.
+                  Le son sort du polysynth interne ; active OSC pour piloter Ableton/un mixeur pro.
+                </p>
+                <Slider label="Cordes (notes)" value={v.strings} min={4} max={24} step={1} onChange={(x) => patchValues({ strings: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <div style={{ marginTop: 6 }}>
+                  <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>Gamme</label>
+                  <select value={(v as any).scale ?? 'penta-minor'} onChange={(e) => patchValues({ scale: e.target.value } as any)} style={{ width: '100%', fontSize: 12, marginTop: 2 }}>
+                    <option value="penta-minor">Pentatonique mineure (méditatif)</option>
+                    <option value="penta-major">Pentatonique majeure (lumineux)</option>
+                    <option value="minor">Mineure (mélancolique)</option>
+                    <option value="major">Majeure (joyeux)</option>
+                    <option value="dorian">Dorien (jazz / cool)</option>
+                    <option value="chromatic">Chromatique (12 notes)</option>
+                  </select>
+                </div>
+                <Slider label="Note grave (root MIDI)" value={v.root} min={36} max={60} step={1} onChange={(x) => patchValues({ root: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Vibration (vitesse)" value={v.waveSpeed} min={0} max={20} step={0.5} onChange={(x) => patchValues({ waveSpeed: x })} format={(x) => x.toFixed(1)} />
+                <Slider label="Amortissement corde" value={v.decay} min={0.8} max={0.995} step={0.005} onChange={(x) => patchValues({ decay: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Taille des points" value={v.size} min={0.005} max={0.05} step={0.001} onChange={(x) => patchValues({ size: x })} format={(x) => x.toFixed(3)} />
+                <Slider label="Sensibilité vélocité" value={v.velScale} min={2} max={20} step={0.5} onChange={(x) => patchValues({ velScale: x })} format={(x) => x.toFixed(1)} />
+                <label style={{ display: 'flex', gap: 6, fontSize: 12, cursor: 'pointer', marginTop: 6 }}>
+                  <input type="checkbox" checked={!!(v as any).osc} onChange={(e) => patchValues({ osc: e.target.checked ? 1 : 0 } as any)} />
+                  🛰️ Émettre les notes en OSC (<code>/anima/note</code> → Ableton)
+                </label>
+                <InstrumentMixer />
+              </>
+            )}
+            {kind === 'mathcurve' && (
+              <>
+                <p style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8 }}>
+                  Courbe paramétrique math — choisis une formule, ajuste ses paramètres a/b/c/d. La main x/y dérive a/b en live.
+                </p>
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-mute)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Formule</div>
+                  <select
+                    value={(v as any).formula ?? 'lissajous'}
+                    onChange={(e) => patchValues({ formula: e.target.value as any })}
+                    style={{ width: '100%', fontSize: 12 }}
+                  >
+                    <option value="lissajous">∞ Lissajous (a, b, d=phase)</option>
+                    <option value="rose">🌹 Rose / Rhodonea (a=pétales, b, c)</option>
+                    <option value="spirograph">⚙ Spirograph (a=R, b=tours, c=r, d=offset)</option>
+                    <option value="butterfly">🦋 Butterfly de Fay (a, b)</option>
+                    <option value="lorenz">🦋 Lorenz attractor (chaos, a=vitesse)</option>
+                    <option value="heart">❤ Cardioïde / cœur (a, b)</option>
+                  </select>
+                </div>
+                <Slider label="Échantillons" value={v.samples} min={100} max={4000} step={50} onChange={(x) => patchValues({ samples: Math.round(x) })} format={(x) => Math.round(x).toString()} />
+                <Slider label="Cycles (périodes)" value={v.cycles} min={0.1} max={10} step={0.1} onChange={(x) => patchValues({ cycles: x })} format={(x) => x.toFixed(1)} />
+                <Slider label="Paramètre a" value={v.a} min={0.1} max={12} step={0.1} onChange={(x) => patchValues({ a: x })} format={(x) => x.toFixed(2)} />
+                <Slider label="Paramètre b" value={v.b} min={0.1} max={12} step={0.1} onChange={(x) => patchValues({ b: x })} format={(x) => x.toFixed(2)} />
+                <Slider label="Paramètre c" value={v.c} min={0} max={5} step={0.05} onChange={(x) => patchValues({ c: x })} format={(x) => x.toFixed(2)} />
+                <Slider label="Paramètre d (phase)" value={v.d} min={-3.14} max={3.14} step={0.05} onChange={(x) => patchValues({ d: x })} format={(x) => x.toFixed(2)} />
+                <Slider label="Échelle" value={v.scale} min={0.1} max={2} step={0.05} onChange={(x) => patchValues({ scale: x })} />
+                <Slider label="Vitesse animation" value={v.speed} min={0} max={3} step={0.05} onChange={(x) => patchValues({ speed: x })} />
+                <Slider label="Épaisseur points" value={v.thickness} min={0.001} max={0.02} step={0.0005} onChange={(x) => patchValues({ thickness: x })} format={(x) => x.toFixed(4)} />
+                <Slider label="Opacité ligne" value={v.lineOpacity} min={0} max={1} step={0.05} onChange={(x) => patchValues({ lineOpacity: x })} format={(x) => `${Math.round(x * 100)}%`} />
+              </>
+            )}
     </>
   )
 }
