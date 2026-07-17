@@ -29,6 +29,7 @@ const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/
 const GESTURE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
 
 const TIP_THUMB = 4, TIP_INDEX = 8, MID_MCP = 9, WRIST = 0
+const FINGER_CHAINS = [[0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [0, 9, 10, 11, 12], [0, 13, 14, 15, 16], [0, 17, 18, 19, 20]]
 const clamp = (a: number, b: number, v: number) => Math.max(a, Math.min(b, v))
 
 // ── Clay profile discretisation ──────────────────────────────────────────────
@@ -101,14 +102,15 @@ export function PotteryStudio() {
   const [clayColor, setClayColor] = useState('#b5651d')
   const [wireframe, setWireframe] = useState(false)
   const [showGuides, setShowGuides] = useState(true)
+  const [showSkeleton, setShowSkeleton] = useState(true)
   const [bgMode, setBgMode] = useState<'webcam' | 'black'>('webcam')
   const [panelOpen, setPanelOpen] = useState(true)
   const [recording, setRecording] = useState(false)
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, clayColor, wireframe, showGuides, bgMode })
-  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, clayColor, wireframe, showGuides, bgMode }
+  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, clayColor, wireframe, showGuides, showSkeleton, bgMode })
+  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, clayColor, wireframe, showGuides, showSkeleton, bgMode }
   const resetRef = useRef(true)          // rebuild the lump
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
   const recCtl = useRef<{ start: () => void; stop: () => void } | null>(null)
@@ -155,18 +157,20 @@ export function PotteryStudio() {
     }
     resetClay(clayMass)
 
-    const camera0 = () => { camera.position.set(0, Y0 + HMAX * 0.62, 3.0); camera.lookAt(0, Y0 + HMAX * 0.42, 0) }
-    let camDist = 3.0, camAz = 0, camElev = Y0 + HMAX * 0.62
-    const applyCam = () => { camera.position.set(Math.sin(camAz) * camDist, camElev, Math.cos(camAz) * camDist); camera.lookAt(0, Y0 + HMAX * 0.42, 0) }
-    camera0()
+    // Full 3D orbit around the pot. The shaping plane follows the camera azimuth, so
+    // changing the view angle genuinely changes where/how the fingers sculpt.
+    const target = new THREE.Vector3(0, Y0 + HMAX * 0.42, 0)
+    let camDist = 3.0, camAz = 0, camPolar = 1.12   // polar : 0.3 (top-down) … 1.5 (side)
+    const applyCam = () => { const sp = Math.sin(camPolar), cp = Math.cos(camPolar); camera.position.set(target.x + camDist * sp * Math.sin(camAz), target.y + camDist * cp, target.z + camDist * sp * Math.cos(camAz)); camera.lookAt(target) }
+    applyCam()
 
     const resize = () => { const w = window.innerWidth, h = window.innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); overlay.width = w; overlay.height = h }
     resize(); window.addEventListener('resize', resize)
 
-    // Mouse : drag = orbit view (shaping still best at front), wheel = zoom.
-    let dragging = false, lastX = 0
-    const onDown = (e: PointerEvent) => { dragging = true; lastX = e.clientX }
-    const onMove = (e: PointerEvent) => { if (!dragging) return; camAz -= (e.clientX - lastX) * 0.006; camAz = clamp(-0.9, 0.9, camAz); lastX = e.clientX }
+    // Mouse : drag = orbit (azimuth + inclination), wheel = zoom.
+    let dragging = false, lastX = 0, lastY = 0
+    const onDown = (e: PointerEvent) => { dragging = true; lastX = e.clientX; lastY = e.clientY }
+    const onMove = (e: PointerEvent) => { if (!dragging) return; camAz -= (e.clientX - lastX) * 0.006; camPolar = clamp(0.32, 1.5, camPolar - (e.clientY - lastY) * 0.006); lastX = e.clientX; lastY = e.clientY }
     const onUp = () => { dragging = false }
     const onWheel = (e: WheelEvent) => { camDist = clamp(1.6, 6, camDist + e.deltaY * 0.002) }
     renderer.domElement.addEventListener('pointerdown', onDown); window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); renderer.domElement.addEventListener('wheel', onWheel, { passive: true })
@@ -186,6 +190,23 @@ export function PotteryStudio() {
 
     const proj = (x: number, y: number, z: number) => { const p = new THREE.Vector3(x, y, z).project(camera); return { x: (p.x * 0.5 + 0.5) * overlay.width, y: (1 - (p.y * 0.5 + 0.5)) * overlay.height } }
 
+    // Precise finger → clay mapping. Cast a ray from the camera through the fingertip and
+    // intersect the CUTTING PLANE — the vertical plane through the wheel axis that faces
+    // the camera. As the view orbits, this plane rotates with it, so the inclination of the
+    // view genuinely changes where the finger lands (height + radius) on the clay.
+    const raycaster = new THREE.Raycaster()
+    const _plane = new THREE.Plane()
+    const mapFinger = (ndcX: number, ndcY: number): { rad: number; ring: number } | null => {
+      raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera)
+      _plane.set(new THREE.Vector3(Math.cos(camAz), 0, -Math.sin(camAz)), 0)   // contains the Y axis + camera
+      const hit = raycaster.ray.intersectPlane(_plane, new THREE.Vector3())
+      if (!hit) return null
+      const rad = Math.max(0, hit.x * Math.sin(camAz) + hit.z * Math.cos(camAz))   // horizontal distance from axis
+      const g = clamp(0, 1, (hit.y - Y0) / HMAX)
+      return { rad, ring: clamp(0, NR - 1, Math.round(g * (NR - 1))) }
+    }
+    let skelHands: { x: number; y: number }[][] = []   // last landmarks (screen px, mirrored) for the skeleton
+
     type Contact = { rad: number; ring: number; press: number; sx: number; sy: number; inner: boolean }
     let hud: { contacts: Contact[]; toolLabel: string } = { contacts: [], toolLabel: '' }
 
@@ -196,7 +217,7 @@ export function PotteryStudio() {
       const eng = contacts.filter((c) => c.press > 0.15)
       if (!eng.length) return
       const rate = clamp(0, 0.9, p.strength * Math.min(1, dt * 9))
-      const sigma = 6
+      const sigma = 4   // tighter band → finger-level precision
       if (p.tool === 'pull') {
         if (eng.length >= 2) {
           const s = [...eng].sort((a, b) => a.rad - b.rad); const inn = s[0], out = s[s.length - 1]
@@ -286,9 +307,8 @@ export function PotteryStudio() {
 
       clayMat.color.set(p.clayColor); clayMat.wireframe = p.wireframe
 
-      // Screen-space reference frame from the live camera (works even if the view orbits).
-      const sBase = proj(0, Y0, 0), sTop = proj(0, Y0 + HMAX, 0), sR0 = proj(0, Y0, 0.4), sR1 = proj(0.5, Y0, 0.4)
-      const axisX = sBase.x, spanY = Math.max(1, sBase.y - sTop.y), pxU = Math.max(1, Math.abs(sR1.x - sR0.x) / 0.5)
+      // Axis guide endpoints (projected — the line can slant when the view is inclined).
+      const sBase = proj(0, Y0, 0), sTop = proj(0, Y0 + HMAX, 0)
 
       let newFrame = false
       const contacts: Contact[] = []
@@ -296,19 +316,21 @@ export function PotteryStudio() {
         lastVideoTime = video.currentTime; newFrame = true
         const res = landmarker.recognizeForVideo(video, performance.now())
         const hands = res.landmarks ?? []
+        skelHands = hands.slice(0, 2).map((lm) => lm.map((k: { x: number; y: number }) => ({ x: (1 - k.x) * overlay.width, y: k.y * overlay.height })))
         for (let i = 0; i < Math.min(2, hands.length); i++) {
           const lm = hands[i]
-          const cx = ((lm[TIP_THUMB].x + lm[TIP_INDEX].x) / 2), cy = ((lm[TIP_THUMB].y + lm[TIP_INDEX].y) / 2)   // pinch point
           const handSize = Math.max(0.02, Math.hypot(lm[WRIST].x - lm[MID_MCP].x, lm[WRIST].y - lm[MID_MCP].y))
           const pinch = Math.hypot(lm[TIP_THUMB].x - lm[TIP_INDEX].x, lm[TIP_THUMB].y - lm[TIP_INDEX].y) / handSize
           const press = clamp(0, 1, (0.75 - pinch) / 0.5)
-          const rawX = (1 - cx) * overlay.width, rawY = cy * overlay.height
+          // INDEX FINGERTIP = the precise sculpting point (smoothed in screen space).
+          const rawX = (1 - lm[TIP_INDEX].x) * overlay.width, rawY = lm[TIP_INDEX].y * overlay.height
           const sm = euro2(i === 0 ? euroA : euroB, rawX, rawY, dt)
-          const g = clamp(0, 1, (sBase.y - sm.y) / spanY)
-          const ring = clamp(0, NR - 1, Math.round(g * (NR - 1)))
-          const rad = Math.abs(sm.x - axisX) / pxU
-          contacts.push({ rad, ring, press, sx: sm.x, sy: sm.y, inner: false })
+          const ndcX = (sm.x / overlay.width) * 2 - 1, ndcY = -((sm.y / overlay.height) * 2 - 1)
+          const m = mapFinger(ndcX, ndcY)
+          if (!m) continue
+          contacts.push({ rad: m.rad, ring: m.ring, press, sx: sm.x, sy: sm.y, inner: false })
         }
+        if (!hands.length) skelHands = []
         if (contacts.length >= 2) { const mn = contacts.reduce((a, b) => (a.rad < b.rad ? a : b)); mn.inner = true }
       }
       if (newFrame) applyTool(contacts, p, dt)
@@ -327,17 +349,25 @@ export function PotteryStudio() {
       octx.clearRect(0, 0, overlay.width, overlay.height)
       if (p.showGuides) {
         octx.strokeStyle = 'rgba(0,224,192,0.35)'; octx.lineWidth = 1.5; octx.setLineDash([6, 6])
-        octx.beginPath(); octx.moveTo(axisX, sTop.y); octx.lineTo(axisX, sBase.y); octx.stroke(); octx.setLineDash([])
+        octx.beginPath(); octx.moveTo(sTop.x, sTop.y); octx.lineTo(sBase.x, sBase.y); octx.stroke(); octx.setLineDash([])
         octx.fillStyle = 'rgba(0,224,192,0.6)'; octx.font = '11px system-ui'; octx.textAlign = 'center'
-        octx.fillText('axe du tour', axisX, sTop.y - 8)
+        octx.fillText('axe du tour', sTop.x, sTop.y - 8)
+      }
+      // Hand skeleton (both hands) — see exactly where your fingers are.
+      if (p.showSkeleton) {
+        octx.lineWidth = 2; octx.strokeStyle = 'rgba(255,255,255,0.4)'
+        for (const hnd of skelHands) {
+          for (const chain of FINGER_CHAINS) { octx.beginPath(); chain.forEach((idx, k) => { const pt = hnd[idx]; if (!pt) return; if (k === 0) octx.moveTo(pt.x, pt.y); else octx.lineTo(pt.x, pt.y) }); octx.stroke() }
+          for (const pt of hnd) { octx.beginPath(); octx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2); octx.fillStyle = 'rgba(0,224,192,0.55)'; octx.fill() }
+        }
       }
       for (const c of hud.contacts) {
         const on = c.press > 0.15
-        octx.beginPath(); octx.arc(c.sx, c.sy, on ? 16 : 9, 0, Math.PI * 2)
-        octx.fillStyle = on ? (c.inner ? 'rgba(255,180,0,0.55)' : 'rgba(0,224,192,0.55)') : 'rgba(255,255,255,0.4)'
+        octx.beginPath(); octx.arc(c.sx, c.sy, on ? 14 : 8, 0, Math.PI * 2)
+        octx.fillStyle = on ? (c.inner ? 'rgba(255,180,0,0.6)' : 'rgba(0,224,192,0.6)') : 'rgba(255,255,255,0.4)'
         octx.globalAlpha = 0.85; octx.fill(); octx.globalAlpha = 1
-        octx.lineWidth = 2.5; octx.strokeStyle = c.inner ? '#ffb400' : '#00e0c0'; octx.stroke()
-        if (on) { octx.fillStyle = '#fff'; octx.font = 'bold 11px system-ui'; octx.textAlign = 'center'; octx.fillText(c.inner ? 'INT.' : 'EXT.', c.sx, c.sy - 22) }
+        octx.lineWidth = 3; octx.strokeStyle = c.inner ? '#ffb400' : '#00e0c0'; octx.stroke()
+        if (on) { octx.fillStyle = '#fff'; octx.font = 'bold 11px system-ui'; octx.textAlign = 'center'; octx.fillText(c.inner ? 'INT.' : 'EXT.', c.sx, c.sy - 20) }
       }
       if (recActive && recCtx && recCanvas) {
         const w = recCanvas.width, h = recCanvas.height
@@ -394,7 +424,7 @@ export function PotteryStudio() {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Link to="/" style={{ color: '#aaa', fontSize: 12, textDecoration: 'none' }}>← Studio</Link><button onClick={() => setPanelOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 16 }}>«</button></div>
           </div>
           <div style={{ color: error ? '#ff6b6b' : '#9a8a78', fontSize: 11, marginBottom: 10, lineHeight: 1.3 }}>{error ?? status}</div>
-          <div style={{ fontSize: 10, color: '#ffcf9a', marginBottom: 12, lineHeight: 1.35, background: 'rgba(255,180,0,0.08)', padding: 7, borderRadius: 6 }}>✋ Pince pouce+index pour <b>toucher</b> l'argile (ouvre la main pour repositionner). Deux mains = paroi <b>int.</b> (proche de l'axe) + <b>ext.</b></div>
+          <div style={{ fontSize: 10, color: '#ffcf9a', marginBottom: 12, lineHeight: 1.35, background: 'rgba(255,180,0,0.08)', padding: 7, borderRadius: 6 }}>☝️ Le <b>bout de l'index</b> est l'outil. Pince pouce+index pour <b>presser</b> l'argile (ouvre la main pour repositionner). Deux mains = paroi <b>int.</b> (proche de l'axe) + <b>ext.</b> · 🖱️ glisse pour <b>tourner la vue</b> — l'angle change la sculpture.</div>
 
           <Field label="Outil de tournage">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
@@ -417,13 +447,14 @@ export function PotteryStudio() {
           <Field label="Couleur de l'argile"><div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="color" value={clayColor} onChange={(e) => setClayColor(e.target.value)} style={{ width: 40, height: 30, border: 'none', background: 'none', cursor: 'pointer' }} /><div style={{ display: 'flex', gap: 5 }}>{['#b5651d', '#c8794a', '#8a5a3c', '#d9c7a3', '#3a3f4a', '#e8e2d6'].map((h) => <button key={h} onClick={() => setClayColor(h)} style={{ width: 22, height: 22, borderRadius: 5, background: h, border: '1px solid rgba(255,255,255,0.25)', cursor: 'pointer' }} />)}</div></div></Field>
           <label style={chkRow}><input type="checkbox" checked={wireframe} onChange={(e) => setWireframe(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> 🕸️ Fil de fer (maillage)</label>
           <label style={chkRow}><input type="checkbox" checked={showGuides} onChange={(e) => setShowGuides(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> 📐 Repères (axe)</label>
+          <label style={chkRow}><input type="checkbox" checked={showSkeleton} onChange={(e) => setShowSkeleton(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> ✋ Squelette des mains</label>
           <Field label="Fond"><select value={bgMode} onChange={(e) => setBgMode(e.target.value as 'webcam' | 'black')} style={selStyle}><option value="webcam">📷 Webcam</option><option value="black">⬛ Atelier sombre</option></select></Field>
 
           <button onClick={() => { resetRef.current = true }} style={{ ...selStyle, marginBottom: 8, marginTop: 6, background: 'rgba(255,150,60,0.18)', borderColor: 'rgba(255,150,60,0.45)' }}>♻️ Nouvelle motte d'argile</button>
           <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '10px 0 6px' }}>Export</div>
           <button onClick={() => { recording ? recCtl.current?.stop() : recCtl.current?.start() }} style={{ ...selStyle, marginBottom: 8, background: recording ? 'rgba(255,40,60,0.35)' : 'rgba(255,255,255,0.1)', borderColor: recording ? '#ff2840' : 'rgba(255,255,255,0.2)' }}>{recording ? '⏹ Arrêter l\'enregistrement' : '🔴 Enregistrer une vidéo'}</button>
           <div style={{ display: 'flex', gap: 8 }}><button onClick={exportPng} style={{ ...selStyle, flex: 1 }}>📸 PNG</button><button onClick={() => { exportRef.current = 'glb' }} style={{ ...selStyle, flex: 1 }}>🏺 .glb</button><button onClick={() => { exportRef.current = 'stl' }} style={{ ...selStyle, flex: 1 }} title="Vase étanche pour impression 3D">🖨️ .stl</button></div>
-          <p style={{ color: '#7a6a58', fontSize: 10, marginTop: 10, marginBottom: 0, lineHeight: 1.4 }}>Souris : glisser = tourner la vue · molette = zoom. Le tournage se fait de face.</p>
+          <p style={{ color: '#7a6a58', fontSize: 10, marginTop: 10, marginBottom: 0, lineHeight: 1.4 }}>Souris : glisser = orbiter (azimut + inclinaison) · molette = zoom. Incliner la vue change l'impact des doigts sur l'argile.</p>
         </div>
       )}
     </div>
