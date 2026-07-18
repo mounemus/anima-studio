@@ -3,7 +3,7 @@
  *  "génération vide / mesh fractionné" bug deterministically, off the browser. */
 import { describe, it, expect } from 'vitest'
 import { evalGraph } from './graph'
-import { weld } from './mesh'
+import { weld, repair, analyze } from './mesh'
 import { PRESETS } from './presets'
 
 function inspect(geo: ReturnType<typeof evalGraph>) {
@@ -42,5 +42,26 @@ describe('weld → smooth, indexed, non-empty (the display path in the worker)',
       // Welding a non-indexed march output should actually merge vertices (real smoothing).
       if (!geo.getIndex()) expect(w.getAttribute('position').count, `${p.name}: no vertices merged (still faceted)`).toBeLessThan(before)
     })
+  }
+})
+
+describe('repair → watertight, NaN-free (the export "Réparer & lisser" path)', () => {
+  for (const p of PRESETS) {
+    it(`${p.name}: repair closes open edges & stays valid`, () => {
+      const geo = evalGraph(p.build(), 'hd')!
+      const before = analyze(geo).openEdges
+      const fixed = repair(geo, { smooth: 1 })
+      const after = analyze(fixed)
+      // NaN-free after repair + smoothing
+      const arr = fixed.getAttribute('position').array as ArrayLike<number>
+      let nan = 0; for (let i = 0; i < arr.length; i++) if (!Number.isFinite(arr[i])) nan++
+      expect(nan, `${p.name}: repair produced ${nan} NaN`).toBe(0)
+      expect(after.tris, `${p.name}: repair emptied the mesh`).toBeGreaterThan(50)
+      // Repair must massively reduce open edges. Solid/relief meshes reach a fully
+      // watertight 0; self-intersecting TPMS (gyroid/voronoi) leave ≤4 non-manifold
+      // edges that slicers auto-fix. So: never increase, and land at ≤4.
+      if (before > 0) expect(after.openEdges, `${p.name}: openEdges ${before} → ${after.openEdges} (no improvement)`).toBeLessThan(before)
+      expect(after.openEdges, `${p.name}: ${after.openEdges} open edges remain (from ${before})`).toBeLessThanOrEqual(4)
+    }, 20000)
   }
 })

@@ -16,7 +16,7 @@ import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { NODE_DEFS, NODE_CATS, evalGraph, makeNode, uid, type Graph, type GNode } from './graph'
-import { analyze, type MeshStats } from './mesh'
+import { analyze, repair, type MeshStats } from './mesh'
 import { PRESETS } from './presets'
 import { textToGraph, llmToGraph, applyCommand, QUICK_COMMANDS, EXAMPLE_PROMPTS, type Built } from './assistant'
 import { importFile } from './imports'
@@ -50,6 +50,7 @@ export function MorphogenesisStudio() {
   const [status, setStatus] = useState('Prêt.')
   const [variants, setVariants] = useState<{ graph: Graph; thumb: string }[]>([])
   const [addMenu, setAddMenu] = useState(false)
+  const [repairExport, setRepairExport] = useState(true)
   const [aiInput, setAiInput] = useState('')
   const [aiLog, setAiLog] = useState<{ role: 'you' | 'ai'; text: string }[]>([{ role: 'ai', text: 'Décris une forme et je construis le graphe. Ex : « coquille spiralée translucide à nervures fractales ».' }])
 
@@ -157,7 +158,7 @@ export function MorphogenesisStudio() {
   const computeHD = () => { setStatus('Calcul haute résolution…'); requestEval('hd') }
 
   // export (needs the current viewport mesh geometry → recompute HD)
-  useEffect(() => { if (!exportRef.current) return; const fmt = exportRef.current; exportRef.current = null; const geo = evalGraph(graphRef.current, 'hd'); if (!geo) { setStatus('Rien à exporter.'); return }; const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ side: THREE.DoubleSide })); if (fmt === 'stl') dl(new Blob([new STLExporter().parse(m, { binary: false })], { type: 'model/stl' }), 'morpho.stl'); else if (fmt === 'obj') dl(new Blob([new OBJExporter().parse(m)], { type: 'text/plain' }), 'morpho.obj'); else if (fmt === 'glb') new GLTFExporter().parse(m, (r) => dl(new Blob([r as ArrayBuffer], { type: 'model/gltf-binary' }), 'morpho.glb'), () => setStatus('Échec GLB'), { binary: true }); setStatus(`Export ${fmt.toUpperCase()} ✓`) })
+  useEffect(() => { if (!exportRef.current) return; const fmt = exportRef.current; exportRef.current = null; let geo = evalGraph(graphRef.current, 'hd'); if (!geo) { setStatus('Rien à exporter.'); return }; let fixNote = ''; if (repairExport) { const before = analyze(geo).openEdges; geo = repair(geo, { smooth: 1 }); const after = analyze(geo).openEdges; fixNote = ` · maillage réparé (${before}→${after} bords ouverts)` }; const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ side: THREE.DoubleSide })); if (fmt === 'stl') dl(new Blob([new STLExporter().parse(m, { binary: false })], { type: 'model/stl' }), 'morpho.stl'); else if (fmt === 'obj') dl(new Blob([new OBJExporter().parse(m)], { type: 'text/plain' }), 'morpho.obj'); else if (fmt === 'glb') new GLTFExporter().parse(m, (r) => dl(new Blob([r as ArrayBuffer], { type: 'model/gltf-binary' }), 'morpho.glb'), () => setStatus('Échec GLB'), { binary: true }); setStatus(`Export ${fmt.toUpperCase()} ✓${fixNote}`) })
 
   // ── Morphospace : 8 mutated variants with thumbnails ──
   const mutateGraph = (g: Graph, amount: number): Graph => {
@@ -212,6 +213,7 @@ export function MorphogenesisStudio() {
         <button onClick={computeHD} style={{ ...btn, borderColor: '#4fd1a5' }}>⬆ HD</button>
         <input ref={importInputRef} type="file" accept=".stl,.obj,.svg" onChange={onImport} style={{ display: 'none' }} />
         <button onClick={() => importInputRef.current?.click()} style={{ ...btn, borderColor: '#e6e05a' }} title="Importer un maillage STL/OBJ ou un contour SVG">⬇ Import</button>
+        <button onClick={() => setRepairExport((v) => !v)} title="Avant export : souder les sommets, boucher les trous (maillage étanche imprimable) et lisser la surface" style={{ ...btn, borderColor: repairExport ? '#4fd1a5' : '#2a3140', background: repairExport ? '#16241f' : '#161a22', color: repairExport ? '#7ee7c0' : '#8a93a5' }}>{repairExport ? '🔧 Réparer & lisser ✓' : '🔧 Réparer & lisser'}</button>
         <button onClick={() => { exportRef.current = 'stl'; setGraph((g) => ({ ...g })) }} style={btn}>STL</button>
         <button onClick={() => { exportRef.current = 'glb'; setGraph((g) => ({ ...g })) }} style={btn}>GLB</button>
         <button onClick={() => { exportRef.current = 'obj'; setGraph((g) => ({ ...g })) }} style={btn}>OBJ</button>

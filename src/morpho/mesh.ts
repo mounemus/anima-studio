@@ -25,8 +25,9 @@ export function laplacianSmooth(g: THREE.BufferGeometry, iterations: number, lam
   const idx = geo.getIndex()!.array as ArrayLike<number>
   const pos = geo.getAttribute('position').array as Float32Array
   const V = geo.getAttribute('position').count
-  const adj: number[][] = Array.from({ length: V }, () => [])
-  for (let i = 0; i < idx.length; i += 3) { const t = [idx[i], idx[i + 1], idx[i + 2]]; for (let j = 0; j < 3; j++) { const a = t[j], b = t[(j + 1) % 3]; if (!adj[a].includes(b)) adj[a].push(b); if (!adj[b].includes(a)) adj[b].push(a) } }
+  const adjS: Set<number>[] = Array.from({ length: V }, () => new Set<number>())
+  for (let i = 0; i < idx.length; i += 3) { const t = [idx[i], idx[i + 1], idx[i + 2]]; for (let j = 0; j < 3; j++) { const a = t[j], b = t[(j + 1) % 3]; adjS[a].add(b); adjS[b].add(a) } }
+  const adj: number[][] = adjS.map((s) => Array.from(s))
   for (let it = 0; it < iterations; it++) {
     const src = pos.slice()
     for (let v = 0; v < V; v++) { const nb = adj[v]; if (!nb.length) continue; let ax = 0, ay = 0, az = 0; for (const n of nb) { ax += src[n * 3]; ay += src[n * 3 + 1]; az += src[n * 3 + 2] }; ax /= nb.length; ay /= nb.length; az /= nb.length; pos[v * 3] += (ax - src[v * 3]) * lambda; pos[v * 3 + 1] += (ay - src[v * 3 + 1]) * lambda; pos[v * 3 + 2] += (az - src[v * 3 + 2]) * lambda }
@@ -103,4 +104,67 @@ export function analyze(g: THREE.BufferGeometry): MeshStats {
   }
   let openEdges = 0; for (const n of edges.values()) if (n !== 2) openEdges++
   return { tris, verts: geo.getAttribute('position').count, size: [size.x, size.y, size.z], volume: Math.abs(vol), area, watertight: openEdges === 0, openEdges }
+}
+
+/** Drop degenerate triangles (repeated vertex, or ~zero area). */
+function dropDegenerate(idx: ArrayLike<number>, pos: ArrayLike<number>): number[] {
+  const out: number[] = []
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i], b = idx[i + 1], c = idx[i + 2]
+    if (a === b || b === c || a === c) continue
+    const ax = pos[a * 3], ay = pos[a * 3 + 1], az = pos[a * 3 + 2], bx = pos[b * 3], by = pos[b * 3 + 1], bz = pos[b * 3 + 2], cx = pos[c * 3], cy = pos[c * 3 + 1], cz = pos[c * 3 + 2]
+    const ux = bx - ax, uy = by - ay, uz = bz - az, vx = cx - ax, vy = cy - ay, vz = cz - az
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx
+    if (nx * nx + ny * ny + nz * nz < 1e-20) continue
+    out.push(a, b, c)
+  }
+  return out
+}
+
+/** Cap open boundary loops with a centroid fan → closes holes / open edges left by the
+ *  marching-cubes boundary clip, making the mesh watertight & printable. Best-effort:
+ *  walks single-use (boundary) half-edges into loops and fills each with a triangle fan. */
+export function fillHoles(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  const geo = g.getIndex() ? g : weld(g)
+  const idx = geo.getIndex()!.array as ArrayLike<number>
+  const pos: number[] = Array.from(geo.getAttribute('position').array as Float32Array)
+  const ek = (p: number, q: number) => (p < q ? `${p}_${q}` : `${q}_${p}`)
+  const count = new Map<string, number>()
+  for (let i = 0; i < idx.length; i += 3) { const t = [idx[i], idx[i + 1], idx[i + 2]]; for (let j = 0; j < 3; j++) { const k = ek(t[j], t[(j + 1) % 3]); count.set(k, (count.get(k) ?? 0) + 1) } }
+  // Boundary directed half-edges (undirected edge used exactly once), kept as a
+  // consumable multimap start → [ends] so non-manifold boundary vertices (several
+  // boundary edges meeting at one vertex) each get walked instead of overwritten.
+  const adj = new Map<number, number[]>()
+  let nDir = 0
+  for (let i = 0; i < idx.length; i += 3) { const t = [idx[i], idx[i + 1], idx[i + 2]]; for (let j = 0; j < 3; j++) { const a = t[j], b = t[(j + 1) % 3]; if ((count.get(ek(a, b)) ?? 0) === 1) { (adj.get(a) ?? adj.set(a, []).get(a)!).push(b); nDir++ } } }
+  const ni: number[] = Array.from(idx)
+  const cap = (loop: number[]) => {
+    let cx = 0, cy = 0, cz = 0; for (const lv of loop) { cx += pos[lv * 3]; cy += pos[lv * 3 + 1]; cz += pos[lv * 3 + 2] }
+    const m = pos.length / 3; pos.push(cx / loop.length, cy / loop.length, cz / loop.length)
+    for (let i = 0; i < loop.length; i++) { const a = loop[i], b = loop[(i + 1) % loop.length]; ni.push(b, a, m) }  // winding opposite the boundary edge
+  }
+  for (const s0 of Array.from(adj.keys())) {
+    while ((adj.get(s0)?.length ?? 0) > 0) {
+      const loop: number[] = []; let v = s0, guard = 0, closed = false
+      while (guard++ < nDir + 4) {
+        const outs = adj.get(v); if (!outs || !outs.length) break
+        loop.push(v); v = outs.pop()!
+        if (v === s0) { closed = true; break }
+      }
+      if (closed && loop.length >= 3) cap(loop)   // only cap properly closed cycles → stays watertight
+    }
+  }
+  const out = new THREE.BufferGeometry(); out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); out.setIndex(ni); out.computeVertexNormals()
+  return out
+}
+
+/** One-call mesh repair for 3D printing: weld coincident verts → drop degenerate
+ *  triangles → fill boundary holes (watertight) → optional Laplacian smoothing. */
+export function repair(g: THREE.BufferGeometry, opts: { smooth?: number } = {}): THREE.BufferGeometry {
+  let geo = g.getIndex() ? g.clone() : weld(g)
+  geo.setIndex(dropDegenerate(geo.getIndex()!.array as ArrayLike<number>, geo.getAttribute('position').array as Float32Array))
+  geo = fillHoles(geo)
+  if (opts.smooth && opts.smooth > 0) geo = laplacianSmooth(geo, opts.smooth)
+  geo.computeVertexNormals()
+  return geo
 }
