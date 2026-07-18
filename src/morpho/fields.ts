@@ -42,6 +42,22 @@ export const sdSphere = (r: number): Field => (x, y, z) => Math.hypot(x, y, z) -
 export const sdBox = (bx: number, by: number, bz: number): Field => (x, y, z) => { const qx = Math.abs(x) - bx, qy = Math.abs(y) - by, qz = Math.abs(z) - bz; const ox = Math.max(qx, 0), oy = Math.max(qy, 0), oz = Math.max(qz, 0); return Math.hypot(ox, oy, oz) + Math.min(Math.max(qx, Math.max(qy, qz)), 0) }
 export const sdTorus = (R: number, r: number): Field => (x, y, z) => { const q = Math.hypot(x, z) - R; return Math.hypot(q, y) - r }
 export const sdCylinder = (r: number, h: number): Field => (x, y, z) => { const d = Math.hypot(x, z) - r, dy = Math.abs(y) - h; const ox = Math.max(d, 0), oy = Math.max(dy, 0); return Math.min(Math.max(d, dy), 0) + Math.hypot(ox, oy) }
+export const sdCapsuleY = (h: number, r: number): Field => (x, y, z) => { const yy = Math.max(-h, Math.min(h, y)); return Math.hypot(x, y - yy, z) - r }
+
+// ── Point-set generators (for metaballs) — different distributions → different silhouettes ──
+export type PointShape = 'sphere' | 'column' | 'disc' | 'ring' | 'helix'
+function srng(seed: number) { let s = (seed | 0) || 1; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 } }
+export function shapedPoints(shape: PointShape, n: number, spread: number, seed: number, extra = 0.5): [number, number, number][] {
+  const r = srng(seed), pts: [number, number, number][] = []
+  for (let i = 0; i < n; i++) {
+    if (shape === 'column') { const t = i / Math.max(1, n - 1); const a = r() * Math.PI * 2, rr = (0.15 + r() * 0.35) * spread; pts.push([Math.cos(a) * rr, (t - 0.5) * 2 * (0.6 + extra), Math.sin(a) * rr]) }
+    else if (shape === 'disc') { const a = r() * Math.PI * 2, rr = Math.sqrt(r()) * spread; pts.push([Math.cos(a) * rr, (r() - 0.5) * 0.28, Math.sin(a) * rr]) }
+    else if (shape === 'ring') { const a = (i / n) * Math.PI * 2 + r() * 0.15, rr = spread * (0.85 + r() * 0.2); pts.push([Math.cos(a) * rr, (r() - 0.5) * 0.3 * spread, Math.sin(a) * rr]) }
+    else if (shape === 'helix') { const t = i / Math.max(1, n - 1); const a = t * (2 + extra * 6) * Math.PI * 2, rr = spread * (0.25 + t * 0.75); pts.push([Math.cos(a) * rr, (t - 0.5) * 2 * (0.4 + extra), Math.sin(a) * rr]) }
+    else { const u = r() * 2 - 1, a = r() * Math.PI * 2, rr = Math.cbrt(r()) * spread, ph = Math.acos(u); pts.push([rr * Math.sin(ph) * Math.cos(a), rr * Math.sin(ph) * Math.sin(a), rr * Math.cos(ph)]) }
+  }
+  return pts
+}
 
 // ── TPMS (triply-periodic minimal surfaces) — bounded to a sphere to make a finite object ──
 export const gyroid = (freq: number, thick: number, bound: number): Field => (x, y, z) => { const f = freq; const g = Math.sin(f * x) * Math.cos(f * y) + Math.sin(f * y) * Math.cos(f * z) + Math.sin(f * z) * Math.cos(f * x); const shell = Math.abs(g) - thick; return Math.max(shell, Math.hypot(x, y, z) - bound) }
@@ -70,6 +86,10 @@ export const opScale = (a: Field, s: number): Field => (x, y, z) => a(x / s, y /
 export const opMirrorX = (a: Field): Field => (x, y, z) => a(Math.abs(x), y, z)
 export const opRadial = (a: Field, n: number): Field => (x, y, z) => { const k = Math.max(1, Math.round(n)); const seg = (Math.PI * 2) / k; let ang = Math.atan2(z, x); ang = ang - seg * Math.round(ang / seg); const r = Math.hypot(x, z); return a(r * Math.cos(ang), y, r * Math.sin(ang)) }
 export const opBend = (a: Field, k: number): Field => (x, y, z) => { const c = Math.cos(k * x), s = Math.sin(k * x); return a(x, c * y - s * z, s * y + c * z) }
+// Non-uniform stretch → turns a spherical field into a column / disc / ellipsoid.
+export const opStretch = (a: Field, sx: number, sy: number, sz: number): Field => { const m = Math.min(sx, sy, sz); return (x, y, z) => a(x / sx, y / sy, z / sz) * m }
+// Relief : keep only a slab (thin in Z) → the field reads as a wall panel, not a ball.
+export const fReliefSlab = (a: Field, thick: number, bound: number): Field => fIntersect(a, sdBox(bound, bound, thick), 0.03)
 
 // Phyllotaxis point set (golden-angle spiral on a sphere/disc) — for Fractal Bloom / metaballs.
 export function phyllotaxis(n: number, spread: number, rise: number): [number, number, number][] {

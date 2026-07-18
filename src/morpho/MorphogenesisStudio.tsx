@@ -17,7 +17,7 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { NODE_DEFS, NODE_CATS, evalGraph, makeNode, uid, type Graph, type GNode } from './graph'
 import { analyze, type MeshStats } from './mesh'
 import { PRESETS } from './presets'
-import { textToGraph, applyCommand, QUICK_COMMANDS, EXAMPLE_PROMPTS, type Built } from './assistant'
+import { textToGraph, llmToGraph, applyCommand, QUICK_COMMANDS, EXAMPLE_PROMPTS, type Built } from './assistant'
 
 const clamp = (a: number, b: number, v: number) => Math.max(a, Math.min(b, v))
 type MatKind = 'clay' | 'matte' | 'chrome' | 'gloss' | 'translucent'
@@ -145,9 +145,16 @@ export function MorphogenesisStudio() {
   const mutate = () => pushHist(mutateGraph(graphRef.current, 0.3))
 
   const loadPreset = (i: number) => { pushHist(PRESETS[i].build()); setSelId(null); setVariants([]) }
-  const runBuilt = (b: Built, youText: string) => { pushHist(b.graph); setSelId(null); setVariants([]); if (b.material) setMaterial(b.material); setAiLog((l) => [...l, { role: 'you' as const, text: youText }, { role: 'ai' as const, text: b.explain.join(' ') }].slice(-10)) }
-  const aiGenerate = (prompt: string) => { const p = prompt.trim(); if (!p) return; runBuilt(textToGraph(p), p); setAiInput('') }
-  const aiCommand = (cmd: string) => runBuilt(applyCommand(cmd, graphRef.current), cmd)
+  const applyBuilt = (b: Built) => { pushHist(b.graph); setSelId(null); setVariants([]); if (b.material) setMaterial(b.material) }
+  const aiGenerate = async (prompt: string) => {
+    const p = prompt.trim(); if (!p) return; setAiInput('')
+    setAiLog((l) => [...l, { role: 'you' as const, text: p }, { role: 'ai' as const, text: '✦ L’IA construit le graphe…' }].slice(-12))
+    let b: Built, note = ''
+    try { b = await llmToGraph(p) } catch { const lb = textToGraph(p); b = lb; note = '(local) ' }   // fallback déterministe hors-ligne / sans clé
+    applyBuilt(b)
+    setAiLog((l) => { const c = [...l]; c[c.length - 1] = { role: 'ai', text: note + b.explain.join(' ') }; return c })
+  }
+  const aiCommand = (cmd: string) => { const b = applyCommand(cmd, graphRef.current); applyBuilt(b); setAiLog((l) => [...l, { role: 'you' as const, text: cmd }, { role: 'ai' as const, text: b.explain.join(' ') }].slice(-12)) }
   const selNode = graph.nodes.find((n) => n.id === selId) ?? null
   const setNodeParam = (id: string, key: string, val: number | string) => { setGraph((g) => ({ ...g, nodes: g.nodes.map((n) => (n.id === id ? { ...n, params: { ...n.params, [key]: val } } : n)) })) }
 
