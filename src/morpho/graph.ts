@@ -1,0 +1,76 @@
+/**
+ * Node-graph engine for MORPHOGENESIS STUDIO. Deterministic, typed, topologically
+ * evaluated. Most nodes pass around a scalar FIELD ; a Surface node meshes it via
+ * marching cubes ; mesh nodes refine it. Same graph + same seeds → same result.
+ */
+import * as THREE from 'three'
+import type { Field } from './marching'
+import { marchingCubes } from './marching'
+import { laplacianSmooth } from './mesh'
+import * as F from './fields'
+
+export type SockType = 'field' | 'mesh' | 'points' | 'number'
+export interface Param { key: string; label: string; type: 'num' | 'select' | 'seed'; min?: number; max?: number; step?: number; def: number | string; options?: { v: string; l: string }[] }
+export interface NodeDef { type: string; title: string; cat: string; color: string; inputs: { name: string; type: SockType }[]; outputs: { name: string; type: SockType }[]; params: Param[]; eval: (ins: unknown[], p: Record<string, number | string>, q: Quality) => unknown }
+export interface GNode { id: string; type: string; x: number; y: number; params: Record<string, number | string> }
+export interface GEdge { id: string; from: string; fromIdx: number; to: string; toIdx: number }
+export interface Graph { nodes: GNode[]; edges: GEdge[] }
+export type Quality = 'proxy' | 'hd'
+
+const seeded = (s: number) => { let x = (s | 0) || 1; return () => { x = (x * 1664525 + 1013904223) >>> 0; return x / 4294967296 } }
+const num = (v: unknown, d = 0) => (typeof v === 'number' ? v : d)
+const asField = (v: unknown): Field | null => (typeof v === 'function' ? (v as Field) : null)
+const fallback: Field = F.sdSphere(0.85)
+
+export const NODE_DEFS: Record<string, NodeDef> = {
+  sphere: { type: 'sphere', title: 'Sphère', cat: 'Primitive', color: '#5aa9e6', inputs: [], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'r', label: 'Rayon', type: 'num', min: 0.1, max: 1.4, step: 0.02, def: 0.85 }], eval: (_i, p) => F.sdSphere(num(p.r, 0.85)) },
+  box: { type: 'box', title: 'Cube', cat: 'Primitive', color: '#5aa9e6', inputs: [], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 's', label: 'Taille', type: 'num', min: 0.1, max: 1.2, step: 0.02, def: 0.7 }], eval: (_i, p) => F.sdBox(num(p.s, 0.7), num(p.s, 0.7), num(p.s, 0.7)) },
+  torus: { type: 'torus', title: 'Tore', cat: 'Primitive', color: '#5aa9e6', inputs: [], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'R', label: 'Grand rayon', type: 'num', min: 0.2, max: 1, step: 0.02, def: 0.65 }, { key: 'r', label: 'Petit rayon', type: 'num', min: 0.05, max: 0.5, step: 0.01, def: 0.25 }], eval: (_i, p) => F.sdTorus(num(p.R, 0.65), num(p.r, 0.25)) },
+  gyroid: { type: 'gyroid', title: 'Gyroïde (TPMS)', cat: 'Surface', color: '#8b6df0', inputs: [], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'freq', label: 'Fréquence', type: 'num', min: 2, max: 16, step: 0.5, def: 7 }, { key: 'thick', label: 'Épaisseur', type: 'num', min: 0.05, max: 1.2, step: 0.05, def: 0.5 }, { key: 'bound', label: 'Rayon', type: 'num', min: 0.4, max: 1.3, step: 0.05, def: 1 }], eval: (_i, p) => F.gyroid(num(p.freq, 7), num(p.thick, 0.5), num(p.bound, 1)) },
+  schwarz: { type: 'schwarz', title: 'Schwarz-P (TPMS)', cat: 'Surface', color: '#8b6df0', inputs: [], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'freq', label: 'Fréquence', type: 'num', min: 2, max: 16, step: 0.5, def: 6 }, { key: 'thick', label: 'Épaisseur', type: 'num', min: 0.05, max: 1.5, step: 0.05, def: 0.6 }, { key: 'bound', label: 'Rayon', type: 'num', min: 0.4, max: 1.3, step: 0.05, def: 1 }], eval: (_i, p) => F.schwarzP(num(p.freq, 6), num(p.thick, 0.6), num(p.bound, 1)) },
+  voronoi: { type: 'voronoi', title: 'Voronoï (cellules)', cat: 'Cellulaire', color: '#e6a15a', inputs: [], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'scale', label: 'Densité', type: 'num', min: 1.5, max: 9, step: 0.5, def: 4 }, { key: 'thick', label: 'Parois', type: 'num', min: 0.02, max: 0.3, step: 0.01, def: 0.08 }, { key: 'bound', label: 'Rayon', type: 'num', min: 0.4, max: 1.2, step: 0.05, def: 0.95 }], eval: (_i, p) => F.voronoiWalls(num(p.scale, 4), num(p.thick, 0.08), num(p.bound, 0.95)) },
+  metaballs: { type: 'metaballs', title: 'Metaballs', cat: 'Organique', color: '#4fd1a5', inputs: [], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'count', label: 'Nombre', type: 'num', min: 2, max: 40, step: 1, def: 12 }, { key: 'radius', label: 'Rayon', type: 'num', min: 0.1, max: 0.6, step: 0.02, def: 0.3 }, { key: 'spread', label: 'Étalement', type: 'num', min: 0.1, max: 1, step: 0.02, def: 0.55 }, { key: 'seed', label: 'Graine', type: 'seed', def: 1 }], eval: (_i, p) => { const rng = seeded(num(p.seed, 1)); const n = Math.round(num(p.count, 12)), sp = num(p.spread, 0.55), pts: [number, number, number][] = []; for (let i = 0; i < n; i++) { const u = rng() * 2 - 1, a = rng() * Math.PI * 2, r = Math.cbrt(rng()) * sp, ph = Math.acos(u); pts.push([r * Math.sin(ph) * Math.cos(a), r * Math.sin(ph) * Math.sin(a), r * Math.cos(ph)]) } return F.metaballs(pts, num(p.radius, 0.3)) } },
+  bloom: { type: 'bloom', title: 'Bloom (phyllotaxie)', cat: 'Organique', color: '#4fd1a5', inputs: [], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'count', label: 'Éléments', type: 'num', min: 8, max: 120, step: 1, def: 48 }, { key: 'radius', label: 'Rayon', type: 'num', min: 0.05, max: 0.3, step: 0.01, def: 0.14 }, { key: 'spread', label: 'Étalement', type: 'num', min: 0.3, max: 1.1, step: 0.02, def: 0.8 }, { key: 'rise', label: 'Hauteur', type: 'num', min: 0, max: 1, step: 0.02, def: 0.35 }], eval: (_i, p) => F.metaballs(F.phyllotaxis(Math.round(num(p.count, 48)), num(p.spread, 0.8), num(p.rise, 0.35)), num(p.radius, 0.14)) },
+  displace: { type: 'displace', title: 'Déplacer (bruit)', cat: 'Champ', color: '#c77dff', inputs: [{ name: 'F', type: 'field' }], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'type', label: 'Type de bruit', type: 'select', def: 'fbm', options: [{ v: 'value', l: 'Doux' }, { v: 'fbm', l: 'Fractal fBm' }, { v: 'ridged', l: 'Crêtes' }, { v: 'turbulence', l: 'Turbulence' }, { v: 'worley', l: 'Cellulaire' }] }, { key: 'amp', label: 'Amplitude', type: 'num', min: 0, max: 0.5, step: 0.01, def: 0.12 }, { key: 'freq', label: 'Fréquence', type: 'num', min: 0.5, max: 8, step: 0.25, def: 3 }], eval: (i, p) => F.fDisplace(asField(i[0]) ?? fallback, (p.type as F.NoiseType) ?? 'fbm', num(p.amp, 0.12), num(p.freq, 3)) },
+  boolean: { type: 'boolean', title: 'Booléen', cat: 'Champ', color: '#c77dff', inputs: [{ name: 'A', type: 'field' }, { name: 'B', type: 'field' }], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'op', label: 'Opération', type: 'select', def: 'union', options: [{ v: 'union', l: 'Union' }, { v: 'subtract', l: 'Soustraction' }, { v: 'intersect', l: 'Intersection' }] }, { key: 'k', label: 'Fondu', type: 'num', min: 0, max: 0.6, step: 0.01, def: 0.1 }], eval: (i, p) => { const a = asField(i[0]) ?? fallback, b = asField(i[1]) ?? fallback, k = num(p.k, 0.1); return p.op === 'subtract' ? F.fSubtract(a, b, k) : p.op === 'intersect' ? F.fIntersect(a, b, k) : F.fUnion(a, b, k) } },
+  shell: { type: 'shell', title: 'Coque (creuser)', cat: 'Champ', color: '#c77dff', inputs: [{ name: 'F', type: 'field' }], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 't', label: 'Épaisseur', type: 'num', min: 0.02, max: 0.4, step: 0.01, def: 0.08 }], eval: (i, p) => F.fShell(asField(i[0]) ?? fallback, num(p.t, 0.08)) },
+  twist: { type: 'twist', title: 'Torsion', cat: 'Transformation', color: '#f06d9b', inputs: [{ name: 'F', type: 'field' }], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'k', label: 'Angle', type: 'num', min: -4, max: 4, step: 0.05, def: 1.5 }], eval: (i, p) => F.opTwist(asField(i[0]) ?? fallback, num(p.k, 1.5)) },
+  taper: { type: 'taper', title: 'Effilé', cat: 'Transformation', color: '#f06d9b', inputs: [{ name: 'F', type: 'field' }], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'k', label: 'Effilé', type: 'num', min: -1, max: 1, step: 0.02, def: 0.4 }], eval: (i, p) => F.opTaper(asField(i[0]) ?? fallback, num(p.k, 0.4)) },
+  radial: { type: 'radial', title: 'Symétrie radiale', cat: 'Transformation', color: '#f06d9b', inputs: [{ name: 'F', type: 'field' }], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'n', label: 'Branches', type: 'num', min: 1, max: 12, step: 1, def: 5 }], eval: (i, p) => F.opRadial(asField(i[0]) ?? fallback, num(p.n, 5)) },
+  mirror: { type: 'mirror', title: 'Miroir (bilatéral)', cat: 'Transformation', color: '#f06d9b', inputs: [{ name: 'F', type: 'field' }], outputs: [{ name: 'F', type: 'field' }], params: [], eval: (i) => F.opMirrorX(asField(i[0]) ?? fallback) },
+  surface: { type: 'surface', title: 'Surface (marching cubes)', cat: 'Maillage', color: '#f2c14e', inputs: [{ name: 'F', type: 'field' }], outputs: [{ name: 'M', type: 'mesh' }], params: [{ key: 'res', label: 'Résolution', type: 'num', min: 24, max: 140, step: 4, def: 72 }, { key: 'iso', label: 'Niveau', type: 'num', min: -0.3, max: 0.3, step: 0.01, def: 0 }, { key: 'bound', label: 'Cadre', type: 'num', min: 0.8, max: 1.6, step: 0.05, def: 1.2 }], eval: (i, p, q) => { const f = asField(i[0]) ?? fallback; const res = q === 'proxy' ? Math.min(44, num(p.res, 72)) : num(p.res, 72); return marchingCubes(f, res, num(p.bound, 1.2), num(p.iso, 0)) } },
+  smooth: { type: 'smooth', title: 'Lisser', cat: 'Maillage', color: '#f2c14e', inputs: [{ name: 'M', type: 'mesh' }], outputs: [{ name: 'M', type: 'mesh' }], params: [{ key: 'iter', label: 'Passes', type: 'num', min: 0, max: 8, step: 1, def: 2 }], eval: (i, p) => { const m = i[0] as THREE.BufferGeometry | undefined; return m ? laplacianSmooth(m, Math.round(num(p.iter, 2))) : undefined } },
+  output: { type: 'output', title: 'Sortie', cat: 'Sortie', color: '#8be9a0', inputs: [{ name: 'M', type: 'mesh' }], outputs: [], params: [], eval: (i) => i[0] },
+}
+
+export const NODE_CATS = ['Primitive', 'Surface', 'Cellulaire', 'Organique', 'Champ', 'Transformation', 'Maillage', 'Sortie']
+
+/** Topologically evaluate the graph → the mesh feeding the Output node (or null). */
+export function evalGraph(graph: Graph, quality: Quality): THREE.BufferGeometry | null {
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]))
+  const memo = new Map<string, unknown[]>()
+  const visiting = new Set<string>()
+  const incoming = (id: string, inIdx: number) => graph.edges.find((e) => e.to === id && e.toIdx === inIdx)
+  const evalNode = (id: string): unknown[] => {
+    if (memo.has(id)) return memo.get(id)!
+    if (visiting.has(id)) return []   // cycle guard
+    visiting.add(id)
+    const node = byId.get(id); if (!node) return []
+    const def = NODE_DEFS[node.type]; if (!def) return []
+    const ins = def.inputs.map((_inp, idx) => { const e = incoming(id, idx); if (!e) return undefined; const up = evalNode(e.from); return up[e.fromIdx] })
+    const params: Record<string, number | string> = {}
+    for (const pr of def.params) params[pr.key] = node.params[pr.key] ?? pr.def
+    let out: unknown[]
+    try { const r = def.eval(ins, params, quality); out = def.outputs.length ? [r] : [r] } catch { out = [] }
+    visiting.delete(id); memo.set(id, out)
+    return out
+  }
+  const outNode = graph.nodes.find((n) => n.type === 'output')
+  if (!outNode) return null
+  const r = evalNode(outNode.id)[0]
+  return r instanceof THREE.BufferGeometry ? r : null
+}
+
+let _idc = 0
+export const uid = (p = 'n') => `${p}${Date.now().toString(36)}${(_idc++).toString(36)}`
+export function makeNode(type: string, x: number, y: number): GNode { const def = NODE_DEFS[type]; const params: Record<string, number | string> = {}; for (const pr of def.params) params[pr.key] = pr.def; return { id: uid(), type, x, y, params } }
