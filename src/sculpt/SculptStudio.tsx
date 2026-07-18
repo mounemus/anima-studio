@@ -48,14 +48,38 @@ const MORPH_STYLES: { kind: MorphStyle; label: string }[] = [
   { kind: 'fractal', label: '🧬 Fractal (itéré)' }, { kind: 'grid', label: '🧱 Grille / blocs 3D' },
   { kind: 'radial', label: '🌸 Radial (couronne)' }, { kind: 'spiral', label: '🌀 Spirale' },
 ]
-/** Lightweight 3D value noise for the generative "Bruit" deformer. */
+/** Hash → 0..1 for the procedural noises. */
+function h01(i: number, j: number, k: number): number { let h = (i * 374761393 + j * 668265263 + k * 1274126177) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296 }
+/** Trilinear 3D value noise → [-1,1]. */
 function noise3(x: number, y: number, z: number): number {
-  const hash = (i: number, j: number, k: number) => { let h = (i * 374761393 + j * 668265263 + k * 1274126177) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296 }
   const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z), xf = x - xi, yf = y - yi, zf = z - zi
   const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf), w = zf * zf * (3 - 2 * zf)
-  const lp = (a: number, b: number, t: number) => a + (b - a) * t, c = (dx: number, dy: number, dz: number) => hash(xi + dx, yi + dy, zi + dz) * 2 - 1
+  const lp = (a: number, b: number, t: number) => a + (b - a) * t, c = (dx: number, dy: number, dz: number) => h01(xi + dx, yi + dy, zi + dz) * 2 - 1
   const x00 = lp(c(0, 0, 0), c(1, 0, 0), u), x10 = lp(c(0, 1, 0), c(1, 1, 0), u), x01 = lp(c(0, 0, 1), c(1, 0, 1), u), x11 = lp(c(0, 1, 1), c(1, 1, 1), u)
   return lp(lp(x00, x10, v), lp(x01, x11, v), w)
+}
+/** Cellular / Worley F1 distance → 0..1 (voronoi bumps). */
+function cellular3(x: number, y: number, z: number): number {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z); let md = 9
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+    const cx = xi + dx, cy = yi + dy, cz = zi + dz
+    const fx = cx + h01(cx, cy, cz), fy = cy + h01(cy, cz, cx), fz = cz + h01(cz, cx, cy)
+    const ex = fx - x, ey = fy - y, ez = fz - z, d = ex * ex + ey * ey + ez * ez; if (d < md) md = d
+  }
+  return Math.min(1, Math.sqrt(md))
+}
+type NoiseType = 'value' | 'fbm' | 'ridged' | 'turbulence' | 'cellular'
+const NOISE_TYPES: { kind: NoiseType; label: string }[] = [
+  { kind: 'value', label: '🌫 Doux (value)' }, { kind: 'fbm', label: '🏔 Fractal (fBm)' }, { kind: 'ridged', label: '⛰ Crêtes (ridged)' },
+  { kind: 'turbulence', label: '🌊 Turbulence' }, { kind: 'cellular', label: '🪨 Cellulaire (voronoï)' },
+]
+/** Generative noise field → [-1,1], selectable type. */
+function noiseField(type: NoiseType, x: number, y: number, z: number): number {
+  if (type === 'fbm') { let a = 0.5, f = 1, s = 0; for (let i = 0; i < 4; i++) { s += a * noise3(x * f, y * f, z * f); f *= 2; a *= 0.5 } return Math.max(-1, Math.min(1, s * 1.3)) }
+  if (type === 'ridged') { let a = 0.5, f = 1, s = 0; for (let i = 0; i < 4; i++) { s += a * (1 - 2 * Math.abs(noise3(x * f, y * f, z * f))); f *= 2; a *= 0.5 } return Math.max(-1, Math.min(1, s)) }
+  if (type === 'turbulence') { let a = 0.5, f = 1, s = 0; for (let i = 0; i < 4; i++) { s += a * Math.abs(noise3(x * f, y * f, z * f)); f *= 2; a *= 0.5 } return Math.max(-1, Math.min(1, s * 2 - 0.6)) }
+  if (type === 'cellular') return Math.max(-1, Math.min(1, cellular3(x, y, z) * 2 - 1))
+  return noise3(x, y, z)
 }
 type SurfPattern = 'none' | 'cells' | 'stipple' | 'scales' | 'ridges'
 const SURF_PATTERNS: { kind: SurfPattern; label: string }[] = [
@@ -109,6 +133,7 @@ export function SculptStudio() {
   const [defTaper, setDefTaper] = useState(0)
   const [defNoise, setDefNoise] = useState(0)
   const [noiseScale, setNoiseScale] = useState(3)
+  const [noiseType, setNoiseType] = useState<NoiseType>('value')
   const [handDrive, setHandDrive] = useState(true)
   // render
   const [colorA, setColorA] = useState('#c8794a')
@@ -121,8 +146,8 @@ export function SculptStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, morphStyle, depth, radial, gridN, turns, mirror, twist, spread, childScale, defTwist, defTaper, defNoise, noiseScale, handDrive, colorA, colorB, material, showSkeleton, bgMode })
-  paramsRef.current = { mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, morphStyle, depth, radial, gridN, turns, mirror, twist, spread, childScale, defTwist, defTaper, defNoise, noiseScale, handDrive, colorA, colorB, material, showSkeleton, bgMode }
+  const paramsRef = useRef({ mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, morphStyle, depth, radial, gridN, turns, mirror, twist, spread, childScale, defTwist, defTaper, defNoise, noiseScale, noiseType, handDrive, colorA, colorB, material, showSkeleton, bgMode })
+  paramsRef.current = { mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, morphStyle, depth, radial, gridN, turns, mirror, twist, spread, childScale, defTwist, defTaper, defNoise, noiseScale, noiseType, handDrive, colorA, colorB, material, showSkeleton, bgMode }
   const clearTexRef = useRef(false)
   const resetRef = useRef(false), undoRef = useRef(false), redoRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
@@ -159,7 +184,7 @@ export function SculptStudio() {
     const bumpCanvas = document.createElement('canvas'); bumpCanvas.width = BW; bumpCanvas.height = BH
     const bctx = bumpCanvas.getContext('2d')!; bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, BW, BH)
     const bumpTex = new THREE.CanvasTexture(bumpCanvas); bumpTex.wrapS = THREE.RepeatWrapping; bumpTex.wrapT = THREE.ClampToEdgeWrapping
-    const clayMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#c8794a'), roughness: 0.85, metalness: 0, flatShading: false, bumpMap: bumpTex, bumpScale: 1 })
+    const clayMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#c8794a'), roughness: 0.85, metalness: 0, flatShading: false, bumpMap: bumpTex, bumpScale: 1, displacementMap: bumpTex, displacementScale: 0, displacementBias: 0 })
     const blob = new THREE.Mesh(geo, clayMat); blob.frustumCulled = false; scene.add(blob)
     // adjacency for the smooth tool
     const adj: number[][] = Array.from({ length: V }, () => [])
@@ -206,7 +231,7 @@ export function SculptStudio() {
     }
 
     // Metamorphose instances (share the blob geometry so they reflect the sculpt live).
-    const instMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.2, side: THREE.DoubleSide, bumpMap: bumpTex, bumpScale: 0.6 })
+    const instMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.2, side: THREE.DoubleSide, bumpMap: bumpTex, bumpScale: 0.6, displacementMap: bumpTex, displacementScale: 0, displacementBias: 0 })
     // warpGeo : a deformed copy of the sculpted blob (generative deformers applied) used for
     // the metamorphose instances — keeps the editable blob geometry untouched.
     const warpGeo = geo.clone()
@@ -272,7 +297,7 @@ export function SculptStudio() {
     const _rk = new THREE.Matrix4(), _mir = new THREE.Matrix4().makeScale(-1, 1, 1)
     let lastSig = ''
     // Generative deformers baked into warpGeo (twist around Y, taper, 3D-noise displacement).
-    const buildWarp = (dTwist: number, dTaper: number, dNoise: number, nScale: number) => {
+    const buildWarp = (dTwist: number, dTaper: number, dNoise: number, nScale: number, nType: NoiseType) => {
       const src = geo.getAttribute('position').array as Float32Array
       const nrm = geo.getAttribute('normal').array as Float32Array
       const dst = warpGeo.getAttribute('position').array as Float32Array
@@ -280,7 +305,7 @@ export function SculptStudio() {
         let x = src[i * 3], y = src[i * 3 + 1], z = src[i * 3 + 2]
         if (dTwist) { const a = dTwist * y, c = Math.cos(a), s = Math.sin(a), xr = x * c - z * s, zr = x * s + z * c; x = xr; z = zr }
         if (dTaper) { const tf = clamp(0.05, 2, 1 - dTaper * (y * 0.5)); x *= tf; z *= tf }
-        if (dNoise) { const n = dNoise * noise3(x * nScale + 11, y * nScale + 3, z * nScale + 7); x += nrm[i * 3] * n; y += nrm[i * 3 + 1] * n; z += nrm[i * 3 + 2] * n }
+        if (dNoise) { const n = dNoise * noiseField(nType, x * nScale + 11, y * nScale + 3, z * nScale + 7); x += nrm[i * 3] * n; y += nrm[i * 3 + 1] * n; z += nrm[i * 3 + 2] * n }
         dst[i * 3] = x; dst[i * 3 + 1] = y; dst[i * 3 + 2] = z
       }
       warpGeo.getAttribute('position').needsUpdate = true; warpGeo.computeVertexNormals(); warpGeo.computeBoundingSphere()
@@ -325,7 +350,7 @@ export function SculptStudio() {
       return out
     }
     const regenMorph = (p: typeof paramsRef.current, tw: number, sp: number, cs: number) => {
-      buildWarp(p.defTwist, p.defTaper, p.defNoise, p.noiseScale)
+      buildWarp(p.defTwist, p.defTaper, p.defNoise, p.noiseScale, p.noiseType)
       const nodes = placement(p, tw, sp, cs)
       cA.set(p.colorA); cB.set(p.colorB)
       const bb = new THREE.Box3(), pv = new THREE.Vector3(), maxD = Math.max(1, p.morphStyle === 'fractal' ? p.depth : 4)
@@ -377,7 +402,12 @@ export function SculptStudio() {
       if (undoRef.current) { undoRef.current = false; if (past.length) { future.push(new Float32Array(posAttr.array as Float32Array)); restore(past.pop()!); setStatus('↶ Annulé.') } else setStatus('Rien à annuler.') }
       if (redoRef.current) { redoRef.current = false; if (future.length) { past.push(new Float32Array(posAttr.array as Float32Array)); restore(future.pop()!); setStatus('↷ Refait.') } else setStatus('Rien à refaire.') }
       { const m = MATERIALS.find((x) => x.kind === p.material)!; clayMat.metalness = m.metal; clayMat.roughness = m.rough; clayMat.color.set(p.colorA) }
-      clayMat.bumpScale = p.texDepth * 1.6; instMat.bumpScale = p.texDepth * 1.0
+      // Reinforced texture : stronger bump (fine shading) + real geometry displacement
+      // (silhouette relief), both driven by the depth slider. displacementBias centres the
+      // grey (128) canvas so flat areas don't inflate.
+      const disp = p.surfPattern === 'none' ? 0 : p.texDepth * 0.35
+      clayMat.bumpScale = p.texDepth * 3.0; clayMat.displacementScale = disp; clayMat.displacementBias = -disp * 0.5
+      instMat.bumpScale = p.texDepth * 1.8; instMat.displacementScale = disp * 0.7; instMat.displacementBias = -disp * 0.35
       if (clearTexRef.current) { clearTexRef.current = false; bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, BW, BH); bumpTex.needsUpdate = true; lastTexSig = 'cleared'; setStatus('Texture effacée.') }
       { const tsig = `${p.surfPattern}|${p.texScale.toFixed(2)}`; if (tsig !== lastTexSig) { paintGlobal(p.surfPattern, p.texScale); lastTexSig = tsig } }
       blob.visible = p.mode === 'sculpt'; inst.visible = p.mode === 'morph'
@@ -447,7 +477,7 @@ export function SculptStudio() {
       if (p.mode === 'morph') {
         let tw = hpar.tw, sp = hpar.sp, cs = hpar.cs
         if (hpar.driving) { tw = smx.tw += (tw - smx.tw) * 0.15; sp = smx.sp += (sp - smx.sp) * 0.15; cs = smx.cs += (cs - smx.cs) * 0.15 } else { smx.tw = tw; smx.sp = sp; smx.cs = cs }
-        const sig = `${p.morphStyle}|${p.depth}|${p.radial}|${p.gridN}|${p.turns}|${p.mirror}|${p.colorA}|${p.colorB}|${p.defTwist}|${p.defTaper}|${p.defNoise}|${p.noiseScale}|${tw.toFixed(3)}|${sp.toFixed(3)}|${cs.toFixed(3)}|${geo.attributes.position.version}`
+        const sig = `${p.morphStyle}|${p.depth}|${p.radial}|${p.gridN}|${p.turns}|${p.mirror}|${p.colorA}|${p.colorB}|${p.defTwist}|${p.defTaper}|${p.defNoise}|${p.noiseScale}|${p.noiseType}|${tw.toFixed(3)}|${sp.toFixed(3)}|${cs.toFixed(3)}|${geo.attributes.position.version}`
         if (sig !== lastSig) { regenMorph(p, tw, sp, cs); lastSig = sig }
       }
 
@@ -546,7 +576,10 @@ export function SculptStudio() {
             <Field label={`Torsion — ${defTwist.toFixed(2)}`}><input type="range" min={-3} max={3} step={0.05} value={defTwist} onChange={(e) => setDefTwist(+e.target.value)} style={rngStyle} /></Field>
             <Field label={`Effilé — ${defTaper.toFixed(2)}`}><input type="range" min={-1} max={1} step={0.02} value={defTaper} onChange={(e) => setDefTaper(+e.target.value)} style={rngStyle} /></Field>
             <Field label={`Bruit organique — ${defNoise.toFixed(2)}`}><input type="range" min={0} max={0.6} step={0.01} value={defNoise} onChange={(e) => setDefNoise(+e.target.value)} style={rngStyle} /></Field>
-            {defNoise > 0 && <Field label={`Grain du bruit — ${noiseScale.toFixed(1)}`}><input type="range" min={0.5} max={10} step={0.5} value={noiseScale} onChange={(e) => setNoiseScale(+e.target.value)} style={rngStyle} /></Field>}
+            {defNoise > 0 && <>
+              <Field label="Type de bruit"><select value={noiseType} onChange={(e) => setNoiseType(e.target.value as NoiseType)} style={selStyle}>{NOISE_TYPES.map((n) => <option key={n.kind} value={n.kind}>{n.label}</option>)}</select></Field>
+              <Field label={`Grain du bruit — ${noiseScale.toFixed(1)}`}><input type="range" min={0.5} max={10} step={0.5} value={noiseScale} onChange={(e) => setNoiseScale(+e.target.value)} style={rngStyle} /></Field>
+            </>}
           </>}
 
           <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 6px' }}>Texture de surface</div>
