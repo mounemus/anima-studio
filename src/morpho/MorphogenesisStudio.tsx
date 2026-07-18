@@ -58,6 +58,8 @@ export function MorphogenesisStudio() {
   const wireRef = useRef(wireframe); wireRef.current = wireframe
   const exportRef = useRef<null | 'stl' | 'obj' | 'glb' | 'png'>(null)
   const hist = useRef<{ past: Graph[]; future: Graph[] }>({ past: [], future: [] })
+  const workerRef = useRef<Worker | null>(null)
+  const reqCounter = useRef(0), proxyReqId = useRef(0)
 
   const pushHist = useCallback((g: Graph) => { hist.current.past.push(JSON.parse(JSON.stringify(graphRef.current))); if (hist.current.past.length > 40) hist.current.past.shift(); hist.current.future = []; setGraph(g) }, [])
   const undo = () => { const h = hist.current; if (!h.past.length) return; h.future.push(JSON.parse(JSON.stringify(graphRef.current))); setGraph(h.past.pop()!) }
@@ -113,24 +115,37 @@ export function MorphogenesisStudio() {
     return () => { cancelAnimationFrame(raf); clearInterval(matTimer); ro.disconnect(); window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); renderer.domElement.removeEventListener('pointerdown', dn); renderer.domElement.removeEventListener('wheel', wh); mesh.geometry.dispose(); renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement); applyRef.current = null; renderThumbRef.current = null }
   }, [])
 
-  // ── Recompute the mesh (debounced, proxy) whenever the graph changes ──
+  // ── Worker : evaluate the graph off the main thread (HD never freezes the UI) ──
   useEffect(() => {
-    let cancelled = false
-    setComputing(true)
-    const t = setTimeout(() => {
-      try {
-        const g = evalGraph(graphRef.current, 'proxy')
-        if (cancelled) return
-        applyRef.current?.(g)
-        setStats(g ? analyze(g) : null)
-        setStatus(g ? 'Aperçu (proxy) ✓' : 'Aucune sortie — connecte un nœud à « Sortie ».')
-      } catch (e) { setStatus('Erreur de calcul : ' + (e as Error).message) }
+    let w: Worker | null = null
+    try { w = new Worker(new URL('./graph.worker.ts', import.meta.url), { type: 'module' }) } catch { w = null }
+    workerRef.current = w
+    if (w) w.onmessage = (e: MessageEvent) => {
+      const d = e.data
+      if (d.kind === 'proxy' && d.id !== proxyReqId.current) return   // ignore stale proxy results
       setComputing(false)
-    }, 40)
-    return () => { cancelled = true; clearTimeout(t) }
-  }, [graph])
+      if (d.error) { setStatus('Erreur de calcul : ' + d.error); return }
+      if (d.empty) { applyRef.current?.(null); setStats(null); setStatus('Aucune sortie — connecte un nœud à « Sortie ».'); return }
+      const g = new THREE.BufferGeometry()
+      g.setAttribute('position', new THREE.BufferAttribute(d.position as Float32Array, 3))
+      if (d.index) g.setIndex(new THREE.BufferAttribute(d.index as Uint32Array, 1))
+      if (d.normal) g.setAttribute('normal', new THREE.BufferAttribute(d.normal as Float32Array, 3)); else g.computeVertexNormals()
+      applyRef.current?.(g); setStats(d.stats); setStatus(d.kind === 'hd' ? 'Haute résolution ✓' : 'Aperçu (proxy) ✓')
+    }
+    return () => { w?.terminate(); workerRef.current = null }
+  }, [])
 
-  const computeHD = () => { setStatus('Calcul haute résolution…'); setComputing(true); setTimeout(() => { try { const g = evalGraph(graphRef.current, 'hd'); applyRef.current?.(g); setStats(g ? analyze(g) : null); setStatus('Haute résolution ✓') } catch (e) { setStatus('Erreur : ' + (e as Error).message) } setComputing(false) }, 20) }
+  const requestEval = (kind: 'proxy' | 'hd') => {
+    const id = ++reqCounter.current; if (kind === 'proxy') proxyReqId.current = id
+    setComputing(true)
+    const w = workerRef.current
+    if (w) { w.postMessage({ id, kind, graph: graphRef.current, quality: kind }) }
+    else setTimeout(() => { try { const g = evalGraph(graphRef.current, kind); if (kind === 'proxy' && id !== proxyReqId.current) return; applyRef.current?.(g); setStats(g ? analyze(g) : null); setStatus(g ? (kind === 'hd' ? 'Haute résolution ✓' : 'Aperçu (proxy) ✓') : 'Aucune sortie.') } catch (e) { setStatus('Erreur : ' + (e as Error).message) } setComputing(false) }, 10)
+  }
+
+  // Recompute (debounced proxy) whenever the graph changes.
+  useEffect(() => { const t = setTimeout(() => requestEval('proxy'), 45); return () => clearTimeout(t) }, [graph])
+  const computeHD = () => { setStatus('Calcul haute résolution…'); requestEval('hd') }
 
   // export (needs the current viewport mesh geometry → recompute HD)
   useEffect(() => { if (!exportRef.current) return; const fmt = exportRef.current; exportRef.current = null; const geo = evalGraph(graphRef.current, 'hd'); if (!geo) { setStatus('Rien à exporter.'); return }; const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ side: THREE.DoubleSide })); if (fmt === 'stl') dl(new Blob([new STLExporter().parse(m, { binary: false })], { type: 'model/stl' }), 'morpho.stl'); else if (fmt === 'obj') dl(new Blob([new OBJExporter().parse(m)], { type: 'text/plain' }), 'morpho.obj'); else if (fmt === 'glb') new GLTFExporter().parse(m, (r) => dl(new Blob([r as ArrayBuffer], { type: 'model/gltf-binary' }), 'morpho.glb'), () => setStatus('Échec GLB'), { binary: true }); setStatus(`Export ${fmt.toUpperCase()} ✓`) })
