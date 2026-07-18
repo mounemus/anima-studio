@@ -163,6 +163,8 @@ RÈGLES :
 - La pipeline commence par UN nœud source (champ), enchaîne des transformations/déplacements, et se termine par "surface" puis (optionnel) "smooth".
 - Chaque nœud passe son champ au suivant. N'utilise PAS de nœud "boolean" ni "output".
 - Varie les silhouettes : colonne (metaballs shape=column + stretch sy>1.4), relief mural (metaballs shape=disc + relief), spirale/coquille (helix + twist), vase (capsule + stretch + shell), etc. Évite de tout faire sphérique.
+- DÔME / cloche / ombrelle / méduse / champignon → metaballs shape=disc + stretch sy≈0.7 (APLATIR, jamais une colonne fine). Ajoute displace ridged pour les nervures.
+- La symétrie "radial" fonctionne sur TOUT champ (union de copies), utilise-la librement pour des lobes/branches.
 - Respecte les bornes des paramètres. Pour "surface", res 80–110 et bound 1.2–1.4.
 
 TYPES DE NŒUDS DISPONIBLES :

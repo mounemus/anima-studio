@@ -84,7 +84,10 @@ export const opTwist = (a: Field, k: number): Field => (x, y, z) => { const c = 
 export const opTaper = (a: Field, k: number): Field => (x, y, z) => { const s = clamp(0.05, 3, 1 - k * (y * 0.5)); return a(x / s, y, z / s) * s }
 export const opScale = (a: Field, s: number): Field => (x, y, z) => a(x / s, y / s, z / s) * s
 export const opMirrorX = (a: Field): Field => (x, y, z) => a(Math.abs(x), y, z)
-export const opRadial = (a: Field, n: number): Field => (x, y, z) => { const k = Math.max(1, Math.round(n)); const seg = (Math.PI * 2) / k; let ang = Math.atan2(z, x); ang = ang - seg * Math.round(ang / seg); const r = Math.hypot(x, z); return a(r * Math.cos(ang), y, r * Math.sin(ang)) }
+// Radial symmetry = UNION of N rotated copies of the field (min of the field sampled at N
+// rotations of the query point). Correct "repeat" — never fragments point-based fields
+// (the old domain-fold only kept one sector, which shattered metaballs/bloom).
+export const opRadial = (a: Field, n: number): Field => { const k = Math.max(1, Math.round(n)); const seg = (Math.PI * 2) / k; return (x, y, z) => { const r = Math.hypot(x, z), ang = Math.atan2(z, x); let best = 1e9; for (let i = 0; i < k; i++) { const aa = ang + i * seg; const v = a(r * Math.cos(aa), y, r * Math.sin(aa)); if (v < best) best = v } return best } }
 export const opBend = (a: Field, k: number): Field => (x, y, z) => { const c = Math.cos(k * x), s = Math.sin(k * x); return a(x, c * y - s * z, s * y + c * z) }
 // Non-uniform stretch → turns a spherical field into a column / disc / ellipsoid.
 export const opStretch = (a: Field, sx: number, sy: number, sz: number): Field => { const m = Math.min(sx, sy, sz); return (x, y, z) => a(x / sx, y / sy, z / sz) * m }
