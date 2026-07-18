@@ -29,13 +29,24 @@ const clamp = (a: number, b: number, v: number) => Math.max(a, Math.min(b, v))
 const SUBDIV = 14         // icosphere detail → ~2300 welded verts (sculptable)
 const MCAP = 800          // metamorphose instance cap
 
-type Tool = 'grab' | 'push' | 'pinch' | 'inflate' | 'smooth'
+type Tool = 'grab' | 'push' | 'pinch' | 'inflate' | 'smooth' | 'stipple' | 'cells' | 'groove'
+const FORM_TOOLS: Tool[] = ['grab', 'push', 'pinch', 'inflate', 'smooth']
+const TEX_TOOLS: Tool[] = ['stipple', 'cells', 'groove']
+const isTex = (t: Tool) => TEX_TOOLS.includes(t)
 const TOOLS: { kind: Tool; label: string; hint: string }[] = [
   { kind: 'grab', label: '✊ Étirer', hint: 'Attrape et tire la matière avec le doigt (fais des pointes, des bras).' },
   { kind: 'push', label: '👇 Pousser', hint: 'Enfonce la surface vers l\'intérieur (creuse, aplatit).' },
   { kind: 'pinch', label: '🤏 Pincer', hint: 'Ramène la matière vers un point (crêtes, pointes fines).' },
   { kind: 'inflate', label: '🎈 Gonfler', hint: 'Repousse la surface vers l\'extérieur (bosses, renflements).' },
   { kind: 'smooth', label: '🧽 Lisser', hint: 'Adoucit et égalise la surface.' },
+  { kind: 'stipple', label: '⋮⋮ Pointiller', hint: 'Grave une pluie de petits points dans la surface (texture pointillée).' },
+  { kind: 'cells', label: '🪨 Cellules', hint: 'Creuse des alvéoles organiques (comme des galets/cellules).' },
+  { kind: 'groove', label: '〰 Strier', hint: 'Grave des rainures/lignes en suivant le doigt.' },
+]
+type SurfPattern = 'none' | 'cells' | 'stipple' | 'scales' | 'ridges'
+const SURF_PATTERNS: { kind: SurfPattern; label: string }[] = [
+  { kind: 'none', label: 'Aucune (lisse)' }, { kind: 'cells', label: '🪨 Cellules (voronoï)' }, { kind: 'stipple', label: '⋮⋮ Pointillé' },
+  { kind: 'scales', label: '🐟 Écailles' }, { kind: 'ridges', label: '〰 Stries' },
 ]
 type MatKind = 'clay' | 'chrome' | 'bio' | 'matte'
 const MATERIALS: { kind: MatKind; label: string; metal: number; rough: number }[] = [
@@ -66,6 +77,9 @@ export function SculptStudio() {
   const [brushSize, setBrushSize] = useState(0.35)
   const [strength, setStrength] = useState(0.6)
   const [symX, setSymX] = useState(true)
+  const [surfPattern, setSurfPattern] = useState<SurfPattern>('none')
+  const [texScale, setTexScale] = useState(0.5)
+  const [texDepth, setTexDepth] = useState(0.5)
   // metamorphose params
   const [depth, setDepth] = useState(1)
   const [radial, setRadial] = useState(5)
@@ -85,8 +99,9 @@ export function SculptStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ mode, tool, brushSize, strength, symX, depth, radial, mirror, twist, spread, childScale, handDrive, colorA, colorB, material, showSkeleton, bgMode })
-  paramsRef.current = { mode, tool, brushSize, strength, symX, depth, radial, mirror, twist, spread, childScale, handDrive, colorA, colorB, material, showSkeleton, bgMode }
+  const paramsRef = useRef({ mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, depth, radial, mirror, twist, spread, childScale, handDrive, colorA, colorB, material, showSkeleton, bgMode })
+  paramsRef.current = { mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, depth, radial, mirror, twist, spread, childScale, handDrive, colorA, colorB, material, showSkeleton, bgMode }
+  const clearTexRef = useRef(false)
   const resetRef = useRef(false), undoRef = useRef(false), redoRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
   const recCtl = useRef<{ start: () => void; stop: () => void } | null>(null)
@@ -113,14 +128,63 @@ export function SculptStudio() {
     const posAttr = geo.getAttribute('position') as THREE.BufferAttribute
     const V = posAttr.count
     const rest = new Float32Array(posAttr.array as Float32Array)   // original (for reset)
-    const clayMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#c8794a'), roughness: 0.85, metalness: 0, flatShading: false })
+    // Equirectangular UV from the rest sphere directions (fixed → the texture sticks to the
+    // surface as it's sculpted). Drives the bump map for carved surface texture.
+    { const uv = new Float32Array(V * 2); for (let i = 0; i < V; i++) { const x = rest[i * 3], y = rest[i * 3 + 1], z = rest[i * 3 + 2], l = Math.max(1e-4, Math.hypot(x, y, z)); uv[i * 2] = Math.atan2(z, x) / (Math.PI * 2) + 0.5; uv[i * 2 + 1] = 1 - Math.acos(clamp(-1, 1, y / l)) / Math.PI } geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2)) }
+    // Bump canvas : the carved-relief height map (grey 128 = flat, darker = recessed).
+    // Filled procedurally by the global surface finish AND painted locally by the hand tools.
+    const BW = 2048, BH = 1024
+    const bumpCanvas = document.createElement('canvas'); bumpCanvas.width = BW; bumpCanvas.height = BH
+    const bctx = bumpCanvas.getContext('2d')!; bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, BW, BH)
+    const bumpTex = new THREE.CanvasTexture(bumpCanvas); bumpTex.wrapS = THREE.RepeatWrapping; bumpTex.wrapT = THREE.ClampToEdgeWrapping
+    const clayMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#c8794a'), roughness: 0.85, metalness: 0, flatShading: false, bumpMap: bumpTex, bumpScale: 1 })
     const blob = new THREE.Mesh(geo, clayMat); blob.frustumCulled = false; scene.add(blob)
     // adjacency for the smooth tool
     const adj: number[][] = Array.from({ length: V }, () => [])
     { const idx = geo.getIndex(); if (idx) { const a = idx.array as ArrayLike<number>; for (let i = 0; i < a.length; i += 3) { const t = [a[i], a[i + 1], a[i + 2]]; for (let j = 0; j < 3; j++) { const x = t[j], y = t[(j + 1) % 3]; if (!adj[x].includes(y)) adj[x].push(y) } } } }
 
+    // ── Surface texture painting (bump canvas) ──
+    const mkRng = (seed: number) => { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 } }
+    const paintGlobal = (pattern: SurfPattern, scaleN: number) => {
+      bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, BW, BH)
+      if (pattern === 'none') { bumpTex.needsUpdate = true; return }
+      const rng = mkRng(1337)
+      const density = 0.4 + scaleN * 1.6   // feature frequency
+      if (pattern === 'cells') {
+        const nx = Math.round(14 * density), ny = Math.round(7 * density)
+        for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+          const cx = (i + 0.5 + (rng() - 0.5) * 0.6) / nx * BW, cy = (j + 0.5 + (rng() - 0.5) * 0.6) / ny * BH
+          const rx = BW / nx * (0.34 + rng() * 0.12), ry = BH / ny * (0.34 + rng() * 0.12)
+          bctx.save(); bctx.translate(cx, cy); bctx.rotate(rng() * Math.PI)
+          const g = bctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(rx, ry)); g.addColorStop(0, '#a8a8a8'); g.addColorStop(0.75, '#8a8a8a'); g.addColorStop(1, '#4a4a4a')
+          bctx.fillStyle = g; bctx.beginPath(); bctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); bctx.fill(); bctx.restore()
+        }
+      } else if (pattern === 'stipple') {
+        const n = Math.round(9000 * density)
+        for (let k = 0; k < n; k++) { const x = rng() * BW, y = rng() * BH, r = 1.5 + rng() * 2.5; bctx.fillStyle = 'rgba(40,40,40,0.7)'; bctx.beginPath(); bctx.arc(x, y, r, 0, Math.PI * 2); bctx.fill() }
+      } else if (pattern === 'scales') {
+        const cols = Math.round(20 * density), rows = Math.round(14 * density), sw = BW / cols, sh = BH / rows
+        for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) { const cx = i * sw + (j % 2 ? sw / 2 : 0), cy = j * sh; bctx.strokeStyle = '#5a5a5a'; bctx.lineWidth = 3; bctx.beginPath(); bctx.arc(cx, cy, sw * 0.55, 0.15 * Math.PI, 0.85 * Math.PI); bctx.stroke(); bctx.strokeStyle = '#a0a0a0'; bctx.lineWidth = 2; bctx.beginPath(); bctx.arc(cx, cy - 2, sw * 0.5, 0.2 * Math.PI, 0.8 * Math.PI); bctx.stroke() }
+      } else if (pattern === 'ridges') {
+        const lines = Math.round(28 * density)
+        for (let j = 0; j < lines; j++) { const y0 = (j / lines) * BH; bctx.strokeStyle = j % 2 ? '#5a5a5a' : '#a0a0a0'; bctx.lineWidth = BH / lines * 0.4; bctx.beginPath(); for (let x = 0; x <= BW; x += 12) { const yy = y0 + Math.sin(x / BW * Math.PI * 6 + j) * (BH / lines * 0.3); x === 0 ? bctx.moveTo(x, yy) : bctx.lineTo(x, yy) } bctx.stroke() }
+      }
+      bumpTex.needsUpdate = true
+    }
+    // Stamp a hand texture-tool mark at a UV location.
+    let stampSeed = 1
+    const stampTexture = (u: number, vv: number, tool: Tool, sizeN: number, dir: { x: number; y: number } | null) => {
+      const px = ((u % 1) + 1) % 1 * BW, py = clamp(0, 1, 1 - vv) * BH
+      const rad = 8 + sizeN * 90
+      const rng = mkRng(stampSeed++)
+      if (tool === 'stipple') { const n = 6 + Math.floor(sizeN * 40); for (let k = 0; k < n; k++) { const a = rng() * Math.PI * 2, r = rng() * rad, x = px + Math.cos(a) * r, y = py + Math.sin(a) * r, dr = 1.5 + rng() * 2.5; bctx.fillStyle = 'rgba(30,30,30,0.85)'; bctx.beginPath(); bctx.arc(x, y, dr, 0, Math.PI * 2); bctx.fill() } }
+      else if (tool === 'cells') { bctx.save(); bctx.translate(px, py); const g = bctx.createRadialGradient(0, 0, 0, 0, 0, rad); g.addColorStop(0, 'rgba(60,60,60,0.9)'); g.addColorStop(0.7, 'rgba(90,90,90,0.6)'); g.addColorStop(1, 'rgba(128,128,128,0)'); bctx.fillStyle = g; bctx.beginPath(); bctx.ellipse(0, 0, rad, rad * (0.7 + rng() * 0.5), rng() * Math.PI, 0, Math.PI * 2); bctx.fill(); bctx.restore() }
+      else if (tool === 'groove') { bctx.strokeStyle = 'rgba(40,40,40,0.8)'; bctx.lineWidth = Math.max(3, rad * 0.35); bctx.lineCap = 'round'; const dx = (dir?.x ?? 1), dy = (dir?.y ?? 0), dl = Math.max(1e-3, Math.hypot(dx, dy)); bctx.beginPath(); bctx.moveTo(px - dx / dl * rad, py - dy / dl * rad); bctx.lineTo(px + dx / dl * rad, py + dy / dl * rad); bctx.stroke() }
+      bumpTex.needsUpdate = true
+    }
+
     // Metamorphose instances (share the blob geometry so they reflect the sculpt live).
-    const instMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.2, side: THREE.DoubleSide })
+    const instMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.2, side: THREE.DoubleSide, bumpMap: bumpTex, bumpScale: 0.6 })
     const inst = new THREE.InstancedMesh(geo, instMat, MCAP)
     inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage); inst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MCAP * 3), 3)
     inst.count = 0; inst.frustumCulled = false; inst.visible = false; scene.add(inst)
@@ -223,8 +287,8 @@ export function SculptStudio() {
     recCtl.current = { start: startRec, stop: stopRec }
 
     // per-hand engagement state (for grab & stroke undo)
-    const engaged = [false, false]; let anySculpt = false, wasSculpt = false
-    let lastT = performance.now(), spinT = 0, geoDirty = false
+    const engaged = [false, false]; const texLast: ({ x: number; y: number } | null)[] = [null, null]; let anySculpt = false, wasSculpt = false
+    let lastT = performance.now(), spinT = 0, geoDirty = false, lastTexSig = ''
     const smx = { tw: twist, sp: spread, cs: childScale }
     const loop = () => {
       if (!running) return
@@ -235,6 +299,9 @@ export function SculptStudio() {
       if (undoRef.current) { undoRef.current = false; if (past.length) { future.push(new Float32Array(posAttr.array as Float32Array)); restore(past.pop()!); setStatus('↶ Annulé.') } else setStatus('Rien à annuler.') }
       if (redoRef.current) { redoRef.current = false; if (future.length) { past.push(new Float32Array(posAttr.array as Float32Array)); restore(future.pop()!); setStatus('↷ Refait.') } else setStatus('Rien à refaire.') }
       { const m = MATERIALS.find((x) => x.kind === p.material)!; clayMat.metalness = m.metal; clayMat.roughness = m.rough; clayMat.color.set(p.colorA) }
+      clayMat.bumpScale = p.texDepth * 1.6; instMat.bumpScale = p.texDepth * 1.0
+      if (clearTexRef.current) { clearTexRef.current = false; bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, BW, BH); bumpTex.needsUpdate = true; lastTexSig = 'cleared'; setStatus('Texture effacée.') }
+      { const tsig = `${p.surfPattern}|${p.texScale.toFixed(2)}`; if (tsig !== lastTexSig) { paintGlobal(p.surfPattern, p.texScale); lastTexSig = tsig } }
       blob.visible = p.mode === 'sculpt'; inst.visible = p.mode === 'morph'
 
       anySculpt = false
@@ -256,29 +323,35 @@ export function SculptStudio() {
             if (press > 0.2) {
               anySculpt = true
               const radius = p.brushSize, str = clamp(0, 1, p.strength) * clamp(0, 1, (press - 0.2) / 0.6) * Math.min(1, dt * 12)
-              if (!engaged[i]) {
-                // engage : raycast to the blob to anchor the brush / grab set
+              if (isTex(p.tool)) {
+                // TEXTURE tools : carve into the bump canvas at the touched UV (fine detail).
                 const hit = rayToMesh(nx, ny)
-                if (hit) {
+                if (hit && hit.uv) {
                   engaged[i] = true
-                  if (p.tool === 'grab') {
-                    const build = (cx: number, cy: number, cz: number, key: number) => { const arr = posAttr.array as Float32Array; const set: { i: number; f: number }[] = []; const r2 = radius * radius; for (let q = 0; q < V; q++) { const ex = arr[q * 3] - cx, ey = arr[q * 3 + 1] - cy, ez = arr[q * 3 + 2] - cz, d2 = ex * ex + ey * ey + ez * ez; if (d2 <= r2) { const t = Math.sqrt(d2) / radius; set.push({ i: q, f: (1 - t) * (1 - t) }) } } grabSets.set(key, set) }
-                    build(hit.point.x, hit.point.y, hit.point.z, i); if (p.symX) build(-hit.point.x, hit.point.y, hit.point.z, i + 100)
-                    camera.getWorldDirection(fwd); _plane.setFromNormalAndCoplanarPoint(fwd, hit.point); grabPlane.set(i, _plane.clone()); grabLast.set(i, hit.point.clone())
+                  const lu = texLast[i]; const dir = lu ? { x: hit.uv.x - lu.x, y: -(hit.uv.y - lu.y) } : null
+                  stampTexture(hit.uv.x, hit.uv.y, p.tool, radius, dir)
+                  if (p.symX) { const mp = hit.point, l = Math.max(1e-4, Math.hypot(-mp.x, mp.y, mp.z)); const mu = Math.atan2(mp.z, -mp.x) / (Math.PI * 2) + 0.5, mv = 1 - Math.acos(clamp(-1, 1, mp.y / l)) / Math.PI; stampTexture(mu, mv, p.tool, radius, dir ? { x: -dir.x, y: dir.y } : null) }
+                  texLast[i] = { x: hit.uv.x, y: hit.uv.y }
+                }
+              } else {
+                if (!engaged[i]) {
+                  const hit = rayToMesh(nx, ny)
+                  if (hit) {
+                    engaged[i] = true
+                    if (p.tool === 'grab') {
+                      const build = (cx: number, cy: number, cz: number, key: number) => { const arr = posAttr.array as Float32Array; const set: { i: number; f: number }[] = []; const r2 = radius * radius; for (let q = 0; q < V; q++) { const ex = arr[q * 3] - cx, ey = arr[q * 3 + 1] - cy, ez = arr[q * 3 + 2] - cz, d2 = ex * ex + ey * ey + ez * ez; if (d2 <= r2) { const t = Math.sqrt(d2) / radius; set.push({ i: q, f: (1 - t) * (1 - t) }) } } grabSets.set(key, set) }
+                      build(hit.point.x, hit.point.y, hit.point.z, i); if (p.symX) build(-hit.point.x, hit.point.y, hit.point.z, i + 100)
+                      camera.getWorldDirection(fwd); _plane.setFromNormalAndCoplanarPoint(fwd, hit.point); grabPlane.set(i, _plane.clone()); grabLast.set(i, hit.point.clone())
+                    }
                   }
                 }
-              }
-              if (engaged[i]) {
-                if (p.tool === 'grab') {
-                  const pl = grabPlane.get(i)!; const cur = rayToPlane(nx, ny, pl)
-                  if (cur) { const last = grabLast.get(i)!; tmp.subVectors(cur, last).multiplyScalar(clamp(0, 1.2, str * 3)); applyBrush(last, i, 'grab', radius, str, tmp, p.symX); grabLast.set(i, cur) }
-                } else {
-                  const hit = rayToMesh(nx, ny)
-                  if (hit) applyBrush(hit.point, i, p.tool, radius, str, null, p.symX)
+                if (engaged[i]) {
+                  if (p.tool === 'grab') { const pl = grabPlane.get(i)!; const cur = rayToPlane(nx, ny, pl); if (cur) { const last = grabLast.get(i)!; tmp.subVectors(cur, last).multiplyScalar(clamp(0, 1.2, str * 3)); applyBrush(last, i, 'grab', radius, str, tmp, p.symX); grabLast.set(i, cur) } }
+                  else { const hit = rayToMesh(nx, ny); if (hit) applyBrush(hit.point, i, p.tool, radius, str, null, p.symX) }
+                  geoDirty = true
                 }
-                geoDirty = true
               }
-            } else { engaged[i] = false; grabSets.delete(i); grabSets.delete(i + 100) }
+            } else { engaged[i] = false; grabSets.delete(i); grabSets.delete(i + 100); texLast[i] = null }
           }
         }
         // Metamorphose driven by hands (écartement/hauteur/inclinaison/pince)
@@ -331,7 +404,7 @@ export function SculptStudio() {
       try { landmarker?.close() } catch { /* noop */ }
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
       try { if (recActive && recorder) recorder.stop() } catch { /* noop */ }
-      geo.dispose(); clayMat.dispose(); instMat.dispose(); inst.dispose(); renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
+      geo.dispose(); clayMat.dispose(); instMat.dispose(); inst.dispose(); bumpTex.dispose(); renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
     }
   }, [])
 
@@ -389,6 +462,13 @@ export function SculptStudio() {
             <Field label={`Déploiement — ${spread.toFixed(2)}`}><input type="range" min={0.15} max={1.4} step={0.02} value={spread} onChange={(e) => setSpread(+e.target.value)} style={rngStyle} /></Field>
             <Field label={`Échelle enfants — ${childScale.toFixed(2)}`}><input type="range" min={0.35} max={0.72} step={0.01} value={childScale} onChange={(e) => setChildScale(+e.target.value)} style={rngStyle} /></Field>
           </>}
+
+          <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 6px' }}>Texture de surface</div>
+          <Field label="Finition globale (tout d'un coup)"><select value={surfPattern} onChange={(e) => setSurfPattern(e.target.value as SurfPattern)} style={selStyle}>{SURF_PATTERNS.map((s) => <option key={s.kind} value={s.kind}>{s.label}</option>)}</select></Field>
+          <Field label={`Échelle du motif — ${Math.round(texScale * 100)}%`}><input type="range" min={0.1} max={1} step={0.05} value={texScale} onChange={(e) => setTexScale(+e.target.value)} style={rngStyle} /></Field>
+          <Field label={`Profondeur du relief — ${Math.round(texDepth * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={texDepth} onChange={(e) => setTexDepth(+e.target.value)} style={rngStyle} /></Field>
+          <button onClick={() => { clearTexRef.current = true }} style={{ ...selStyle, marginBottom: 4, fontSize: 12 }}>🧽 Effacer la texture</button>
+          <p style={{ color: '#7a6a58', fontSize: 10, margin: '4px 0 0', lineHeight: 1.35 }}>Astuce : choisis un outil ⋮⋮/🪨/〰 ci-dessus pour graver le motif <b>à la main</b> localement.</p>
 
           <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 6px' }}>Matière</div>
           <Field label="Matériau"><select value={material} onChange={(e) => setMaterial(e.target.value as MatKind)} style={selStyle}>{MATERIALS.map((m) => <option key={m.kind} value={m.kind}>{m.label}</option>)}</select></Field>
