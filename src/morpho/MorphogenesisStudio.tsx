@@ -18,6 +18,7 @@ import { NODE_DEFS, NODE_CATS, evalGraph, makeNode, uid, type Graph, type GNode 
 import { analyze, type MeshStats } from './mesh'
 import { PRESETS } from './presets'
 import { textToGraph, llmToGraph, applyCommand, QUICK_COMMANDS, EXAMPLE_PROMPTS, type Built } from './assistant'
+import { importFile } from './imports'
 
 const clamp = (a: number, b: number, v: number) => Math.max(a, Math.min(b, v))
 type MatKind = 'clay' | 'matte' | 'chrome' | 'gloss' | 'translucent'
@@ -160,6 +161,18 @@ export function MorphogenesisStudio() {
   const mutate = () => pushHist(mutateGraph(graphRef.current, 0.3))
 
   const loadPreset = (i: number) => { pushHist(PRESETS[i].build()); setSelId(null); setVariants([]) }
+  const importInputRef = useRef<HTMLInputElement>(null)
+  const onImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (!f) return; e.target.value = ''
+    setStatus(`Import de ${f.name}…`)
+    try {
+      const { data, name, tris } = await importFile(f)
+      const mi = makeNode('meshimport', 60, 120); mi.data = data
+      const out = makeNode('output', 280, 120)
+      pushHist({ nodes: [mi, out], edges: [{ id: uid('e'), from: mi.id, fromIdx: 0, to: out.id, toIdx: 0 }] })
+      setSelId(mi.id); setVariants([]); setStatus(`Importé : ${name} (${tris.toLocaleString()} tris). Ajoute « Maillage → champ » pour le rendre organique.`)
+    } catch (err) { setStatus('Import échoué : ' + (err as Error).message) }
+  }
   const applyBuilt = (b: Built) => { pushHist(b.graph); setSelId(null); setVariants([]); if (b.material) setMaterial(b.material) }
   const aiGenerate = async (prompt: string) => {
     const p = prompt.trim(); if (!p) return; setAiInput('')
@@ -189,6 +202,8 @@ export function MorphogenesisStudio() {
         <button onClick={redo} style={btn} title="Rétablir">↷</button>
         <button onClick={mutate} style={{ ...btn, borderColor: '#8b6df0' }}>🧬 Muter</button>
         <button onClick={computeHD} style={{ ...btn, borderColor: '#4fd1a5' }}>⬆ HD</button>
+        <input ref={importInputRef} type="file" accept=".stl,.obj,.svg" onChange={onImport} style={{ display: 'none' }} />
+        <button onClick={() => importInputRef.current?.click()} style={{ ...btn, borderColor: '#e6e05a' }} title="Importer un maillage STL/OBJ ou un contour SVG">⬇ Import</button>
         <button onClick={() => { exportRef.current = 'stl'; setGraph((g) => ({ ...g })) }} style={btn}>STL</button>
         <button onClick={() => { exportRef.current = 'glb'; setGraph((g) => ({ ...g })) }} style={btn}>GLB</button>
         <button onClick={() => { exportRef.current = 'obj'; setGraph((g) => ({ ...g })) }} style={btn}>OBJ</button>

@@ -12,8 +12,9 @@ import * as P from './parametric'
 
 export type SockType = 'field' | 'mesh' | 'points' | 'number'
 export interface Param { key: string; label: string; type: 'num' | 'select' | 'seed'; min?: number; max?: number; step?: number; def: number | string; options?: { v: string; l: string }[] }
-export interface NodeDef { type: string; title: string; cat: string; color: string; inputs: { name: string; type: SockType }[]; outputs: { name: string; type: SockType }[]; params: Param[]; eval: (ins: unknown[], p: Record<string, number | string>, q: Quality) => unknown }
-export interface GNode { id: string; type: string; x: number; y: number; params: Record<string, number | string> }
+export interface MeshData { pos: number[]; idx?: number[] }
+export interface NodeDef { type: string; title: string; cat: string; color: string; inputs: { name: string; type: SockType }[]; outputs: { name: string; type: SockType }[]; params: Param[]; eval: (ins: unknown[], p: Record<string, number | string>, q: Quality, n?: GNode) => unknown }
+export interface GNode { id: string; type: string; x: number; y: number; params: Record<string, number | string>; data?: MeshData }
 export interface GEdge { id: string; from: string; fromIdx: number; to: string; toIdx: number }
 export interface Graph { nodes: GNode[]; edges: GEdge[] }
 export type Quality = 'proxy' | 'hd'
@@ -53,10 +54,12 @@ export const NODE_DEFS: Record<string, NodeDef> = {
   kleinsurf: { type: 'kleinsurf', title: 'Surface de Klein (∞)', cat: 'Paramétrique', color: '#5ad6c0', inputs: [], outputs: [{ name: 'M', type: 'mesh' }], params: [{ key: 'res', label: 'Résolution', type: 'num', min: 20, max: 160, step: 4, def: 90 }, { key: 'scale', label: 'Échelle', type: 'num', min: 0.5, max: 1.6, step: 0.05, def: 1 }], eval: (_i, p) => { const n = Math.round(num(p.res, 90)); return P.paramSurface(P.kleinSurface, n, n, 0, Math.PI * 2, 0, Math.PI * 2).scale(num(p.scale, 1), num(p.scale, 1), num(p.scale, 1)) } },
   mobius: { type: 'mobius', title: 'Ruban de Möbius', cat: 'Paramétrique', color: '#5ad6c0', inputs: [], outputs: [{ name: 'M', type: 'mesh' }], params: [{ key: 'res', label: 'Résolution', type: 'num', min: 20, max: 200, step: 4, def: 120 }, { key: 'width', label: 'Largeur', type: 'num', min: 0.1, max: 0.8, step: 0.02, def: 0.4 }, { key: 'twists', label: 'Torsions', type: 'num', min: 1, max: 5, step: 1, def: 1 }, { key: 'scale', label: 'Échelle', type: 'num', min: 0.5, max: 1.6, step: 0.05, def: 1 }], eval: (_i, p) => { const n = Math.round(num(p.res, 120)); return P.paramSurface(P.mobius(num(p.width, 0.4), num(p.twists, 1)), n, 12, 0, Math.PI * 2, -1, 1).scale(num(p.scale, 1), num(p.scale, 1), num(p.scale, 1)) } },
   plucker: { type: 'plucker', title: 'Conoïde de Plücker', cat: 'Paramétrique', color: '#5ad6c0', inputs: [], outputs: [{ name: 'M', type: 'mesh' }], params: [{ key: 'res', label: 'Résolution', type: 'num', min: 20, max: 200, step: 4, def: 120 }, { key: 'blades', label: 'Lobes', type: 'num', min: 1, max: 6, step: 1, def: 2 }, { key: 'height', label: 'Hauteur', type: 'num', min: 0.2, max: 1.2, step: 0.05, def: 0.6 }, { key: 'scale', label: 'Échelle', type: 'num', min: 0.5, max: 1.6, step: 0.05, def: 1 }], eval: (_i, p) => { const n = Math.round(num(p.res, 120)); return P.paramSurface(P.plucker(Math.round(num(p.blades, 2)), num(p.height, 0.6)), n, 24, 0, Math.PI * 2, -1, 1).scale(num(p.scale, 1), num(p.scale, 1), num(p.scale, 1)) } },
+  meshimport: { type: 'meshimport', title: 'Import (STL/OBJ/SVG)', cat: 'Import', color: '#e6e05a', inputs: [], outputs: [{ name: 'M', type: 'mesh' }], params: [{ key: 'scale', label: 'Échelle', type: 'num', min: 0.4, max: 1.8, step: 0.05, def: 1 }], eval: (_i, p, _q, n) => { if (!n?.data) return undefined; const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(n.data.pos, 3)); if (n.data.idx) g.setIndex(n.data.idx); g.computeVertexNormals(); const s = num(p.scale, 1); if (s !== 1) g.scale(s, s, s); return g } },
+  meshfield: { type: 'meshfield', title: 'Maillage → champ', cat: 'Import', color: '#c77dff', inputs: [{ name: 'M', type: 'mesh' }], outputs: [{ name: 'F', type: 'field' }], params: [{ key: 'radius', label: 'Rayon', type: 'num', min: 0.08, max: 0.5, step: 0.02, def: 0.2 }, { key: 'samples', label: 'Points', type: 'num', min: 40, max: 400, step: 20, def: 180 }], eval: (i, p) => { const m = i[0] as THREE.BufferGeometry | undefined; if (!m) return fallback; const arr = m.getAttribute('position').array as ArrayLike<number>; const V = m.getAttribute('position').count; const want = Math.min(V, Math.round(num(p.samples, 180))); const step = Math.max(1, Math.floor(V / want)); const pts: [number, number, number][] = []; for (let v = 0; v < V; v += step) pts.push([arr[v * 3], arr[v * 3 + 1], arr[v * 3 + 2]]); return F.metaballs(pts, num(p.radius, 0.2)) } },
   output: { type: 'output', title: 'Sortie', cat: 'Sortie', color: '#8be9a0', inputs: [{ name: 'M', type: 'mesh' }], outputs: [], params: [], eval: (i) => i[0] },
 }
 
-export const NODE_CATS = ['Primitive', 'Paramétrique', 'Surface', 'Cellulaire', 'Organique', 'Champ', 'Transformation', 'Maillage', 'Sortie']
+export const NODE_CATS = ['Import', 'Primitive', 'Paramétrique', 'Surface', 'Cellulaire', 'Organique', 'Champ', 'Transformation', 'Maillage', 'Sortie']
 
 /** Topologically evaluate the graph → the mesh feeding the Output node (or null). */
 export function evalGraph(graph: Graph, quality: Quality): THREE.BufferGeometry | null {
@@ -74,7 +77,7 @@ export function evalGraph(graph: Graph, quality: Quality): THREE.BufferGeometry 
     const params: Record<string, number | string> = {}
     for (const pr of def.params) params[pr.key] = node.params[pr.key] ?? pr.def
     let out: unknown[]
-    try { const r = def.eval(ins, params, quality); out = def.outputs.length ? [r] : [r] } catch { out = [] }
+    try { const r = def.eval(ins, params, quality, node); out = def.outputs.length ? [r] : [r] } catch { out = [] }
     visiting.delete(id); memo.set(id, out)
     return out
   }
