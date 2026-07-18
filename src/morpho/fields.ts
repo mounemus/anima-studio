@@ -108,6 +108,61 @@ export const mandelbulb = (power: number, iters: number, scale: number): Field =
   return (0.5 * Math.log(r || 1e-9) * r / dr) * scale
 }
 
+/** Diffusion-Limited Aggregation — particles random-walk and stick to a growing cluster
+ *  → branching coral/frost structure. Simulated once, returned as a metaballs field. */
+export const dla = (particles: number, ballR: number, seed: number): Field => {
+  const rng = srng(seed)
+  const cluster: [number, number, number][] = [[0, 0, 0]]
+  const stick = 0.06, step = 0.05, gsz = stick * 1.6
+  const grid = new Map<string, number[]>()
+  const gkey = (x: number, y: number, z: number) => `${Math.floor(x / gsz)}_${Math.floor(y / gsz)}_${Math.floor(z / gsz)}`
+  const add = (i: number, p: [number, number, number]) => { const k = gkey(p[0], p[1], p[2]); let a = grid.get(k); if (!a) { a = []; grid.set(k, a) } a.push(i) }
+  add(0, cluster[0]); let maxR = 0.05
+  const nearStick = (x: number, y: number, z: number) => { const ci = Math.floor(x / gsz), cj = Math.floor(y / gsz), ck = Math.floor(z / gsz); for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) { const a = grid.get(`${ci + dx}_${cj + dy}_${ck + dz}`); if (!a) continue; for (const idx of a) { const p = cluster[idx]; if (Math.hypot(x - p[0], y - p[1], z - p[2]) < stick) return true } } return false }
+  const N = Math.round(clamp(20, 800, particles))
+  for (let i = 0; i < N; i++) {
+    const spawnR = maxR + 0.12, killR = spawnR * 1.9
+    let u = rng() * 2 - 1, a = rng() * Math.PI * 2, ph = Math.acos(u)
+    let x = spawnR * Math.sin(ph) * Math.cos(a), y = spawnR * Math.sin(ph) * Math.sin(a), z = spawnR * Math.cos(ph)
+    for (let s = 0; s < 700; s++) {
+      const du = rng() * 2 - 1, aa = rng() * Math.PI * 2, pp = Math.acos(du)
+      x += step * Math.sin(pp) * Math.cos(aa); y += step * Math.sin(pp) * Math.sin(aa); z += step * Math.cos(pp)
+      const rr = Math.hypot(x, y, z)
+      if (rr > killR) { const sc = spawnR / rr; x *= sc; y *= sc; z *= sc }
+      if (nearStick(x, y, z)) { const idx = cluster.length; cluster.push([x, y, z]); add(idx, [x, y, z]); if (rr > maxR) maxR = rr; break }
+    }
+  }
+  return metaballs(cluster, ballR)
+}
+
+/** Gray-Scott reaction-diffusion baked on a 3D grid → organic Turing patterns (coral,
+ *  mitosis, spots, maze). The V concentration is sampled trilinearly as the field. */
+export const reactionDiffusion = (F: number, k: number, steps: number, thresh: number, seed: number): Field => {
+  const R = 30, S = R * R * R, at = (i: number, j: number, kk: number) => i + j * R + kk * R * R
+  let U = new Float32Array(S).fill(1), V = new Float32Array(S)
+  const rng = srng(seed)
+  for (let n = 0; n < 16; n++) { const ci = 4 + Math.floor(rng() * (R - 8)), cj = 4 + Math.floor(rng() * (R - 8)), ck = 4 + Math.floor(rng() * (R - 8)); for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) { const idx = at(ci + a, cj + b, ck + c); U[idx] = 0.5; V[idx] = 0.9 } }
+  const Du = 0.16, Dv = 0.08, nU = new Float32Array(S), nV = new Float32Array(S)
+  const ST = Math.round(clamp(50, 2000, steps))
+  for (let s = 0; s < ST; s++) {
+    for (let kk = 1; kk < R - 1; kk++) for (let j = 1; j < R - 1; j++) for (let i = 1; i < R - 1; i++) {
+      const idx = at(i, j, kk), u = U[idx], v = V[idx]
+      const lu = U[at(i - 1, j, kk)] + U[at(i + 1, j, kk)] + U[at(i, j - 1, kk)] + U[at(i, j + 1, kk)] + U[at(i, j, kk - 1)] + U[at(i, j, kk + 1)] - 6 * u
+      const lv = V[at(i - 1, j, kk)] + V[at(i + 1, j, kk)] + V[at(i, j - 1, kk)] + V[at(i, j + 1, kk)] + V[at(i, j, kk - 1)] + V[at(i, j, kk + 1)] - 6 * v
+      const uvv = u * v * v
+      nU[idx] = u + (Du * lu - uvv + F * (1 - u)); nV[idx] = v + (Dv * lv + uvv - (F + k) * v)
+    }
+    U.set(nU); V.set(nV)
+  }
+  const Vg = V
+  return (x, y, z) => {
+    const fx = (x * 0.5 + 0.5) * (R - 1), fy = (y * 0.5 + 0.5) * (R - 1), fz = (z * 0.5 + 0.5) * (R - 1)
+    let val = 0
+    if (fx >= 0 && fx <= R - 1 && fy >= 0 && fy <= R - 1 && fz >= 0 && fz <= R - 1) { const i = Math.floor(fx), j = Math.floor(fy), kk = Math.floor(fz); val = Vg[at(Math.min(R - 1, i), Math.min(R - 1, j), Math.min(R - 1, kk))] }
+    return Math.max(thresh - val, Math.hypot(x, y, z) - 0.95)
+  }
+}
+
 // Phyllotaxis point set (golden-angle spiral on a sphere/disc) — for Fractal Bloom / metaballs.
 export function phyllotaxis(n: number, spread: number, rise: number): [number, number, number][] {
   const ga = Math.PI * (3 - Math.sqrt(5)), out: [number, number, number][] = []

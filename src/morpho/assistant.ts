@@ -61,6 +61,8 @@ export function textToGraph(prompt: string): Built {
   // — source form (silhouettes variées, pas seulement sphériques) —
   if (has('méduse', 'meduse', 'jellyfish', 'ombrelle', 'cloche')) { steps.push({ type: 'metaballs', params: { shape: 'disc', count: 20, radius: 0.36, spread: 0.9, seed: 5 } }, { type: 'stretch', params: { sy: 0.7, sxz: 1.25 } }, { type: 'displace', params: { type: 'ridged', amp: 0.07, freq: 3.2 } }); explain.push('Dôme d’ombrelle bombé — corps de méduse (membrane translucide, nervures radiales).'); if (!material) material = 'translucent' }
   else if (has('mandelbulb', 'bulbe de mandel', 'mandel bulb')) { steps.push({ type: 'mandelbulb', params: { power: nAfter(/puissance\s*(\d+)/) ?? 8 } }); explain.push('Mandelbulb — fractal 3D à distance estimée.') }
+  else if (has('dla', 'agrégation', 'agregation', 'ramifi', 'givre', 'foudre', 'dendrit')) { steps.push({ type: 'dla', params: { particles: 300, radius: 0.06 } }); explain.push('DLA — agrégation par diffusion, structure ramifiée.') }
+  else if (has('réaction', 'reaction', 'gray-scott', 'gray scott', 'turing', 'diffusion')) { steps.push({ type: 'reaction', params: { preset: has('labyrinth', 'maze') ? 'maze' : has('point', 'spot', 'tacheté', 'pois') ? 'spots' : has('mitos') ? 'mitosis' : 'coral' } }); explain.push('Réaction-diffusion (Gray-Scott) — motif de Turing organique.') }
   else if (has('voronoï', 'voronoi', 'cellul', 'poreux', 'porous', 'alvéol', 'nid d')) { steps.push({ type: 'voronoi', params: { scale: nAfter(/(\d+)\s*cellul/) ?? 4, thick: 0.08 } }); explain.push('Voronoï 3D — réseau de cellules à parois fines.') }
   else if (has('gyroïde', 'gyroid', 'tpms', 'minimale')) { steps.push({ type: 'gyroid' }); explain.push('Gyroïde (TPMS) — surface minimale continue et poreuse.') }
   else if (has(' os', 'bone', 'trabecul', 'treillis', 'lattice')) { steps.push({ type: 'schwarz' }, { type: 'stretch', params: { sy: 1.5, sxz: 0.85 } }); explain.push('Schwarz-P allongé — treillis type os.') }
@@ -150,7 +152,7 @@ export function applyCommand(cmd: string, graph: Graph): Built {
 }
 
 // ── Real LLM path (uses the admin-configured Anthropic key via /api/morpho-assistant) ──
-const LINEAR_TYPES = ['sphere', 'box', 'torus', 'capsule', 'gyroid', 'schwarz', 'mandelbulb', 'voronoi', 'metaballs', 'bloom', 'helix', 'displace', 'shell', 'twist', 'taper', 'stretch', 'radial', 'mirror', 'relief', 'surface', 'smooth', 'decimate', 'thicken']
+const LINEAR_TYPES = ['sphere', 'box', 'torus', 'capsule', 'gyroid', 'schwarz', 'mandelbulb', 'voronoi', 'metaballs', 'bloom', 'dla', 'reaction', 'helix', 'displace', 'shell', 'twist', 'taper', 'stretch', 'radial', 'mirror', 'relief', 'surface', 'smooth', 'decimate', 'thicken']
 function buildSystemPrompt(): string {
   const spec = LINEAR_TYPES.map((ty) => { const d = NODE_DEFS[ty]; const ps = d.params.map((p) => p.type === 'select' ? `${p.key}∈{${p.options!.map((o) => o.v).join('|')}}` : p.type === 'seed' ? `${p.key}(entier)` : `${p.key}(${p.min}…${p.max})`).join(', '); return `- ${ty} [${d.cat}]${ps ? ' : ' + ps : ''}` }).join('\n')
   return `Tu es le moteur de MORPHOGENESIS STUDIO, un atelier 3D génératif nodal. Tu convertis une description en une CHAÎNE de nœuds (pipeline linéaire) qui produit une forme organique/fractale/cellulaire via un champ scalaire → marching cubes.
