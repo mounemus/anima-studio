@@ -99,6 +99,7 @@ export function PotteryStudio() {
   const [conserve, setConserve] = useState(true)
   const [tool, setTool] = useState<Tool>('pull')
   const [strength, setStrength] = useState(0.6)
+  const [firmness, setFirmness] = useState(0.5)
   const [clayColor, setClayColor] = useState('#b5651d')
   const [wireframe, setWireframe] = useState(false)
   const [showGuides, setShowGuides] = useState(true)
@@ -109,9 +110,10 @@ export function PotteryStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, clayColor, wireframe, showGuides, showSkeleton, bgMode })
-  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, clayColor, wireframe, showGuides, showSkeleton, bgMode }
-  const resetRef = useRef(true)          // rebuild the lump
+  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, clayColor, wireframe, showGuides, showSkeleton, bgMode })
+  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, clayColor, wireframe, showGuides, showSkeleton, bgMode }
+  const resetRef = useRef(false)         // reset to a fresh lump
+  const undoRef = useRef(false), redoRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
   const recCtl = useRef<{ start: () => void; stop: () => void } | null>(null)
 
@@ -211,32 +213,42 @@ export function PotteryStudio() {
     }
     let skelHands: { x: number; y: number }[][] = []   // last landmarks (screen px, mirrored) for the skeleton
 
-    type Contact = { rad: number; ring: number; press: number; sx: number; sy: number; inner: boolean }
+    type Contact = { rad: number; ring: number; press: number; sx: number; sy: number; inner: boolean; resist: number }
     let hud: { contacts: Contact[]; toolLabel: string } = { contacts: [], toolLabel: '' }
+
+    // ── Undo / redo history (snapshots of the radial profiles) ──
+    type Snap = { o: Float32Array; i: Float32Array; top: number }
+    const snapOf = (): Snap => ({ o: rOut.slice(), i: rIn.slice(), top })
+    const applySnap = (s: Snap) => { rOut.set(s.o); rIn.set(s.i); top = s.top }
+    let past: Snap[] = [], future: Snap[] = []
+    const pushHistory = () => { past.push(snapOf()); if (past.length > 40) past.shift(); future = [] }
 
     // Gaussian falloff over ~ band width in rings.
     const bandW = (k: number, center: number, sigma: number) => Math.exp(-((k - center) * (k - center)) / (2 * sigma * sigma))
 
+    // Material force-feedback : firmer/thicker clay resists — the wall yields LESS per unit
+    // press. `resist` (0..1, on the contact) is displayed ; `yF` is the yield multiplier.
+    const yF = (c: Contact) => 1 - 0.72 * c.resist
     const applyTool = (contacts: Contact[], p: typeof paramsRef.current, dt: number) => {
       const eng = contacts.filter((c) => c.press > 0.15)
       if (!eng.length) return
-      const rate = clamp(0, 0.9, p.strength * Math.min(1, dt * 9))
+      const rate = clamp(0, 0.95, p.strength * Math.min(1, dt * 12))   // more responsive
       const sigma = 4   // tighter band → finger-level precision
       if (p.tool === 'pull') {
         if (eng.length >= 2) {
           const s = [...eng].sort((a, b) => a.rad - b.rad); const inn = s[0], out = s[s.length - 1]
-          const center = Math.round((inn.ring + out.ring) / 2), press = Math.min(inn.press, out.press)
-          for (let k = FLOOR_RINGS; k <= top; k++) { const w = bandW(k, center, sigma) * rate * press; if (w < 1e-3) continue; rOut[k] += (clamp(0.02, MAXR, out.rad) - rOut[k]) * w; rIn[k] += (clamp(0, MAXR, inn.rad) - rIn[k]) * w }
+          const center = Math.round((inn.ring + out.ring) / 2), press = Math.min(inn.press, out.press), yf = (yF(inn) + yF(out)) * 0.5
+          for (let k = FLOOR_RINGS; k <= top; k++) { const w = bandW(k, center, sigma) * rate * press * yf; if (w < 1e-3) continue; rOut[k] += (clamp(0.02, MAXR, out.rad) - rOut[k]) * w; rIn[k] += (clamp(0, MAXR, inn.rad) - rIn[k]) * w }
         } else {
-          const c = eng[0], mid = (rOut[c.ring] + rIn[c.ring]) * 0.5, inner = c.rad < mid
-          for (let k = FLOOR_RINGS; k <= top; k++) { const w = bandW(k, c.ring, sigma) * rate * c.press; if (w < 1e-3) continue; if (inner) rIn[k] += (clamp(0, MAXR, c.rad) - rIn[k]) * w; else rOut[k] += (clamp(0.02, MAXR, c.rad) - rOut[k]) * w }
+          const c = eng[0], mid = (rOut[c.ring] + rIn[c.ring]) * 0.5, inner = c.rad < mid, yf = yF(c)
+          for (let k = FLOOR_RINGS; k <= top; k++) { const w = bandW(k, c.ring, sigma) * rate * c.press * yf; if (w < 1e-3) continue; if (inner) rIn[k] += (clamp(0, MAXR, c.rad) - rIn[k]) * w; else rOut[k] += (clamp(0.02, MAXR, c.rad) - rOut[k]) * w }
         }
       } else if (p.tool === 'open') {
-        const c = eng.reduce((a, b) => (a.rad < b.rad ? a : b))    // hand nearest the axis
-        for (let k = Math.max(FLOOR_RINGS, c.ring); k <= top; k++) { const w = rate * c.press * (k >= c.ring ? 1 : 0.4); const tgt = clamp(0, rOut[k] - MINWALL, c.rad); rIn[k] += (tgt - rIn[k]) * w }
+        const c = eng.reduce((a, b) => (a.rad < b.rad ? a : b)), yf = yF(c)    // hand nearest the axis
+        for (let k = Math.max(FLOOR_RINGS, c.ring); k <= top; k++) { const w = rate * c.press * yf * (k >= c.ring ? 1 : 0.4); const tgt = clamp(0, rOut[k] - MINWALL, c.rad); rIn[k] += (tgt - rIn[k]) * w }
       } else if (p.tool === 'widen' || p.tool === 'collar') {
         const dir = p.tool === 'widen' ? 1 : -1
-        for (const c of eng) for (let k = FLOOR_RINGS; k <= top; k++) { const w = bandW(k, c.ring, sigma) * rate * c.press; if (w < 1e-3) continue; const d = dir * 0.06 * w; rOut[k] = clamp(0.02, MAXR, rOut[k] + d); if (rIn[k] > EPS) rIn[k] = clamp(0, rOut[k] - MINWALL, rIn[k] + d) }
+        for (const c of eng) { const yf = yF(c); for (let k = FLOOR_RINGS; k <= top; k++) { const w = bandW(k, c.ring, sigma) * rate * c.press * yf; if (w < 1e-3) continue; const d = dir * 0.06 * w; rOut[k] = clamp(0.02, MAXR, rOut[k] + d); if (rIn[k] > EPS) rIn[k] = clamp(0, rOut[k] - MINWALL, rIn[k] + d) } }
       } else if (p.tool === 'rib') {
         for (const c of eng) for (let k = FLOOR_RINGS + 1; k < top; k++) { const w = bandW(k, c.ring, sigma) * rate * c.press; if (w < 1e-3) continue; rOut[k] += ((rOut[k - 1] + rOut[k + 1]) * 0.5 - rOut[k]) * w; rIn[k] += ((rIn[k - 1] + rIn[k + 1]) * 0.5 - rIn[k]) * w }
       } else if (p.tool === 'trim') {
@@ -300,12 +312,14 @@ export function PotteryStudio() {
     const stopRec = () => { if (recActive && recorder) { recorder.stop(); recActive = false; setRecording(false) } }
     recCtl.current = { start: startRec, stop: stopRec }
 
-    let lastT = performance.now()
+    let lastT = performance.now(), wasSculpting = false
     const loop = () => {
       if (!running) return
       const p = paramsRef.current
       const nowT = performance.now(), dt = clamp(0.001, 0.05, (nowT - lastT) / 1000); lastT = nowT
-      if (resetRef.current) { resetClay(p.clayMass); resetRef.current = false }
+      if (resetRef.current) { pushHistory(); resetClay(p.clayMass); resetRef.current = false; setStatus('Remise à zéro — nouvelle motte centrée.') }
+      if (undoRef.current) { undoRef.current = false; if (past.length) { future.push(snapOf()); applySnap(past.pop()!); setStatus('↶ Annulé.') } else setStatus('Rien à annuler.') }
+      if (redoRef.current) { redoRef.current = false; if (future.length) { past.push(snapOf()); applySnap(future.pop()!); setStatus('↷ Refait.') } else setStatus('Rien à refaire.') }
       if (exportRef.current) { doExport(exportRef.current); exportRef.current = null }
       V0 = VOL_K * p.clayMass    // live target : changing mass adds/removes clay
 
@@ -332,12 +346,20 @@ export function PotteryStudio() {
           const ndcX = (sm.x / overlay.width) * 2 - 1, ndcY = -((sm.y / overlay.height) * 2 - 1)
           const m = mapFinger(ndcX, ndcY)
           if (!m) continue
-          contacts.push({ rad: m.rad, ring: m.ring, press, sx: sm.x, sy: sm.y, inner: false })
+          // Local material resistance : thicker / firmer clay resists more (force feedback).
+          const thick = rIn[m.ring] > EPS ? Math.max(0, rOut[m.ring] - rIn[m.ring]) : rOut[m.ring]
+          const resist = clamp(0, 1, p.firmness * (0.2 + 2.0 * thick))
+          contacts.push({ rad: m.rad, ring: m.ring, press, sx: sm.x, sy: sm.y, inner: false, resist })
         }
         if (!hands.length) skelHands = []
         if (contacts.length >= 2) { const mn = contacts.reduce((a, b) => (a.rad < b.rad ? a : b)); mn.inner = true }
       }
-      if (newFrame) applyTool(contacts, p, dt)
+      if (newFrame) {
+        const sculptingNow = contacts.some((c) => c.press > 0.15)
+        if (sculptingNow && !wasSculpting) pushHistory()   // snapshot the pre-stroke state → undo restores it
+        wasSculpting = sculptingNow
+        applyTool(contacts, p, dt)
+      }
       if (newFrame && contacts.length) hud = { contacts, toolLabel: TOOLS.find((t) => t.kind === p.tool)?.label ?? '' }
       else if (!contacts.length && newFrame) hud = { contacts: [], toolLabel: hud.toolLabel }
 
@@ -367,11 +389,18 @@ export function PotteryStudio() {
       }
       for (const c of hud.contacts) {
         const on = c.press > 0.15
-        octx.beginPath(); octx.arc(c.sx, c.sy, on ? 14 : 8, 0, Math.PI * 2)
-        octx.fillStyle = on ? (c.inner ? 'rgba(255,180,0,0.6)' : 'rgba(0,224,192,0.6)') : 'rgba(255,255,255,0.4)'
-        octx.globalAlpha = 0.85; octx.fill(); octx.globalAlpha = 1
+        // Force-feedback ring : as you press into firm/thick clay, an outer "resistance"
+        // ring swells and reddens (green = yields easily → red = pushing back hard).
+        if (on) {
+          const rr = 16 + c.press * 22 + c.resist * 16
+          const col = `hsl(${Math.round(150 - c.resist * 150)},90%,55%)`   // green→red by resistance
+          octx.beginPath(); octx.arc(c.sx, c.sy, rr, 0, Math.PI * 2); octx.strokeStyle = col; octx.lineWidth = 2 + c.resist * 4; octx.globalAlpha = 0.5 + 0.4 * c.press; octx.stroke(); octx.globalAlpha = 1
+        }
+        octx.beginPath(); octx.arc(c.sx, c.sy, on ? 12 : 8, 0, Math.PI * 2)
+        octx.fillStyle = on ? (c.inner ? 'rgba(255,180,0,0.7)' : 'rgba(0,224,192,0.7)') : 'rgba(255,255,255,0.4)'
+        octx.globalAlpha = 0.9; octx.fill(); octx.globalAlpha = 1
         octx.lineWidth = 3; octx.strokeStyle = c.inner ? '#ffb400' : '#00e0c0'; octx.stroke()
-        if (on) { octx.fillStyle = '#fff'; octx.font = 'bold 11px system-ui'; octx.textAlign = 'center'; octx.fillText(c.inner ? 'INT.' : 'EXT.', c.sx, c.sy - 20) }
+        if (on) { octx.fillStyle = '#fff'; octx.font = 'bold 11px system-ui'; octx.textAlign = 'center'; octx.fillText(`${c.inner ? 'INT.' : 'EXT.'} · ${Math.round(c.resist * 100)}%`, c.sx, c.sy - 24) }
       }
       if (recActive && recCtx && recCanvas) {
         const w = recCanvas.width, h = recCanvas.height
@@ -440,6 +469,12 @@ export function PotteryStudio() {
           </Field>
 
           <Field label={`Force de l'outil — ${Math.round(strength * 100)}%`}><input type="range" min={0.1} max={1} step={0.05} value={strength} onChange={(e) => setStrength(+e.target.value)} style={rngStyle} /></Field>
+          <Field label={`Fermeté de l'argile — ${Math.round(firmness * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={firmness} onChange={(e) => setFirmness(+e.target.value)} style={rngStyle} /><p style={{ color: '#9a8a78', fontSize: 10, margin: '4px 0 0', lineHeight: 1.3 }}>Retour de force : plus l'argile est ferme/épaisse, plus elle résiste (anneau rouge autour du doigt).</p></Field>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+            <button onClick={() => { undoRef.current = true }} style={{ ...selStyle, flex: 1, fontSize: 12 }}>↶ Annuler</button>
+            <button onClick={() => { redoRef.current = true }} style={{ ...selStyle, flex: 1, fontSize: 12 }}>↷ Refaire</button>
+            <button onClick={() => { resetRef.current = true }} style={{ ...selStyle, flex: 1, fontSize: 12, background: 'rgba(255,80,80,0.2)', borderColor: 'rgba(255,80,80,0.45)' }}>⟲ Zéro</button>
+          </div>
 
           <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Le tour & l'argile</div>
           <Field label={`Vitesse du tour — ${wheelSpeed.toFixed(1)}`}><input type="range" min={0} max={3} step={0.1} value={wheelSpeed} onChange={(e) => setWheelSpeed(+e.target.value)} style={rngStyle} /></Field>
@@ -454,8 +489,7 @@ export function PotteryStudio() {
           <label style={chkRow}><input type="checkbox" checked={showSkeleton} onChange={(e) => setShowSkeleton(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> ✋ Squelette des mains</label>
           <Field label="Fond"><select value={bgMode} onChange={(e) => setBgMode(e.target.value as 'webcam' | 'black')} style={selStyle}><option value="webcam">📷 Webcam</option><option value="black">⬛ Atelier sombre</option></select></Field>
 
-          <button onClick={() => { resetRef.current = true }} style={{ ...selStyle, marginBottom: 8, marginTop: 6, background: 'rgba(255,150,60,0.18)', borderColor: 'rgba(255,150,60,0.45)' }}>♻️ Nouvelle motte d'argile</button>
-          <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '10px 0 6px' }}>Export</div>
+          <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Export</div>
           <button onClick={() => { recording ? recCtl.current?.stop() : recCtl.current?.start() }} style={{ ...selStyle, marginBottom: 8, background: recording ? 'rgba(255,40,60,0.35)' : 'rgba(255,255,255,0.1)', borderColor: recording ? '#ff2840' : 'rgba(255,255,255,0.2)' }}>{recording ? '⏹ Arrêter l\'enregistrement' : '🔴 Enregistrer une vidéo'}</button>
           <div style={{ display: 'flex', gap: 8 }}><button onClick={exportPng} style={{ ...selStyle, flex: 1 }}>📸 PNG</button><button onClick={() => { exportRef.current = 'glb' }} style={{ ...selStyle, flex: 1 }}>🏺 .glb</button><button onClick={() => { exportRef.current = 'stl' }} style={{ ...selStyle, flex: 1 }} title="Vase étanche pour impression 3D">🖨️ .stl</button></div>
           <p style={{ color: '#7a6a58', fontSize: 10, marginTop: 10, marginBottom: 0, lineHeight: 1.4 }}>Souris : glisser = orbiter (azimut + inclinaison) · molette = zoom. Incliner la vue change l'impact des doigts sur l'argile.</p>
