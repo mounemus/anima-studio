@@ -48,7 +48,7 @@ export function textToGraph(prompt: string): Built {
   const t = prompt.toLowerCase()
   const has = (...ks: string[]) => ks.some((k) => t.includes(k))
   const nAfter = (re: RegExp) => { const m = t.match(re); return m ? parseInt(m[1], 10) : null }
-  const material = detectMat(t)
+  let material = detectMat(t)
 
   // — parametric surfaces output a mesh directly (no field/marching-cubes pipeline) —
   if (has('klein', 'bouteille de klein')) { const surf = has('surface', 'figure', 'huit', '∞', 'infini', 'ruban de klein'); return { graph: chainGraph([{ type: surf ? 'kleinsurf' : 'klein' }, { type: 'smooth', params: { iter: 1 } }]), explain: [surf ? 'Surface de Klein (figure-8).' : 'Bouteille de Klein immergée.'], material } }
@@ -59,7 +59,9 @@ export function textToGraph(prompt: string): Built {
   const steps: Step[] = [], explain: string[] = []
 
   // — source form (silhouettes variées, pas seulement sphériques) —
-  if (has('voronoï', 'voronoi', 'cellul', 'poreux', 'porous', 'alvéol', 'nid d')) { steps.push({ type: 'voronoi', params: { scale: nAfter(/(\d+)\s*cellul/) ?? 4, thick: 0.08 } }); explain.push('Voronoï 3D — réseau de cellules à parois fines.') }
+  if (has('méduse', 'meduse', 'jellyfish', 'ombrelle', 'cloche')) { steps.push({ type: 'metaballs', params: { shape: 'disc', count: 20, radius: 0.36, spread: 0.9, seed: 5 } }, { type: 'stretch', params: { sy: 0.7, sxz: 1.25 } }, { type: 'displace', params: { type: 'ridged', amp: 0.07, freq: 3.2 } }); explain.push('Dôme d’ombrelle bombé — corps de méduse (membrane translucide, nervures radiales).'); if (!material) material = 'translucent' }
+  else if (has('mandelbulb', 'bulbe de mandel', 'mandel bulb')) { steps.push({ type: 'mandelbulb', params: { power: nAfter(/puissance\s*(\d+)/) ?? 8 } }); explain.push('Mandelbulb — fractal 3D à distance estimée.') }
+  else if (has('voronoï', 'voronoi', 'cellul', 'poreux', 'porous', 'alvéol', 'nid d')) { steps.push({ type: 'voronoi', params: { scale: nAfter(/(\d+)\s*cellul/) ?? 4, thick: 0.08 } }); explain.push('Voronoï 3D — réseau de cellules à parois fines.') }
   else if (has('gyroïde', 'gyroid', 'tpms', 'minimale')) { steps.push({ type: 'gyroid' }); explain.push('Gyroïde (TPMS) — surface minimale continue et poreuse.') }
   else if (has(' os', 'bone', 'trabecul', 'treillis', 'lattice')) { steps.push({ type: 'schwarz' }, { type: 'stretch', params: { sy: 1.5, sxz: 0.85 } }); explain.push('Schwarz-P allongé — treillis type os.') }
   else if (has('spiral', 'spirale', 'nautilus', 'hélic', 'helic', 'escargot', 'coquille', 'shell')) { steps.push({ type: 'helix', params: { count: 46, radius: 0.16, spread: 0.9, turns: 0.55 } }, { type: 'twist', params: { k: 1.1 } }); explain.push('Croissance hélicoïdale — coquille spiralée.') }
@@ -148,7 +150,7 @@ export function applyCommand(cmd: string, graph: Graph): Built {
 }
 
 // ── Real LLM path (uses the admin-configured Anthropic key via /api/morpho-assistant) ──
-const LINEAR_TYPES = ['sphere', 'box', 'torus', 'capsule', 'gyroid', 'schwarz', 'voronoi', 'metaballs', 'bloom', 'helix', 'displace', 'shell', 'twist', 'taper', 'stretch', 'radial', 'mirror', 'relief', 'surface', 'smooth']
+const LINEAR_TYPES = ['sphere', 'box', 'torus', 'capsule', 'gyroid', 'schwarz', 'mandelbulb', 'voronoi', 'metaballs', 'bloom', 'helix', 'displace', 'shell', 'twist', 'taper', 'stretch', 'radial', 'mirror', 'relief', 'surface', 'smooth', 'decimate', 'thicken']
 function buildSystemPrompt(): string {
   const spec = LINEAR_TYPES.map((ty) => { const d = NODE_DEFS[ty]; const ps = d.params.map((p) => p.type === 'select' ? `${p.key}∈{${p.options!.map((o) => o.v).join('|')}}` : p.type === 'seed' ? `${p.key}(entier)` : `${p.key}(${p.min}…${p.max})`).join(', '); return `- ${ty} [${d.cat}]${ps ? ' : ' + ps : ''}` }).join('\n')
   return `Tu es le moteur de MORPHOGENESIS STUDIO, un atelier 3D génératif nodal. Tu convertis une description en une CHAÎNE de nœuds (pipeline linéaire) qui produit une forme organique/fractale/cellulaire via un champ scalaire → marching cubes.

@@ -91,6 +91,23 @@ export const opStretch = (a: Field, sx: number, sy: number, sz: number): Field =
 // Relief : keep only a slab (thin in Z) → the field reads as a wall panel, not a ball.
 export const fReliefSlab = (a: Field, thick: number, bound: number): Field => fIntersect(a, sdBox(bound, bound, thick), 0.03)
 
+/** Mandelbulb — distance-estimated 3D fractal (power p, iteration count). Bounded field. */
+export const mandelbulb = (power: number, iters: number, scale: number): Field => (X, Y, Z) => {
+  const x = X / scale, y = Y / scale, z = Z / scale
+  let zx = x, zy = y, zz = z, dr = 1, r = 0
+  for (let i = 0; i < iters; i++) {
+    r = Math.hypot(zx, zy, zz)
+    if (r > 2) break
+    const theta = Math.acos(clamp(-1, 1, zz / (r || 1e-9))) * power
+    const phi = Math.atan2(zy, zx) * power
+    const zr = Math.pow(r, power)
+    dr = Math.pow(r, power - 1) * power * dr + 1
+    const st = Math.sin(theta)
+    zx = zr * st * Math.cos(phi) + x; zy = zr * st * Math.sin(phi) + y; zz = zr * Math.cos(theta) + z
+  }
+  return (0.5 * Math.log(r || 1e-9) * r / dr) * scale
+}
+
 // Phyllotaxis point set (golden-angle spiral on a sphere/disc) — for Fractal Bloom / metaballs.
 export function phyllotaxis(n: number, spread: number, rise: number): [number, number, number][] {
   const ga = Math.PI * (3 - Math.sqrt(5)), out: [number, number, number][] = []

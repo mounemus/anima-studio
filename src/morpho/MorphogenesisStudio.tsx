@@ -14,6 +14,7 @@ import * as THREE from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { NODE_DEFS, NODE_CATS, evalGraph, makeNode, uid, type Graph, type GNode } from './graph'
 import { analyze, type MeshStats } from './mesh'
 import { PRESETS } from './presets'
@@ -32,7 +33,7 @@ function makeMaterial(kind: MatKind): THREE.Material {
     case 'chrome': return new THREE.MeshStandardMaterial({ color: 0xdfe6ee, metalness: 1, roughness: 0.12, side: THREE.DoubleSide })
     case 'gloss': return new THREE.MeshStandardMaterial({ color: 0x0a0a0c, metalness: 0.4, roughness: 0.12, side: THREE.DoubleSide })
     case 'matte': return new THREE.MeshStandardMaterial({ color: 0xc9ccd2, metalness: 0.02, roughness: 0.85, side: THREE.DoubleSide })
-    case 'translucent': return new THREE.MeshPhysicalMaterial({ color: 0xbcd7e6, metalness: 0, roughness: 0.25, transmission: 0.6, thickness: 0.6, ior: 1.3, side: THREE.DoubleSide })
+    case 'translucent': return new THREE.MeshPhysicalMaterial({ color: 0xcfe6f0, metalness: 0, roughness: 0.12, transmission: 0.95, thickness: 0.9, ior: 1.35, attenuationDistance: 2.5, attenuationColor: new THREE.Color(0x9fc7e0), envMapIntensity: 1.2, transparent: true, side: THREE.DoubleSide })
     case 'clay': default: return new THREE.MeshStandardMaterial({ color: 0xc8946a, metalness: 0, roughness: 0.8, side: THREE.DoubleSide })
   }
 }
@@ -73,10 +74,16 @@ export function MorphogenesisStudio() {
     const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100)
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05
     mount.appendChild(renderer.domElement); renderer.domElement.style.cssText = 'width:100%;height:100%;display:block'
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x202430, 1.0))
-    const key = new THREE.DirectionalLight(0xffffff, 1.4); key.position.set(3, 5, 4); scene.add(key)
-    const fill = new THREE.DirectionalLight(0x94b8ff, 0.6); fill.position.set(-4, 1, -3); scene.add(fill)
+    // Environment (IBL) — REQUIRED for translucent glass & metallic materials to be visible
+    // (transmission/reflection sample the environment ; without it they render black/invisible).
+    const pmrem = new THREE.PMREMGenerator(renderer); pmrem.compileEquirectangularShader()
+    let envTex: THREE.Texture | null = null
+    try { const roomEnv = new RoomEnvironment(); envTex = pmrem.fromScene(roomEnv, 0.04).texture; scene.environment = envTex } catch { /* noop */ }
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x202430, 0.7))
+    const key = new THREE.DirectionalLight(0xffffff, 1.2); key.position.set(3, 5, 4); scene.add(key)
+    const fill = new THREE.DirectionalLight(0x94b8ff, 0.5); fill.position.set(-4, 1, -3); scene.add(fill)
     const grid = new THREE.GridHelper(6, 24, 0x2a3040, 0x1c212c); grid.position.y = -1.6; scene.add(grid)
     let mesh = new THREE.Mesh(new THREE.BufferGeometry(), makeMaterial(matRef.current)); scene.add(mesh)
 
@@ -113,7 +120,7 @@ export function MorphogenesisStudio() {
     // material / wireframe live sync
     const matTimer = setInterval(() => { if ((mesh.material as any).__k !== matRef.current) { mesh.material.dispose(); mesh.material = makeMaterial(matRef.current); (mesh.material as any).__k = matRef.current }; (mesh.material as any).wireframe = wireRef.current }, 120)
 
-    return () => { cancelAnimationFrame(raf); clearInterval(matTimer); ro.disconnect(); window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); renderer.domElement.removeEventListener('pointerdown', dn); renderer.domElement.removeEventListener('wheel', wh); mesh.geometry.dispose(); renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement); applyRef.current = null; renderThumbRef.current = null }
+    return () => { cancelAnimationFrame(raf); clearInterval(matTimer); ro.disconnect(); window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); renderer.domElement.removeEventListener('pointerdown', dn); renderer.domElement.removeEventListener('wheel', wh); mesh.geometry.dispose(); envTex?.dispose(); pmrem.dispose(); renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement); applyRef.current = null; renderThumbRef.current = null }
   }, [])
 
   // ── Worker : evaluate the graph off the main thread (HD never freezes the UI) ──
@@ -329,10 +336,11 @@ function NodeCanvas({ graph, setGraph, pushHist, selId, setSelId }: { graph: Gra
 }
 
 function ParamCtl({ node, pr, onChange }: { node: GNode; pr: (typeof NODE_DEFS)[string]['params'][number]; onChange: (v: number | string) => void }) {
-  const v = node.params[pr.key] ?? pr.def
-  if (pr.type === 'select') return <Field l={pr.label}><select value={v as string} onChange={(e) => onChange(e.target.value)} style={sel}>{pr.options!.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}</select></Field>
-  if (pr.type === 'seed') return <Field l={pr.label}><div style={{ display: 'flex', gap: 6 }}><input type="number" value={v as number} onChange={(e) => onChange(+e.target.value)} style={{ ...sel, flex: 1 }} /><button onClick={() => onChange(Math.floor(Math.random() * 9999) + 1)} style={{ ...sel, width: 34, cursor: 'pointer' }}>🎲</button></div></Field>
-  return <Field l={`${pr.label} — ${(v as number).toFixed(2)}`}><input type="range" min={pr.min} max={pr.max} step={pr.step} value={v as number} onChange={(e) => onChange(+e.target.value)} style={{ width: '100%', accentColor: '#8b6df0' }} /></Field>
+  const raw = node.params[pr.key] ?? pr.def
+  if (pr.type === 'select') return <Field l={pr.label}><select value={String(raw)} onChange={(e) => onChange(e.target.value)} style={sel}>{pr.options!.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}</select></Field>
+  const v = typeof raw === 'number' && Number.isFinite(raw) ? raw : (pr.def as number)
+  if (pr.type === 'seed') return <Field l={pr.label}><div style={{ display: 'flex', gap: 6 }}><input type="number" value={v} onChange={(e) => onChange(+e.target.value)} style={{ ...sel, flex: 1 }} /><button onClick={() => onChange(Math.floor(Math.random() * 9999) + 1)} style={{ ...sel, width: 34, cursor: 'pointer' }}>🎲</button></div></Field>
+  return <Field l={`${pr.label} — ${v.toFixed(2)}`}><input type="range" min={pr.min} max={pr.max} step={pr.step} value={v} onChange={(e) => onChange(+e.target.value)} style={{ width: '100%', accentColor: '#8b6df0' }} /></Field>
 }
 
 function dl(blob: Blob, name: string) { const u = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = u; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 1500) }
