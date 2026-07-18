@@ -17,6 +17,7 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { NODE_DEFS, NODE_CATS, evalGraph, makeNode, uid, type Graph, type GNode } from './graph'
 import { analyze, type MeshStats } from './mesh'
 import { PRESETS } from './presets'
+import { textToGraph, applyCommand, QUICK_COMMANDS, EXAMPLE_PROMPTS, type Built } from './assistant'
 
 const clamp = (a: number, b: number, v: number) => Math.max(a, Math.min(b, v))
 type MatKind = 'clay' | 'matte' | 'chrome' | 'gloss' | 'translucent'
@@ -47,6 +48,8 @@ export function MorphogenesisStudio() {
   const [status, setStatus] = useState('Prêt.')
   const [variants, setVariants] = useState<{ graph: Graph; thumb: string }[]>([])
   const [addMenu, setAddMenu] = useState(false)
+  const [aiInput, setAiInput] = useState('')
+  const [aiLog, setAiLog] = useState<{ role: 'you' | 'ai'; text: string }[]>([{ role: 'ai', text: 'Décris une forme et je construis le graphe. Ex : « coquille spiralée translucide à nervures fractales ».' }])
 
   const graphRef = useRef(graph); graphRef.current = graph
   const applyRef = useRef<((g: THREE.BufferGeometry | null) => void) | null>(null)
@@ -142,6 +145,9 @@ export function MorphogenesisStudio() {
   const mutate = () => pushHist(mutateGraph(graphRef.current, 0.3))
 
   const loadPreset = (i: number) => { pushHist(PRESETS[i].build()); setSelId(null); setVariants([]) }
+  const runBuilt = (b: Built, youText: string) => { pushHist(b.graph); setSelId(null); setVariants([]); if (b.material) setMaterial(b.material); setAiLog((l) => [...l, { role: 'you' as const, text: youText }, { role: 'ai' as const, text: b.explain.join(' ') }].slice(-10)) }
+  const aiGenerate = (prompt: string) => { const p = prompt.trim(); if (!p) return; runBuilt(textToGraph(p), p); setAiInput('') }
+  const aiCommand = (cmd: string) => runBuilt(applyCommand(cmd, graphRef.current), cmd)
   const selNode = graph.nodes.find((n) => n.id === selId) ?? null
   const setNodeParam = (id: string, key: string, val: number | string) => { setGraph((g) => ({ ...g, nodes: g.nodes.map((n) => (n.id === id ? { ...n, params: { ...n.params, [key]: val } } : n)) })) }
 
@@ -170,6 +176,18 @@ export function MorphogenesisStudio() {
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* Left panel */}
         <div style={{ width: 262, borderRight: '1px solid #20252f', padding: 12, overflowY: 'auto', background: '#0f1218' }}>
+          {/* Assistant IA texte → graphe */}
+          <div style={{ background: 'linear-gradient(180deg,#171b26,#12151c)', border: '1px solid #2a2f52', borderRadius: 10, padding: 10, marginBottom: 14 }}>
+            <div style={{ ...hdr, marginBottom: 6, color: '#a99cff' }}>✦ Assistant IA</div>
+            <div style={{ maxHeight: 118, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 7 }}>
+              {aiLog.map((m, i) => (<div key={i} style={{ fontSize: 10.5, lineHeight: 1.35, alignSelf: m.role === 'you' ? 'flex-end' : 'flex-start', maxWidth: '92%', background: m.role === 'you' ? '#2a2f52' : '#1a1f28', color: m.role === 'you' ? '#dfe3ff' : '#c3cad6', padding: '4px 7px', borderRadius: 7 }}>{m.text}</div>))}
+            </div>
+            <textarea value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); aiGenerate(aiInput) } }} placeholder="Décris une forme…" rows={2} style={{ width: '100%', resize: 'none', background: '#0c0e14', border: '1px solid #2a3140', color: '#dfe3ea', borderRadius: 6, padding: 6, fontSize: 11, fontFamily: 'inherit' }} />
+            <button onClick={() => aiGenerate(aiInput)} style={{ ...card, width: '100%', margin: '6px 0 4px', borderColor: '#8b6df0', background: '#241f3a' }}>✦ Générer le graphe</button>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>{EXAMPLE_PROMPTS.slice(0, 3).map((p) => <button key={p} onClick={() => aiGenerate(p)} style={ex}>{p.length > 26 ? p.slice(0, 24) + '…' : p}</button>)}</div>
+            <div style={{ fontSize: 9, color: '#6b7385', textTransform: 'uppercase', letterSpacing: 1, margin: '2px 0 3px' }}>Commandes</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{QUICK_COMMANDS.map((c) => <button key={c} onClick={() => aiCommand(c)} style={ex}>{c}</button>)}</div>
+          </div>
           {mode === 'simple' ? <>
             <div style={hdr}>Systèmes génératifs</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6 }}>{PRESETS.map((pr, i) => (<button key={pr.name} onClick={() => loadPreset(i)} title={pr.desc} style={{ ...card, textAlign: 'left' }}><b>{pr.name}</b><div style={{ fontSize: 10, color: '#78808f', marginTop: 2, lineHeight: 1.3 }}>{pr.desc}</div></button>))}</div>
@@ -284,11 +302,12 @@ function dl(blob: Blob, name: string) { const u = URL.createObjectURL(blob); con
 function Field({ l, children }: { l: string; children: React.ReactNode }) { return <div style={{ marginBottom: 8 }}><div style={{ fontSize: 10, color: '#7a8296', marginBottom: 3 }}>{l}</div>{children}</div> }
 function Row({ k, v }: { k: string; v: string }) { return <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#6b7385' }}>{k}</span><span>{v}</span></div> }
 const hdr: React.CSSProperties = { fontSize: 10, color: '#8b6df0', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, fontWeight: 700 }
-const btn: React.CSSProperties = { background: '#1a1f28', border: '1px solid #2a3140', color: '#dfe3ea', padding: '5px 9px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 600 }
-const tab: React.CSSProperties = { background: 'transparent', border: '1px solid #2a3140', color: '#9aa3b4', padding: '4px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }
+const btn: React.CSSProperties = { background: '#1a1f28', borderWidth: 1, borderStyle: 'solid', borderColor: '#2a3140', color: '#dfe3ea', padding: '5px 9px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 600 }
+const tab: React.CSSProperties = { background: 'transparent', borderWidth: 1, borderStyle: 'solid', borderColor: '#2a3140', color: '#9aa3b4', padding: '4px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }
 const tabOn: React.CSSProperties = { background: '#8b6df0', borderColor: '#8b6df0', color: '#fff' }
 const card: React.CSSProperties = { background: '#161a22', borderWidth: 1, borderStyle: 'solid', borderColor: '#2a3140', color: '#dfe3ea', padding: 8, borderRadius: 8, cursor: 'pointer', fontSize: 12, marginBottom: 4 }
 const chip: React.CSSProperties = { display: 'block', width: '100%', textAlign: 'left', background: '#12151c', borderWidth: 1, borderStyle: 'solid', borderColor: '#2a3140', borderLeftWidth: 3, color: '#cfd5e0', padding: '5px 8px', borderRadius: 5, cursor: 'pointer', fontSize: 11, marginBottom: 3 }
 const sel: React.CSSProperties = { width: '100%', background: '#12151c', border: '1px solid #2a3140', color: '#dfe3ea', padding: 6, borderRadius: 6, fontSize: 12 }
-const pill: React.CSSProperties = { background: 'rgba(20,24,32,0.85)', border: '1px solid #2a3140', color: '#cfd5e0', padding: '4px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 11, backdropFilter: 'blur(6px)' }
+const ex: React.CSSProperties = { background: '#1a1f2e', borderWidth: 1, borderStyle: 'solid', borderColor: '#33385a', color: '#b9c0d6', padding: '3px 7px', borderRadius: 999, cursor: 'pointer', fontSize: 10 }
+const pill: React.CSSProperties = { background: 'rgba(20,24,32,0.85)', borderWidth: 1, borderStyle: 'solid', borderColor: '#2a3140', color: '#cfd5e0', padding: '4px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 11, backdropFilter: 'blur(6px)' }
 const pillOn: React.CSSProperties = { background: '#8b6df0', borderColor: '#8b6df0', color: '#fff' }
