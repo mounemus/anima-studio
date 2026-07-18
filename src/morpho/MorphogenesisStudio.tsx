@@ -33,7 +33,7 @@ function makeMaterial(kind: MatKind): THREE.Material {
     case 'chrome': return new THREE.MeshStandardMaterial({ color: 0xdfe6ee, metalness: 1, roughness: 0.12, side: THREE.DoubleSide })
     case 'gloss': return new THREE.MeshStandardMaterial({ color: 0x0a0a0c, metalness: 0.4, roughness: 0.12, side: THREE.DoubleSide })
     case 'matte': return new THREE.MeshStandardMaterial({ color: 0xc9ccd2, metalness: 0.02, roughness: 0.85, side: THREE.DoubleSide })
-    case 'translucent': return new THREE.MeshPhysicalMaterial({ color: 0xcfe6f0, metalness: 0, roughness: 0.12, transmission: 0.95, thickness: 0.9, ior: 1.35, attenuationDistance: 2.5, attenuationColor: new THREE.Color(0x9fc7e0), envMapIntensity: 1.2, transparent: true, side: THREE.DoubleSide })
+    case 'translucent': return new THREE.MeshPhysicalMaterial({ color: 0x9fd4ec, metalness: 0, roughness: 0.22, transmission: 0.55, thickness: 1.2, ior: 1.33, attenuationColor: new THREE.Color(0x5fa8d8), attenuationDistance: 1.4, clearcoat: 0.6, clearcoatRoughness: 0.25, envMapIntensity: 1.2, transparent: true, opacity: 0.72, side: THREE.FrontSide })
     case 'clay': default: return new THREE.MeshStandardMaterial({ color: 0xc8946a, metalness: 0, roughness: 0.8, side: THREE.DoubleSide })
   }
 }
@@ -74,16 +74,17 @@ export function MorphogenesisStudio() {
     const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100)
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05
+    renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.5
     mount.appendChild(renderer.domElement); renderer.domElement.style.cssText = 'width:100%;height:100%;display:block'
     // Environment (IBL) — REQUIRED for translucent glass & metallic materials to be visible
     // (transmission/reflection sample the environment ; without it they render black/invisible).
     const pmrem = new THREE.PMREMGenerator(renderer); pmrem.compileEquirectangularShader()
     let envTex: THREE.Texture | null = null
     try { const roomEnv = new RoomEnvironment(); envTex = pmrem.fromScene(roomEnv, 0.04).texture; scene.environment = envTex } catch { /* noop */ }
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x202430, 0.7))
-    const key = new THREE.DirectionalLight(0xffffff, 1.2); key.position.set(3, 5, 4); scene.add(key)
-    const fill = new THREE.DirectionalLight(0x94b8ff, 0.5); fill.position.set(-4, 1, -3); scene.add(fill)
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x2a3040, 1.3))
+    const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(3, 5, 4); scene.add(key)
+    const fill = new THREE.DirectionalLight(0xbcd6ff, 1.0); fill.position.set(-4, 1, -3); scene.add(fill)
+    const back = new THREE.DirectionalLight(0xffffff, 0.8); back.position.set(0, -3, -4); scene.add(back)
     const grid = new THREE.GridHelper(6, 24, 0x2a3040, 0x1c212c); grid.position.y = -1.6; scene.add(grid)
     let mesh = new THREE.Mesh(new THREE.BufferGeometry(), makeMaterial(matRef.current)); scene.add(mesh)
 

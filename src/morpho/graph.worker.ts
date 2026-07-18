@@ -5,15 +5,19 @@
  */
 /// <reference lib="webworker" />
 import { evalGraph, type Graph, type Quality } from './graph'
-import { analyze } from './mesh'
+import { analyze, weld } from './mesh'
 
 interface Req { id: number; kind: 'proxy' | 'hd'; graph: Graph; quality: Quality }
 
 self.onmessage = (e: MessageEvent<Req>) => {
   const { id, kind, graph, quality } = e.data
   try {
-    const geo = evalGraph(graph, quality)
+    let geo = evalGraph(graph, quality)
     if (!geo) { (self as unknown as Worker).postMessage({ id, kind, empty: true }); return }
+    // Weld non-indexed marching-cubes output → shared verts + smooth normals (raw
+    // flat-normal output looks faceted/"fragmented"). weld() is bulletproof: it
+    // returns the original geometry on any failure, so it can never blank the mesh.
+    if (!geo.getIndex()) geo = weld(geo)
     const pos = (geo.getAttribute('position').array as Float32Array).slice()
     const nrmAttr = geo.getAttribute('normal')
     const nrm = nrmAttr ? (nrmAttr.array as Float32Array).slice() : null

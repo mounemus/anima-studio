@@ -3,7 +3,21 @@
 import * as THREE from 'three'
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
-export function weld(g: THREE.BufferGeometry): THREE.BufferGeometry { const w = mergeVertices(g, 1e-4); w.computeVertexNormals(); return w }
+/** Weld coincident marching-cubes vertices → shared topology + SMOOTH normals.
+ *  Must strip the flat per-face `normal` first: mergeVertices compares *all*
+ *  attributes, so leaving the (differing) flat normals in place prevents merging
+ *  and the surface stays faceted ("fragmented"). Bulletproof — on any failure or
+ *  empty result it returns the original geometry, never a blank mesh. */
+export function weld(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  try {
+    const g2 = g.clone()
+    g2.deleteAttribute('normal'); g2.deleteAttribute('uv')
+    const w = mergeVertices(g2, 1e-4)
+    if (!w.getAttribute('position') || w.getAttribute('position').count < 3) return g
+    w.computeVertexNormals()
+    return w
+  } catch { return g }
+}
 
 /** Laplacian smoothing (n passes) on an indexed geometry. */
 export function laplacianSmooth(g: THREE.BufferGeometry, iterations: number, lambda = 0.5): THREE.BufferGeometry {
