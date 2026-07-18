@@ -38,4 +38,6 @@ export const PRESETS: { name: string; desc: string; build: () => Graph }[] = [
     ] }
   } },
   { name: '🦴 Bone Lattice', desc: 'Structure trabéculaire Schwarz allongée — treillis léger imprimable.', build: () => chain([['schwarz', { freq: 9, thick: 0.7, bound: 1 }], ['stretch', { sy: 1.5, sxz: 0.85 }], ['surface', { res: 108, bound: 1.25 }]]) },
+  { name: '🍶 Klein Bottle', desc: 'Surface paramétrique non-orientable — bouteille de Klein immergée.', build: () => chain([['klein', { res: 96 }], ['smooth', { iter: 1 }]]) },
+  { name: '♾️ Möbius', desc: 'Ruban de Möbius paramétrique à torsion réglable.', build: () => chain([['mobius', { res: 140, width: 0.42, twists: 1 }], ['smooth', { iter: 1 }]]) },
 ]

@@ -33,11 +33,29 @@ function insertBefore(g: Graph, targetType: string, newType: string, params?: Re
   return nn
 }
 
+function detectMat(t: string): MatKind | undefined {
+  const has = (...ks: string[]) => ks.some((k) => t.includes(k))
+  if (has('noir brillant', 'obsidienne', 'noir laqué', 'black gloss', ' noir')) return 'gloss'
+  if (has('translucide', 'transparent', 'verre', 'translucent', 'résine', 'resine', 'cire')) return 'translucent'
+  if (has('chrome', 'métal', 'metal', 'argent', 'acier', 'metallic')) return 'chrome'
+  if (has(' mat', 'matte', 'plâtre', 'platre')) return 'matte'
+  if (has('argile', 'clay', 'céramique', 'ceramique', 'terre cuite', 'terracotta')) return 'clay'
+  return undefined
+}
+
 // ── Text → graph ─────────────────────────────────────────────────────────────
 export function textToGraph(prompt: string): Built {
   const t = prompt.toLowerCase()
   const has = (...ks: string[]) => ks.some((k) => t.includes(k))
   const nAfter = (re: RegExp) => { const m = t.match(re); return m ? parseInt(m[1], 10) : null }
+  const material = detectMat(t)
+
+  // — parametric surfaces output a mesh directly (no field/marching-cubes pipeline) —
+  if (has('klein', 'bouteille de klein')) { const surf = has('surface', 'figure', 'huit', '∞', 'infini', 'ruban de klein'); return { graph: chainGraph([{ type: surf ? 'kleinsurf' : 'klein' }, { type: 'smooth', params: { iter: 1 } }]), explain: [surf ? 'Surface de Klein (figure-8).' : 'Bouteille de Klein immergée.'], material } }
+  if (has('möbius', 'mobius', 'moebius', 'ruban de möbius', 'ruban de mobius')) { return { graph: chainGraph([{ type: 'mobius', params: { res: 140, width: 0.42, twists: (nAfter(/(\d+)\s*torsion/) ?? 1) } }, { type: 'smooth', params: { iter: 1 } }]), explain: ['Ruban de Möbius.'], material } }
+  if (has('plücker', 'plucker', 'conoïde', 'conoide')) { return { graph: chainGraph([{ type: 'plucker', params: { blades: (nAfter(/(\d+)\s*lobe/) ?? 2) } }, { type: 'smooth', params: { iter: 1 } }]), explain: ['Conoïde de Plücker.'], material } }
+  if (has('géodésique', 'geodesique', 'geodesic', 'dôme', 'dome')) { return { graph: chainGraph([{ type: 'geodesic', params: { dome: has('sphère', 'complet', 'boule') ? 'full' : 'dome' } }]), explain: ['Dôme géodésique.'], material } }
+
   const steps: Step[] = [], explain: string[] = []
 
   // — source form (silhouettes variées, pas seulement sphériques) —
@@ -74,15 +92,7 @@ export function textToGraph(prompt: string): Built {
   steps.push({ type: 'surface', params: { res: hi ? 108 : 82, bound: 1.35 } }); explain.push(`Surface (marching cubes) — ${hi ? 'haute' : 'moyenne'} résolution.`)
   if (!has('anguleux', 'brut', 'faceted', 'low-poly', 'facetté')) { steps.push({ type: 'smooth', params: { iter: has('très lisse', 'tres lisse', 'poli', 'lisse') ? 3 : 1 } }); explain.push('Lissage laplacien.') }
 
-  // — material —
-  let material: MatKind | undefined
-  if (has('noir brillant', 'obsidienne', 'noir laqué', 'black gloss', ' noir')) material = 'gloss'
-  else if (has('translucide', 'transparent', 'verre', 'translucent', 'résine', 'resine', 'cire')) material = 'translucent'
-  else if (has('chrome', 'métal', 'metal', 'argent', 'acier', 'metallic')) material = 'chrome'
-  else if (has(' mat', 'matte', 'plâtre', 'platre')) material = 'matte'
-  else if (has('argile', 'clay', 'céramique', 'ceramique', 'terre cuite', 'terracotta')) material = 'clay'
   if (material) explain.push(`Matériau : ${material}.`)
-
   return { graph: chainGraph(steps), explain, material }
 }
 
