@@ -43,6 +43,20 @@ const TOOLS: { kind: Tool; label: string; hint: string }[] = [
   { kind: 'cells', label: '🪨 Cellules', hint: 'Creuse des alvéoles organiques (comme des galets/cellules).' },
   { kind: 'groove', label: '〰 Strier', hint: 'Grave des rainures/lignes en suivant le doigt.' },
 ]
+type MorphStyle = 'fractal' | 'grid' | 'radial' | 'spiral'
+const MORPH_STYLES: { kind: MorphStyle; label: string }[] = [
+  { kind: 'fractal', label: '🧬 Fractal (itéré)' }, { kind: 'grid', label: '🧱 Grille / blocs 3D' },
+  { kind: 'radial', label: '🌸 Radial (couronne)' }, { kind: 'spiral', label: '🌀 Spirale' },
+]
+/** Lightweight 3D value noise for the generative "Bruit" deformer. */
+function noise3(x: number, y: number, z: number): number {
+  const hash = (i: number, j: number, k: number) => { let h = (i * 374761393 + j * 668265263 + k * 1274126177) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296 }
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z), xf = x - xi, yf = y - yi, zf = z - zi
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf), w = zf * zf * (3 - 2 * zf)
+  const lp = (a: number, b: number, t: number) => a + (b - a) * t, c = (dx: number, dy: number, dz: number) => hash(xi + dx, yi + dy, zi + dz) * 2 - 1
+  const x00 = lp(c(0, 0, 0), c(1, 0, 0), u), x10 = lp(c(0, 1, 0), c(1, 1, 0), u), x01 = lp(c(0, 0, 1), c(1, 0, 1), u), x11 = lp(c(0, 1, 1), c(1, 1, 1), u)
+  return lp(lp(x00, x10, v), lp(x01, x11, v), w)
+}
 type SurfPattern = 'none' | 'cells' | 'stipple' | 'scales' | 'ridges'
 const SURF_PATTERNS: { kind: SurfPattern; label: string }[] = [
   { kind: 'none', label: 'Aucune (lisse)' }, { kind: 'cells', label: '🪨 Cellules (voronoï)' }, { kind: 'stipple', label: '⋮⋮ Pointillé' },
@@ -81,12 +95,20 @@ export function SculptStudio() {
   const [texScale, setTexScale] = useState(0.5)
   const [texDepth, setTexDepth] = useState(0.5)
   // metamorphose params
+  const [morphStyle, setMorphStyle] = useState<MorphStyle>('fractal')
   const [depth, setDepth] = useState(1)
   const [radial, setRadial] = useState(5)
+  const [gridN, setGridN] = useState(2)
+  const [turns, setTurns] = useState(2)
   const [mirror, setMirror] = useState(true)
   const [twist, setTwist] = useState(0.6)
   const [spread, setSpread] = useState(0.5)
   const [childScale, setChildScale] = useState(0.55)
+  // generative deformers (applied to the replicated geometry)
+  const [defTwist, setDefTwist] = useState(0)
+  const [defTaper, setDefTaper] = useState(0)
+  const [defNoise, setDefNoise] = useState(0)
+  const [noiseScale, setNoiseScale] = useState(3)
   const [handDrive, setHandDrive] = useState(true)
   // render
   const [colorA, setColorA] = useState('#c8794a')
@@ -99,8 +121,8 @@ export function SculptStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, depth, radial, mirror, twist, spread, childScale, handDrive, colorA, colorB, material, showSkeleton, bgMode })
-  paramsRef.current = { mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, depth, radial, mirror, twist, spread, childScale, handDrive, colorA, colorB, material, showSkeleton, bgMode }
+  const paramsRef = useRef({ mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, morphStyle, depth, radial, gridN, turns, mirror, twist, spread, childScale, defTwist, defTaper, defNoise, noiseScale, handDrive, colorA, colorB, material, showSkeleton, bgMode })
+  paramsRef.current = { mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, morphStyle, depth, radial, gridN, turns, mirror, twist, spread, childScale, defTwist, defTaper, defNoise, noiseScale, handDrive, colorA, colorB, material, showSkeleton, bgMode }
   const clearTexRef = useRef(false)
   const resetRef = useRef(false), undoRef = useRef(false), redoRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
@@ -185,7 +207,10 @@ export function SculptStudio() {
 
     // Metamorphose instances (share the blob geometry so they reflect the sculpt live).
     const instMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.2, side: THREE.DoubleSide, bumpMap: bumpTex, bumpScale: 0.6 })
-    const inst = new THREE.InstancedMesh(geo, instMat, MCAP)
+    // warpGeo : a deformed copy of the sculpted blob (generative deformers applied) used for
+    // the metamorphose instances — keeps the editable blob geometry untouched.
+    const warpGeo = geo.clone()
+    const inst = new THREE.InstancedMesh(warpGeo, instMat, MCAP)
     inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage); inst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MCAP * 3), 3)
     inst.count = 0; inst.frustumCulled = false; inst.visible = false; scene.add(inst)
 
@@ -242,29 +267,82 @@ export function SculptStudio() {
       if (mirrorX) { const gm = tool === 'grab' ? (grabSets.get(hand + 100) ?? null) : null; doOne(-center.x, center.y, center.z, -dx, dy, dz, gm) }
     }
 
-    // ── Metamorphose : replicate the sculpted blob (radial + mirror + twist + IFS) ──
+    // ── Metamorphose : replicate + deform the sculpted blob ──
     const cA = new THREE.Color(), cB = new THREE.Color(), cTmp = new THREE.Color()
     const _rk = new THREE.Matrix4(), _mir = new THREE.Matrix4().makeScale(-1, 1, 1)
     let lastSig = ''
+    // Generative deformers baked into warpGeo (twist around Y, taper, 3D-noise displacement).
+    const buildWarp = (dTwist: number, dTaper: number, dNoise: number, nScale: number) => {
+      const src = geo.getAttribute('position').array as Float32Array
+      const nrm = geo.getAttribute('normal').array as Float32Array
+      const dst = warpGeo.getAttribute('position').array as Float32Array
+      for (let i = 0; i < V; i++) {
+        let x = src[i * 3], y = src[i * 3 + 1], z = src[i * 3 + 2]
+        if (dTwist) { const a = dTwist * y, c = Math.cos(a), s = Math.sin(a), xr = x * c - z * s, zr = x * s + z * c; x = xr; z = zr }
+        if (dTaper) { const tf = clamp(0.05, 2, 1 - dTaper * (y * 0.5)); x *= tf; z *= tf }
+        if (dNoise) { const n = dNoise * noise3(x * nScale + 11, y * nScale + 3, z * nScale + 7); x += nrm[i * 3] * n; y += nrm[i * 3 + 1] * n; z += nrm[i * 3 + 2] * n }
+        dst[i * 3] = x; dst[i * 3 + 1] = y; dst[i * 3 + 2] = z
+      }
+      warpGeo.getAttribute('position').needsUpdate = true; warpGeo.computeVertexNormals(); warpGeo.computeBoundingSphere()
+    }
+    // Placement of the copies : the "style" arranges instances (fractal / grid / radial / spiral).
+    const placement = (p: typeof paramsRef.current, tw: number, sp: number, cs: number): { mat: THREE.Matrix4; d: number }[] => {
+      const out: { mat: THREE.Matrix4; d: number }[] = []
+      if (p.morphStyle === 'grid') {
+        const n = clamp(0, 4, Math.round(p.gridN)), step = 1.4 + sp * 1.6
+        for (let ix = -n; ix <= n; ix++) for (let iy = -n; iy <= n; iy++) for (let iz = -n; iz <= n; iz++) {
+          if (out.length >= MCAP) break
+          const jitter = 0.12 * sp
+          const mm = new THREE.Matrix4().makeTranslation(ix * step + noise3(ix, iy, iz) * jitter, iy * step, iz * step + noise3(iz, ix, iy) * jitter)
+          mm.multiply(new THREE.Matrix4().makeRotationY(tw * (ix + iz))); mm.multiply(new THREE.Matrix4().makeScale(cs + 0.35, cs + 0.35, cs + 0.35))
+          out.push({ mat: mm, d: (Math.abs(ix) + Math.abs(iy) + Math.abs(iz)) / (3 * (n + 0.5)) * 4 })
+        }
+      } else if (p.morphStyle === 'radial') {
+        const N = Math.max(1, Math.round(p.radial)), rings = clamp(1, 4, Math.round(p.depth)), rad = 1 + sp * 2
+        for (let r = 0; r < rings; r++) for (let k = 0; k < N; k++) {
+          if (out.length >= MCAP) break
+          const a = (k / N) * Math.PI * 2 + r * 0.4, rr = rad * (1 - r * 0.18)
+          const mm = new THREE.Matrix4().makeTranslation(Math.cos(a) * rr, r * (0.6 + sp) - rings * 0.3, Math.sin(a) * rr)
+          mm.multiply(new THREE.Matrix4().makeRotationY(-a + tw)); mm.multiply(new THREE.Matrix4().makeScale(cs + 0.3, cs + 0.3, cs + 0.3))
+          out.push({ mat: mm, d: r / rings * 4 })
+        }
+      } else if (p.morphStyle === 'spiral') {
+        const total = clamp(6, MCAP, Math.round(p.radial * 12)), tn = clamp(0.5, 6, p.turns), rad = 1 + sp * 1.5
+        for (let i = 0; i < total; i++) {
+          const t = i / total, a = t * tn * Math.PI * 2, rr = rad * (0.2 + t * 0.8)
+          const mm = new THREE.Matrix4().makeTranslation(Math.cos(a) * rr, (t - 0.5) * (2 + sp * 2), Math.sin(a) * rr)
+          mm.multiply(new THREE.Matrix4().makeRotationY(-a + tw)); mm.multiply(new THREE.Matrix4().makeScale((cs + 0.3) * (1 - t * 0.4), (cs + 0.3) * (1 - t * 0.4), (cs + 0.3) * (1 - t * 0.4)))
+          out.push({ mat: mm, d: t * 4 })
+        }
+      } else {
+        // fractal (IFS)
+        const N = Math.max(1, Math.round(p.radial)), symCopies = N * (p.mirror ? 2 : 1), maxNodes = Math.max(2, Math.floor(MCAP / symCopies))
+        const maps: THREE.Matrix4[] = []
+        for (let m = 0; m < 2; m++) { const a = m * Math.PI + tw; const mm = new THREE.Matrix4(); mm.multiply(new THREE.Matrix4().makeTranslation(Math.cos(a) * sp, sp * 0.6, Math.sin(a) * sp)).multiply(new THREE.Matrix4().makeRotationY(tw + a)).multiply(new THREE.Matrix4().makeScale(cs, cs, cs)); maps.push(mm) }
+        const nodes = grow(maps, clamp(1, 4, Math.round(p.depth)), maxNodes)
+        for (const node of nodes) for (let k = 0; k < N; k++) { _rk.makeRotationY((k / N) * Math.PI * 2); out.push({ mat: new THREE.Matrix4().multiplyMatrices(_rk, node.mat), d: node.d }); if (out.length >= MCAP) return out }
+      }
+      return out
+    }
     const regenMorph = (p: typeof paramsRef.current, tw: number, sp: number, cs: number) => {
-      const N = Math.max(1, Math.round(p.radial)), symCopies = N * (p.mirror ? 2 : 1)
-      const maxNodes = Math.max(2, Math.floor(MCAP / symCopies))
-      // 2 maps : scaled children rotated + lifted → fractal metamorphosis of the blob
-      const maps: THREE.Matrix4[] = []
-      for (let m = 0; m < 2; m++) { const a = m * Math.PI + tw; const mm = new THREE.Matrix4(); mm.multiply(new THREE.Matrix4().makeTranslation(Math.cos(a) * sp, sp * 0.6, Math.sin(a) * sp)).multiply(new THREE.Matrix4().makeRotationY(tw + a)).multiply(new THREE.Matrix4().makeScale(cs, cs, cs)); maps.push(mm) }
-      const nodes = grow(maps, clamp(1, 4, Math.round(p.depth)), maxNodes)
+      buildWarp(p.defTwist, p.defTaper, p.defNoise, p.noiseScale)
+      const nodes = placement(p, tw, sp, cs)
       cA.set(p.colorA); cB.set(p.colorB)
-      const bb = new THREE.Box3(), pv = new THREE.Vector3()
+      const bb = new THREE.Box3(), pv = new THREE.Vector3(), maxD = Math.max(1, p.morphStyle === 'fractal' ? p.depth : 4)
       let idx = 0
-      for (const node of nodes) { for (let k = 0; k < N; k++) { _rk.makeRotationY((k / N) * Math.PI * 2); const base = new THREE.Matrix4().multiplyMatrices(_rk, node.mat); const variants = p.mirror ? [base, new THREE.Matrix4().multiplyMatrices(_mir, base)] : [base]; for (const mm of variants) { if (idx >= MCAP) break; inst.setMatrixAt(idx, mm); cTmp.copy(cA).lerp(cB, clamp(0, 1, node.d / Math.max(1, p.depth))); inst.setColorAt(idx, cTmp); pv.setFromMatrixPosition(mm); bb.expandByPoint(pv); idx++ } } if (idx >= MCAP) break }
+      for (const node of nodes) {
+        const variants = p.mirror && p.morphStyle !== 'grid' ? [node.mat, new THREE.Matrix4().multiplyMatrices(_mir, node.mat)] : [node.mat]
+        for (const mm of variants) { if (idx >= MCAP) break; inst.setMatrixAt(idx, mm); cTmp.copy(cA).lerp(cB, clamp(0, 1, node.d / maxD)); inst.setColorAt(idx, cTmp); pv.setFromMatrixPosition(mm); bb.expandByPoint(pv); idx++ }
+        if (idx >= MCAP) break
+      }
       inst.count = idx; inst.instanceMatrix.needsUpdate = true; if (inst.instanceColor) inst.instanceColor.needsUpdate = true
-      if (idx > 0) { const c = bb.getCenter(new THREE.Vector3()), sz = bb.getSize(new THREE.Vector3()); const ext = Math.max(sz.x, sz.y, sz.z, 1); const sc = 3.2 / (ext + 2); inst.scale.setScalar(sc); inst.position.set(-c.x * sc, -c.y * sc, -c.z * sc) }
+      if (idx > 0) { const c = bb.getCenter(new THREE.Vector3()), sz = bb.getSize(new THREE.Vector3()); const ext = Math.max(sz.x, sz.y, sz.z, 1); const sc = 3.4 / (ext + 1.6); inst.scale.setScalar(sc); inst.position.set(-c.x * sc, -c.y * sc, -c.z * sc) }
     }
 
     const doExport = (fmt: 'stl' | 'glb') => {
       const p = paramsRef.current
       let merged: THREE.BufferGeometry | null
-      if (p.mode === 'morph' && inst.count > 0) { const geoms: THREE.BufferGeometry[] = []; const m4 = new THREE.Matrix4(); const n = Math.min(inst.count, 400); for (let i = 0; i < n; i++) { inst.getMatrixAt(i, m4); const g = geo.clone().applyMatrix4(m4); geoms.push(g) } merged = mergeGeometries(geoms, false); geoms.forEach((g) => g.dispose()) }
+      if (p.mode === 'morph' && inst.count > 0) { const geoms: THREE.BufferGeometry[] = []; const m4 = new THREE.Matrix4(); const n = Math.min(inst.count, 400); for (let i = 0; i < n; i++) { inst.getMatrixAt(i, m4); const g = warpGeo.clone().applyMatrix4(m4); geoms.push(g) } merged = mergeGeometries(geoms, false); geoms.forEach((g) => g.dispose()) }
       else merged = geo.clone()
       if (!merged) { setStatus('Export impossible.'); return }
       if (fmt === 'stl') { const stl = new STLExporter().parse(new THREE.Mesh(merged, new THREE.MeshStandardMaterial()), { binary: false }); downloadBlob(new Blob([stl], { type: 'model/stl' }), `sculpt-${Date.now()}.stl`); merged.dispose(); setStatus('Export STL.') }
@@ -369,7 +447,7 @@ export function SculptStudio() {
       if (p.mode === 'morph') {
         let tw = hpar.tw, sp = hpar.sp, cs = hpar.cs
         if (hpar.driving) { tw = smx.tw += (tw - smx.tw) * 0.15; sp = smx.sp += (sp - smx.sp) * 0.15; cs = smx.cs += (cs - smx.cs) * 0.15 } else { smx.tw = tw; smx.sp = sp; smx.cs = cs }
-        const sig = `${p.depth}|${p.radial}|${p.mirror}|${p.colorA}|${p.colorB}|${tw.toFixed(3)}|${sp.toFixed(3)}|${cs.toFixed(3)}|${geo.attributes.position.version}`
+        const sig = `${p.morphStyle}|${p.depth}|${p.radial}|${p.gridN}|${p.turns}|${p.mirror}|${p.colorA}|${p.colorB}|${p.defTwist}|${p.defTaper}|${p.defNoise}|${p.noiseScale}|${tw.toFixed(3)}|${sp.toFixed(3)}|${cs.toFixed(3)}|${geo.attributes.position.version}`
         if (sig !== lastSig) { regenMorph(p, tw, sp, cs); lastSig = sig }
       }
 
@@ -404,7 +482,7 @@ export function SculptStudio() {
       try { landmarker?.close() } catch { /* noop */ }
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
       try { if (recActive && recorder) recorder.stop() } catch { /* noop */ }
-      geo.dispose(); clayMat.dispose(); instMat.dispose(); inst.dispose(); bumpTex.dispose(); renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
+      geo.dispose(); warpGeo.dispose(); clayMat.dispose(); instMat.dispose(); inst.dispose(); bumpTex.dispose(); renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
     }
   }, [])
 
@@ -453,14 +531,22 @@ export function SculptStudio() {
           </>}
 
           {mode === 'morph' && <>
-            <div style={{ fontSize: 10, color: '#ffcf9a', marginBottom: 10, lineHeight: 1.35, background: 'rgba(255,140,0,0.08)', padding: 7, borderRadius: 6 }}>✋ Ta forme sculptée est répliquée. <b>Écarte</b> les mains = déploie · <b>hauteur</b> = torsion. Ou règle aux curseurs.</div>
+            <div style={{ fontSize: 10, color: '#ffcf9a', marginBottom: 10, lineHeight: 1.35, background: 'rgba(255,140,0,0.08)', padding: 7, borderRadius: 6 }}>✋ Ta forme sculptée est répliquée + déformée. <b>Écarte</b> les mains = déploie · <b>hauteur</b> = torsion. Ou règle aux curseurs.</div>
+            <Field label="Style de placement"><select value={morphStyle} onChange={(e) => setMorphStyle(e.target.value as MorphStyle)} style={selStyle}>{MORPH_STYLES.map((s) => <option key={s.kind} value={s.kind}>{s.label}</option>)}</select></Field>
             <label style={chkRow}><input type="checkbox" checked={handDrive} onChange={(e) => setHandDrive(e.target.checked)} style={{ accentColor: '#ff8c3c' }} /> ✋ Piloter aux mains</label>
-            <Field label={`Itérations — ${depth}`}><input type="range" min={1} max={4} step={1} value={depth} onChange={(e) => setDepth(+e.target.value)} style={rngStyle} /></Field>
-            <Field label={`Symétrie radiale — ${radial}`}><input type="range" min={1} max={8} step={1} value={radial} onChange={(e) => setRadial(+e.target.value)} style={rngStyle} /></Field>
-            <label style={chkRow}><input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} style={{ accentColor: '#ff8c3c' }} /> 🦋 Miroir bilatéral</label>
-            <Field label={`Torsion — ${twist.toFixed(2)}`}><input type="range" min={-2.5} max={2.5} step={0.02} value={twist} onChange={(e) => setTwist(+e.target.value)} style={rngStyle} /></Field>
+            {morphStyle === 'grid' && <Field label={`Taille de la grille — ${gridN * 2 + 1}³`}><input type="range" min={0} max={4} step={1} value={gridN} onChange={(e) => setGridN(+e.target.value)} style={rngStyle} /></Field>}
+            {(morphStyle === 'fractal' || morphStyle === 'radial') && <Field label={`${morphStyle === 'radial' ? 'Anneaux' : 'Itérations'} — ${depth}`}><input type="range" min={1} max={4} step={1} value={depth} onChange={(e) => setDepth(+e.target.value)} style={rngStyle} /></Field>}
+            {(morphStyle === 'fractal' || morphStyle === 'radial' || morphStyle === 'spiral') && <Field label={`${morphStyle === 'spiral' ? 'Densité' : 'Symétrie radiale'} — ${radial}`}><input type="range" min={1} max={8} step={1} value={radial} onChange={(e) => setRadial(+e.target.value)} style={rngStyle} /></Field>}
+            {morphStyle === 'spiral' && <Field label={`Tours — ${turns}`}><input type="range" min={0.5} max={6} step={0.5} value={turns} onChange={(e) => setTurns(+e.target.value)} style={rngStyle} /></Field>}
+            {morphStyle !== 'grid' && <label style={chkRow}><input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} style={{ accentColor: '#ff8c3c' }} /> 🦋 Miroir bilatéral</label>}
+            <Field label={`Rotation — ${twist.toFixed(2)}`}><input type="range" min={-2.5} max={2.5} step={0.02} value={twist} onChange={(e) => setTwist(+e.target.value)} style={rngStyle} /></Field>
             <Field label={`Déploiement — ${spread.toFixed(2)}`}><input type="range" min={0.15} max={1.4} step={0.02} value={spread} onChange={(e) => setSpread(+e.target.value)} style={rngStyle} /></Field>
-            <Field label={`Échelle enfants — ${childScale.toFixed(2)}`}><input type="range" min={0.35} max={0.72} step={0.01} value={childScale} onChange={(e) => setChildScale(+e.target.value)} style={rngStyle} /></Field>
+            <Field label={`Échelle des copies — ${childScale.toFixed(2)}`}><input type="range" min={0.35} max={0.72} step={0.01} value={childScale} onChange={(e) => setChildScale(+e.target.value)} style={rngStyle} /></Field>
+            <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '10px 0 6px' }}>Déformateurs génératifs</div>
+            <Field label={`Torsion — ${defTwist.toFixed(2)}`}><input type="range" min={-3} max={3} step={0.05} value={defTwist} onChange={(e) => setDefTwist(+e.target.value)} style={rngStyle} /></Field>
+            <Field label={`Effilé — ${defTaper.toFixed(2)}`}><input type="range" min={-1} max={1} step={0.02} value={defTaper} onChange={(e) => setDefTaper(+e.target.value)} style={rngStyle} /></Field>
+            <Field label={`Bruit organique — ${defNoise.toFixed(2)}`}><input type="range" min={0} max={0.6} step={0.01} value={defNoise} onChange={(e) => setDefNoise(+e.target.value)} style={rngStyle} /></Field>
+            {defNoise > 0 && <Field label={`Grain du bruit — ${noiseScale.toFixed(1)}`}><input type="range" min={0.5} max={10} step={0.5} value={noiseScale} onChange={(e) => setNoiseScale(+e.target.value)} style={rngStyle} /></Field>}
           </>}
 
           <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 6px' }}>Texture de surface</div>
