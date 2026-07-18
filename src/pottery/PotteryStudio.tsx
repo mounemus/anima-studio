@@ -198,10 +198,14 @@ export function PotteryStudio() {
     const _plane = new THREE.Plane()
     const mapFinger = (ndcX: number, ndcY: number): { rad: number; ring: number } | null => {
       raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera)
-      _plane.set(new THREE.Vector3(Math.cos(camAz), 0, -Math.sin(camAz)), 0)   // contains the Y axis + camera
+      // Frontal cross-section plane : contains the Y axis, normal points TOWARD the camera
+      // (sin az,0,cos az). The camera is NOT in this plane, so a fingertip ray crosses it at
+      // a real point on the pot's near face. (Using the perpendicular normal put the camera
+      // in the plane → the ray only ever met it at the camera itself : sculpting did nothing.)
+      _plane.set(new THREE.Vector3(Math.sin(camAz), 0, Math.cos(camAz)), 0)
       const hit = raycaster.ray.intersectPlane(_plane, new THREE.Vector3())
       if (!hit) return null
-      const rad = Math.max(0, hit.x * Math.sin(camAz) + hit.z * Math.cos(camAz))   // horizontal distance from axis
+      const rad = Math.abs(hit.x * Math.cos(camAz) - hit.z * Math.sin(camAz))   // distance from axis, across the face
       const g = clamp(0, 1, (hit.y - Y0) / HMAX)
       return { rad, ring: clamp(0, NR - 1, Math.round(g * (NR - 1))) }
     }
