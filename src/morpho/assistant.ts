@@ -121,15 +121,21 @@ export function applyCommand(cmd: string, graph: Graph): Built {
     const s = find('smooth') ?? insertBefore(g, 'output', 'smooth', { iter: 1 }); if (s) { s.params.iter = clamp(0, 8, N(s.params.iter, 1) + 2); explain.push('Lissage renforcé.') }
   } else if (has('plus détaillé', 'plus detaille', 'plus fin', 'haute résolution', 'haute resolution', 'finer', 'plus net')) {
     const s = find('surface'); if (s) { s.params.res = clamp(24, 140, N(s.params.res, 80) + 24); explain.push(`Résolution du maillage : ${s.params.res}.`) }
-  } else if (has('moins détaillé', 'moins detaille', 'plus rapide', 'allège le maillage', 'décime')) {
-    const s = find('surface'); if (s) { s.params.res = clamp(24, 140, N(s.params.res, 80) - 24); explain.push(`Résolution réduite : ${s.params.res} (plus léger/rapide).`) }
+  } else if (has('décime', 'decime', 'allège le maillage', 'allege le maillage', 'remesh', 'simplifie')) {
+    if (!find('decimate')) { insertBefore(g, 'output', 'decimate', { cells: 40 }); explain.push('Nœud « Décimer/remesh » ajouté — maillage allégé (baisse la finesse pour simplifier plus).') } else { const d = find('decimate')!; d.params.cells = clamp(8, 160, N(d.params.cells, 48) - 8); explain.push('Décimation renforcée.') }
+  } else if (has('épaissi', 'epaissi', 'solidifie', 'rend solide')) {
+    if (!find('thicken')) { insertBefore(g, 'output', 'thicken', { t: 0.08 }); explain.push('Surface solidifiée (épaissie) — imprimable.') } else { const th = find('thicken')!; th.params.t = clamp(0.02, 0.4, N(th.params.t, 0.08) + 0.02); explain.push('Épaisseur augmentée.') }
+  } else if (has('moins détaillé', 'moins detaille', 'plus rapide')) {
+    const s = find('surface'); if (s) { s.params.res = clamp(24, 140, N(s.params.res, 80) - 24); explain.push(`Résolution réduite : ${s.params.res}.`) } else if (!find('decimate')) { insertBefore(g, 'output', 'decimate', { cells: 40 }); explain.push('Maillage décimé (plus léger).') }
   } else if (has('plus grand', 'agrandi')) { const s = find('surface'); if (s) { s.params.bound = clamp(0.8, 1.6, N(s.params.bound, 1.2) + 0.1); explain.push('Cadre agrandi.') } }
   else if (has('plus petit', 'réduis la taille')) { const s = find('surface'); if (s) { s.params.bound = clamp(0.8, 1.6, N(s.params.bound, 1.2) - 0.1); explain.push('Cadre réduit.') } }
   else if (has('prépare', 'prepare', 'impression', 'imprimable', 'sls', 'fdm', 'sla', 'étanche', 'etanche', 'fabrication')) {
     const s = find('surface'); if (s) s.params.res = clamp(80, 140, Math.max(96, N(s.params.res, 80)))
     const sm = find('smooth') ?? insertBefore(g, 'output', 'smooth', { iter: 1 }); if (sm) sm.params.iter = clamp(1, 8, N(sm.params.iter, 1))
-    if (!find('shell') && !find('voronoi')) insertBefore(g, 'surface', 'shell', { t: 0.08 })
-    explain.push('Préparé pour l’impression : maillage plus dense, lissé, évidé si besoin. Vérifie « Étanche : oui » dans l’analyse.')
+    const PARAM = ['klein', 'kleinsurf', 'mobius', 'plucker', 'geodesic']
+    if (g.nodes.some((n) => PARAM.includes(n.type)) && !find('thicken')) insertBefore(g, 'output', 'thicken', { t: 0.08 })   // solidify open parametric surfaces
+    else if (!find('shell') && !find('voronoi')) insertBefore(g, 'surface', 'shell', { t: 0.08 })
+    explain.push('Préparé pour l’impression : maillage plus dense, lissé, surfaces solidifiées. Vérifie « Étanche : oui » dans l’analyse.')
   } else if (has('conserve la silhouette', 'garde la silhouette', 'modifie les cellules', 'change les cellules')) {
     const v = find('voronoi'); if (v) { v.params.scale = clamp(1.5, 9, N(v.params.scale, 4) + (Math.random() > 0.5 ? 1 : -1)) } const d = find('displace'); if (d) d.params.freq = clamp(0.5, 8, N(d.params.freq, 3) + 1); const mb = find('metaballs'); if (mb) mb.params.seed = Math.floor(Math.random() * 9999) + 1; explain.push('Silhouette conservée, motif interne modifié.')
   } else if (has('translucide', 'transparent', 'verre')) { material = 'translucent'; explain.push('Matériau translucide.') }
@@ -189,7 +195,7 @@ export async function llmToGraph(prompt: string): Promise<Built> {
   return { graph: chainGraph(steps), explain, material }
 }
 
-export const QUICK_COMMANDS = ['Plus organique', 'Réduis les pointes', 'Augmente la porosité', 'Rends symétrique', 'Allège de 30%', 'Plus lisse', 'Plus détaillé', 'Prépare pour l’impression']
+export const QUICK_COMMANDS = ['Plus organique', 'Réduis les pointes', 'Augmente la porosité', 'Rends symétrique', 'Allège de 30%', 'Plus lisse', 'Décime le maillage', 'Épaissis', 'Prépare pour l’impression']
 export const EXAMPLE_PROMPTS = [
   'Coquille spiralée translucide à nervures fractales',
   'Colonne gothique symétrique en tubes organiques noirs',
