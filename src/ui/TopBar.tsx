@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music, ScanFace, Glasses, Clock, Sparkles, Aperture, PenTool, Disc3 } from 'lucide-react'
+import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music, ScanFace, Glasses, Clock, Sparkles, Aperture, PenTool, Disc3, Atom } from 'lucide-react'
 import { startMood, stopMood, isMoodActive, triggerMoodReflect } from '../engine/MoodEngine'
 import { Link } from 'react-router-dom'
 import { listDisplays, openOutputWindow, type DisplayInfo } from '../lib/multiDisplay'
@@ -361,6 +361,9 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
         </Link>
         <Link to="/pottery" title="Poterie — tour de potier, argile tournée aux deux mains" style={{ display: 'inline-flex' }}>
           <button className="ghost icon"><Disc3 size={16} /></button>
+        </Link>
+        <Link to="/sculpt" title="Sculpture générative — métamorphoses itérées façon XenoDream, pilotées aux mains" style={{ display: 'inline-flex' }}>
+          <button className="ghost icon"><Atom size={16} /></button>
         </Link>
         <Link to="/admin" title="Administration" style={{ display: 'inline-flex' }}>
           <button className="ghost icon"><Settings size={16} /></button>
