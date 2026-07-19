@@ -358,7 +358,7 @@ export function SketchStudio() {
     const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 100)
     const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true })
     renderer.setClearColor(0x000000, 0); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    mount.appendChild(renderer.domElement); renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100vw;height:100vh;'
+    mount.appendChild(renderer.domElement); renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100vw;height:100vh;touch-action:none;user-select:none;'
     scene.add(new THREE.AmbientLight(0xffffff, 0.65))
     const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(1.2, 2, 2.5); scene.add(dir)
     const dir2 = new THREE.DirectionalLight(0x88bbff, 0.35); dir2.position.set(-2, -1, -1); scene.add(dir2)
@@ -424,12 +424,48 @@ export function SketchStudio() {
     const resize = () => { const w = window.innerWidth, h = window.innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); overlay.width = w; overlay.height = h }
     resize(); window.addEventListener('resize', resize)
 
-    let dragging = false, lastX = 0, lastY = 0, orbitEnabled = true
-    const onDown = (e: PointerEvent) => { if (!orbitEnabled) return; dragging = true; lastX = e.clientX; lastY = e.clientY }
-    const onMove = (e: PointerEvent) => { if (!dragging) return; cam.targetAz -= (e.clientX - lastX) * 0.008; cam.targetPolar = clamp(0.2, Math.PI - 0.2, cam.targetPolar - (e.clientY - lastY) * 0.008); lastX = e.clientX; lastY = e.clientY }
-    const onUp = () => { dragging = false }
+    // Souris + tactile — dessiner SANS webcam. 1 doigt / clic gauche = tracer (trait libre)
+    // ou gommer ; clic droit / 2 doigts = orbite + pinch-zoom ; molette = zoom. En mode
+    // Transformer (xform) ou Manipuler la vue (arcball → orbitEnabled=false) on laisse le
+    // gizmo/arcball gérer la souris.
+    let orbitEnabled = true
+    const el = renderer.domElement
+    const ptrs = new Map<number, { x: number; y: number }>()
+    let orbitDrag = false, lastX = 0, lastY = 0, pinchD = 0, pDrawing = false
+    const eToNDC = (e: PointerEvent) => ({ x: (e.clientX / window.innerWidth) * 2 - 1, y: -((e.clientY / window.innerHeight) * 2 - 1) })
+    const pRadius = () => { const p = paramsRef.current; return Math.max(0.004, p.size * 0.0016 * cam.radius * (BRUSHES.find((b) => b.kind === p.brush)?.rMul ?? 1)) }
+    const eraseAt = (wp: THREE.Vector3, radius: number) => { const er = Math.max(0.05, radius * 6); let any = false; for (let i = strokesRef.current.length - 1; i >= 0; i--) { const s = strokesRef.current[i]; if (s.copies.some((cp) => cp.some((q) => q.distanceTo(wp) < er))) { disposeGroup(s.group); strokesRef.current.splice(i, 1); any = true } } if (any) setCount(strokesRef.current.length) }
+    const pDrawStart = (nd: { x: number; y: number }) => {
+      const p = paramsRef.current; const radius = pRadius(); const dp = drawPoint(nd.x, nd.y, 0.5, p.depthScale)
+      if (p.eraser) { eraseAt(dp, radius); pDrawing = true; return }
+      aMat = makeBrushMaterial(p.brush, p.color); aRadius = radius; aIsAir = false
+      { const fwd = new THREE.Vector3().subVectors(target, camera.position).normalize(); const rgt = new THREE.Vector3().crossVectors(fwd, camera.up).normalize(); const upv = new THREE.Vector3().crossVectors(rgt, fwd).normalize(); const ang = p.nibAngle * Math.PI / 180; aNibRef = rgt.multiplyScalar(Math.cos(ang)).add(upv.multiplyScalar(Math.sin(ang))).normalize() }
+      const k = symCount(p.sym, p.radialN)
+      aCopies = expandPoint(dp, p.sym, p.radialN).map((v) => [v]); aRadii = [radius]
+      aGroup = new THREE.Group(); aMeshes = []
+      for (let c = 0; c < k; c++) { const m = new THREE.Mesh(new THREE.BufferGeometry(), aMat); m.frustumCulled = false; aGroup.add(m); aMeshes.push(m) }
+      aLayerId = p.activeLayer; activeLayerGroup().add(aGroup)
+      wasDrawing = true; pDrawing = true
+    }
+    const pDrawMove = (nd: { x: number; y: number }) => {
+      if (!pDrawing) return
+      const p = paramsRef.current; const radius = pRadius(); const dp = drawPoint(nd.x, nd.y, 0.5, p.depthScale)
+      if (p.eraser) { eraseAt(dp, radius); return }
+      if (!aGroup) return
+      const last = aCopies[0][aCopies[0].length - 1]
+      if (dp.distanceTo(last) > Math.max(0.006, radius * 0.55)) { const cs = expandPoint(dp, p.sym, p.radialN); for (let c = 0; c < aCopies.length; c++) { aCopies[c].push(cs[c]); if (aCopies[c].length > 500) aCopies[c].shift() } aRadii.push(radius); if (aRadii.length > 500) aRadii.shift() }
+      rebuildActive()
+    }
+    const pDrawEnd = () => { if (!pDrawing) return; pDrawing = false; if (!paramsRef.current.eraser && aGroup) finalizeFree(); wasDrawing = false }
+    const onDown = (e: PointerEvent) => { if (!orbitEnabled || paramsRef.current.xform) return; el.setPointerCapture?.(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (ptrs.size === 2) { const q = [...ptrs.values()]; pinchD = Math.hypot(q[0].x - q[1].x, q[0].y - q[1].y); lastX = (q[0].x + q[1].x) / 2; lastY = (q[0].y + q[1].y) / 2; if (pDrawing) pDrawEnd(); orbitDrag = false; return }
+      if (e.pointerType === 'mouse' && e.button === 2) { orbitDrag = true; lastX = e.clientX; lastY = e.clientY } else pDrawStart(eToNDC(e)) }
+    const onMove = (e: PointerEvent) => { if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (ptrs.size >= 2) { const q = [...ptrs.values()]; const d = Math.hypot(q[0].x - q[1].x, q[0].y - q[1].y); const mx = (q[0].x + q[1].x) / 2, my = (q[0].y + q[1].y) / 2; if (pinchD > 0) cam.radius = clamp(1.2, 9, cam.radius * (pinchD / Math.max(1, d))); cam.targetAz -= (mx - lastX) * 0.008; cam.targetPolar = clamp(0.18, Math.PI - 0.18, cam.targetPolar - (my - lastY) * 0.008); pinchD = d; lastX = mx; lastY = my; return }
+      if (orbitDrag) { cam.targetAz -= (e.clientX - lastX) * 0.008; cam.targetPolar = clamp(0.18, Math.PI - 0.18, cam.targetPolar - (e.clientY - lastY) * 0.008); lastX = e.clientX; lastY = e.clientY } else if (pDrawing) pDrawMove(eToNDC(e)) }
+    const onUp = (e: PointerEvent) => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinchD = 0; if (ptrs.size === 0) { orbitDrag = false; if (pDrawing) pDrawEnd() } }
     const onWheel = (e: WheelEvent) => { cam.radius = clamp(1.2, 9, cam.radius + e.deltaY * 0.002) }
-    renderer.domElement.addEventListener('pointerdown', onDown); window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); renderer.domElement.addEventListener('wheel', onWheel, { passive: true })
+    el.addEventListener('pointerdown', onDown); el.addEventListener('pointermove', onMove); el.addEventListener('pointerup', onUp); el.addEventListener('pointercancel', onUp); el.addEventListener('wheel', onWheel, { passive: true }); el.addEventListener('contextmenu', (ev) => ev.preventDefault())
 
     // Manual-navigation manipulator (ArcballControls) : a visible 3D gizmo (sphere + rings)
     // to orbit/zoom the view with the mouse, toggled by the "Manipuler la vue" option.
@@ -975,8 +1011,8 @@ export function SketchStudio() {
 
     return () => {
       running = false; if (rafId) cancelAnimationFrame(rafId)
-      window.removeEventListener('resize', resize); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp)
-      renderer.domElement.removeEventListener('pointerdown', onDown); renderer.domElement.removeEventListener('wheel', onWheel)
+      window.removeEventListener('resize', resize)
+      el.removeEventListener('pointerdown', onDown); el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp); el.removeEventListener('pointercancel', onUp); el.removeEventListener('wheel', onWheel)
       try { landmarker?.close() } catch { /* noop */ }
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
       for (const s of strokesRef.current) s.group.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose() })
@@ -1010,7 +1046,7 @@ export function SketchStudio() {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Link to="/" style={{ color: '#aaa', fontSize: 12, textDecoration: 'none' }}>← Studio</Link><button onClick={() => setPanelOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 16 }}>«</button></div>
           </div>
           <div style={{ color: error ? '#ff6b6b' : '#7a7a85', fontSize: 11, marginBottom: 10, lineHeight: 1.3 }}>{error ?? status}</div>
-          <div style={{ fontSize: 10, color: '#ffc800', marginBottom: 12, lineHeight: 1.35, background: 'rgba(255,200,0,0.08)', padding: 7, borderRadius: 6 }}>✊ <b>Poing</b> = orbite (bouge/zoom). 🖐 <b>Paume ouverte</b> (2ᵉ main) = menu radial : pousse la paume vers un secteur (couleur / pinceau / gomme) et maintiens.</div>
+          <div style={{ fontSize: 10, color: '#ffc800', marginBottom: 12, lineHeight: 1.35, background: 'rgba(255,200,0,0.08)', padding: 7, borderRadius: 6 }}>✊ <b>Poing</b> = orbite (bouge/zoom). 🖐 <b>Paume ouverte</b> (2ᵉ main) = menu radial : pousse la paume vers un secteur (couleur / pinceau / gomme) et maintiens.<br />🖱️/👆 <b>Sans caméra</b> : 1 doigt / clic gauche = <b>tracer</b> (ou gommer) · clic droit ou 2 doigts = <b>tourner + zoom</b>.</div>
 
           <Field label="Pinceau"><select value={brush} onChange={(e) => { setBrush(e.target.value as BrushKind); setEraser(false) }} style={selStyle}>{BRUSHES.map((b) => <option key={b.kind} value={b.kind}>{b.label}</option>)}</select></Field>
           {brush === 'calligA' && <Field label={`Angle de plume — ${nibAngle}°`}><input type="range" min={0} max={180} value={nibAngle} onChange={(e) => setNibAngle(+e.target.value)} style={rngStyle} /></Field>}

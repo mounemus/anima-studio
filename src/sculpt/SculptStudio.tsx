@@ -246,12 +246,23 @@ export function SculptStudio() {
     applyCam()
     const resize = () => { const w = window.innerWidth, h = window.innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); overlay.width = w; overlay.height = h }
     resize(); window.addEventListener('resize', resize)
-    let dragging = false, lastX = 0, lastY = 0
-    const onDown = (e: PointerEvent) => { dragging = true; lastX = e.clientX; lastY = e.clientY }
-    const onMove = (e: PointerEvent) => { if (!dragging) return; camAz -= (e.clientX - lastX) * 0.006; camPolar = clamp(0.2, 1.6, camPolar - (e.clientY - lastY) * 0.006); lastX = e.clientX; lastY = e.clientY }
-    const onUp = () => { dragging = false }
+    // Souris + tactile — sculpter SANS webcam. 1 doigt / clic gauche = sculpter (le pointeur
+    // est injecté comme « main » d'index 2 dans le loop) ; clic droit / 2 doigts = orbite +
+    // pinch-zoom. Molette = zoom.
+    let ptrDown = false; const ptrNDC = { x: 0, y: 0 }
+    const el = renderer.domElement
+    const ptrs = new Map<number, { x: number; y: number }>()
+    let orbitDrag = false, lastX = 0, lastY = 0, pinchD = 0
+    const toNDC = (e: PointerEvent) => { ptrNDC.x = (e.clientX / window.innerWidth) * 2 - 1; ptrNDC.y = -((e.clientY / window.innerHeight) * 2 - 1) }
+    const onDown = (e: PointerEvent) => { el.setPointerCapture?.(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (ptrs.size === 2) { const q = [...ptrs.values()]; pinchD = Math.hypot(q[0].x - q[1].x, q[0].y - q[1].y); lastX = (q[0].x + q[1].x) / 2; lastY = (q[0].y + q[1].y) / 2; ptrDown = false; orbitDrag = false; return }
+      if (e.pointerType === 'mouse' && e.button === 2) { orbitDrag = true; lastX = e.clientX; lastY = e.clientY } else { toNDC(e); ptrDown = true } }
+    const onMove = (e: PointerEvent) => { if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (ptrs.size >= 2) { const q = [...ptrs.values()]; const d = Math.hypot(q[0].x - q[1].x, q[0].y - q[1].y); const mx = (q[0].x + q[1].x) / 2, my = (q[0].y + q[1].y) / 2; if (pinchD > 0) camDist = clamp(2, 9, camDist * (pinchD / Math.max(1, d))); camAz -= (mx - lastX) * 0.006; camPolar = clamp(0.2, 1.6, camPolar - (my - lastY) * 0.006); pinchD = d; lastX = mx; lastY = my; return }
+      if (orbitDrag) { camAz -= (e.clientX - lastX) * 0.006; camPolar = clamp(0.2, 1.6, camPolar - (e.clientY - lastY) * 0.006); lastX = e.clientX; lastY = e.clientY } else if (ptrDown) toNDC(e) }
+    const onUp = (e: PointerEvent) => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinchD = 0; if (ptrs.size === 0) { orbitDrag = false; ptrDown = false } }
     const onWheel = (e: WheelEvent) => { camDist = clamp(2, 9, camDist + e.deltaY * 0.003) }
-    renderer.domElement.addEventListener('pointerdown', onDown); window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); renderer.domElement.addEventListener('wheel', onWheel, { passive: true })
+    el.addEventListener('pointerdown', onDown); el.addEventListener('pointermove', onMove); el.addEventListener('pointerup', onUp); el.addEventListener('pointercancel', onUp); el.addEventListener('wheel', onWheel, { passive: true }); el.addEventListener('contextmenu', (ev) => ev.preventDefault())
 
     const raycaster = new THREE.Raycaster()
     const v2 = new THREE.Vector2(), tmp = new THREE.Vector3(), fwd = new THREE.Vector3()
@@ -470,6 +481,28 @@ export function SculptStudio() {
           else { hpar.sp = clamp(0.15, 1.4, (1 - H[0].y) * 1.4); hpar.tw = clamp(-2.5, 2.5, (0.5 - H[0].y) * 5) }
         }
       }
+      // Souris / tactile (index de « main » 2) — même logique de sculpture que les mains,
+      // pilotée par le pointeur, sans webcam. Réutilise engaged/grabSets/grabPlane/grabLast.
+      if (p.mode === 'sculpt' && ptrDown) {
+        const nx = ptrNDC.x, ny = ptrNDC.y
+        anySculpt = true
+        const radius = p.brushSize, str = clamp(0, 1, p.strength) * Math.min(1, dt * 12)
+        if (isTex(p.tool)) {
+          const hit = rayToMesh(nx, ny)
+          if (hit && hit.uv) { const lu = texLast[2]; const dir = lu ? { x: hit.uv.x - lu.x, y: -(hit.uv.y - lu.y) } : null; stampTexture(hit.uv.x, hit.uv.y, p.tool, radius, dir); if (p.symX) { const mp = hit.point, l = Math.max(1e-4, Math.hypot(-mp.x, mp.y, mp.z)); const mu = Math.atan2(mp.z, -mp.x) / (Math.PI * 2) + 0.5, mv = 1 - Math.acos(clamp(-1, 1, mp.y / l)) / Math.PI; stampTexture(mu, mv, p.tool, radius, dir ? { x: -dir.x, y: dir.y } : null) } texLast[2] = { x: hit.uv.x, y: hit.uv.y } }
+        } else {
+          if (!engaged[2]) {
+            const hit = rayToMesh(nx, ny)
+            if (hit) { engaged[2] = true; if (p.tool === 'grab') { const build = (cx: number, cy: number, cz: number, key: number) => { const arr = posAttr.array as Float32Array; const set: { i: number; f: number }[] = []; const r2 = radius * radius; for (let q = 0; q < V; q++) { const ex = arr[q * 3] - cx, ey = arr[q * 3 + 1] - cy, ez = arr[q * 3 + 2] - cz, d2 = ex * ex + ey * ey + ez * ez; if (d2 <= r2) { const t = Math.sqrt(d2) / radius; set.push({ i: q, f: (1 - t) * (1 - t) }) } } grabSets.set(key, set) }; build(hit.point.x, hit.point.y, hit.point.z, 2); if (p.symX) build(-hit.point.x, hit.point.y, hit.point.z, 102); camera.getWorldDirection(fwd); _plane.setFromNormalAndCoplanarPoint(fwd, hit.point); grabPlane.set(2, _plane.clone()); grabLast.set(2, hit.point.clone()) } }
+          }
+          if (engaged[2]) {
+            if (p.tool === 'grab') { const pl = grabPlane.get(2); if (pl) { const cur = rayToPlane(nx, ny, pl); if (cur) { const last = grabLast.get(2)!; tmp.subVectors(cur, last).multiplyScalar(clamp(0, 1.2, str * 3)); applyBrush(last, 2, 'grab', radius, str, tmp, p.symX); grabLast.set(2, cur) } } }
+            else { const hit = rayToMesh(nx, ny); if (hit) applyBrush(hit.point, 2, p.tool, radius, str, null, p.symX) }
+            geoDirty = true
+          }
+        }
+      } else if (engaged[2]) { engaged[2] = false; grabSets.delete(2); grabSets.delete(102); texLast[2] = null }
+
       if (p.mode === 'sculpt' && geoDirty) { posAttr.needsUpdate = true; geo.computeVertexNormals(); geo.computeBoundingSphere(); geoDirty = false }
       // stroke-based undo snapshot (before a new stroke)
       if (p.mode === 'sculpt') { if (anySculpt && !wasSculpt) pushHistory(); wasSculpt = anySculpt }
@@ -507,8 +540,8 @@ export function SculptStudio() {
 
     return () => {
       running = false; if (rafId) cancelAnimationFrame(rafId)
-      window.removeEventListener('resize', resize); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp)
-      renderer.domElement.removeEventListener('pointerdown', onDown); renderer.domElement.removeEventListener('wheel', onWheel)
+      window.removeEventListener('resize', resize)
+      el.removeEventListener('pointerdown', onDown); el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp); el.removeEventListener('pointercancel', onUp); el.removeEventListener('wheel', onWheel)
       try { landmarker?.close() } catch { /* noop */ }
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
       try { if (recActive && recorder) recorder.stop() } catch { /* noop */ }
@@ -545,7 +578,7 @@ export function SculptStudio() {
           </div>
 
           {mode === 'sculpt' && <>
-            <div style={{ fontSize: 10, color: '#ffcf9a', marginBottom: 10, lineHeight: 1.35, background: 'rgba(255,140,0,0.08)', padding: 7, borderRadius: 6 }}>☝️ <b>Pince</b> pouce+index pour toucher la pâte, puis <b>bouge le doigt</b> pour la travailler. Deux mains = deux outils.</div>
+            <div style={{ fontSize: 10, color: '#ffcf9a', marginBottom: 10, lineHeight: 1.35, background: 'rgba(255,140,0,0.08)', padding: 7, borderRadius: 6 }}>☝️ <b>Pince</b> pouce+index pour toucher la pâte, puis <b>bouge le doigt</b> pour la travailler. Deux mains = deux outils.<br />🖱️/👆 <b>Sans caméra</b> : 1 doigt / clic gauche = <b>sculpter</b> · clic droit ou 2 doigts = <b>tourner + zoom</b>.</div>
             <Field label="Outil de modelage">
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{TOOLS.map((t) => (<button key={t.kind} onClick={() => setTool(t.kind)} style={{ ...selStyle, fontSize: 12, padding: 7, background: tool === t.kind ? 'rgba(255,140,60,0.28)' : 'rgba(255,255,255,0.08)', borderColor: tool === t.kind ? 'rgba(255,140,60,0.6)' : 'rgba(255,255,255,0.18)' }}>{t.label}</button>))}</div>
               <p style={{ color: '#9a8a78', fontSize: 10, margin: '6px 0 0', lineHeight: 1.35 }}>{toolHint}</p>

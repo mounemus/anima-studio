@@ -127,7 +127,7 @@ export function PotteryStudio() {
     const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 100)
     const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true })
     renderer.setClearColor(0x000000, 0); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    mount.appendChild(renderer.domElement); renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100vw;height:100vh;'
+    mount.appendChild(renderer.domElement); renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100vw;height:100vh;touch-action:none;user-select:none;'
     scene.add(new THREE.AmbientLight(0xffffff, 0.6))
     const key = new THREE.DirectionalLight(0xfff2e0, 1.0); key.position.set(1.5, 2.5, 2.2); scene.add(key)
     const fill = new THREE.DirectionalLight(0x88bbff, 0.35); fill.position.set(-2, 0.5, -1); scene.add(fill)
@@ -169,13 +169,23 @@ export function PotteryStudio() {
     const resize = () => { const w = window.innerWidth, h = window.innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); overlay.width = w; overlay.height = h }
     resize(); window.addEventListener('resize', resize)
 
-    // Mouse : drag = orbit (azimuth + inclination), wheel = zoom.
-    let dragging = false, lastX = 0, lastY = 0
-    const onDown = (e: PointerEvent) => { dragging = true; lastX = e.clientX; lastY = e.clientY }
-    const onMove = (e: PointerEvent) => { if (!dragging) return; camAz -= (e.clientX - lastX) * 0.006; camPolar = clamp(0.32, 1.5, camPolar - (e.clientY - lastY) * 0.006); lastX = e.clientX; lastY = e.clientY }
-    const onUp = () => { dragging = false }
+    // Souris + tactile — pilotage SANS webcam. 1 doigt / clic gauche = façonner (le loop
+    // ci-dessous synthétise un contact depuis `mouseNDC`) ; clic droit / 2 doigts = orbite
+    // + pinch-zoom. Molette = zoom.
+    let mouseNDC: { x: number; y: number } | null = null
+    const el = renderer.domElement
+    const ptrs = new Map<number, { x: number; y: number }>()
+    let orbitDrag = false, lastX = 0, lastY = 0, pinchD = 0
+    const toNDC = (e: PointerEvent) => { mouseNDC = { x: (e.clientX / window.innerWidth) * 2 - 1, y: -((e.clientY / window.innerHeight) * 2 - 1) } }
+    const onDown = (e: PointerEvent) => { el.setPointerCapture?.(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (ptrs.size === 2) { const p = [...ptrs.values()]; pinchD = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y); lastX = (p[0].x + p[1].x) / 2; lastY = (p[0].y + p[1].y) / 2; mouseNDC = null; orbitDrag = false; return }
+      if (e.pointerType === 'mouse' && e.button === 2) { orbitDrag = true; lastX = e.clientX; lastY = e.clientY } else toNDC(e) }
+    const onMove = (e: PointerEvent) => { if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (ptrs.size >= 2) { const p = [...ptrs.values()]; const d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y); const mx = (p[0].x + p[1].x) / 2, my = (p[0].y + p[1].y) / 2; if (pinchD > 0) camDist = clamp(1.6, 6, camDist * (pinchD / Math.max(1, d))); camAz -= (mx - lastX) * 0.006; camPolar = clamp(0.32, 1.5, camPolar - (my - lastY) * 0.006); pinchD = d; lastX = mx; lastY = my; return }
+      if (orbitDrag) { camAz -= (e.clientX - lastX) * 0.006; camPolar = clamp(0.32, 1.5, camPolar - (e.clientY - lastY) * 0.006); lastX = e.clientX; lastY = e.clientY } else if (mouseNDC) toNDC(e) }
+    const onUp = (e: PointerEvent) => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinchD = 0; if (ptrs.size === 0) { orbitDrag = false; mouseNDC = null } }
     const onWheel = (e: WheelEvent) => { camDist = clamp(1.6, 6, camDist + e.deltaY * 0.002) }
-    renderer.domElement.addEventListener('pointerdown', onDown); window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); renderer.domElement.addEventListener('wheel', onWheel, { passive: true })
+    el.addEventListener('pointerdown', onDown); el.addEventListener('pointermove', onMove); el.addEventListener('pointerup', onUp); el.addEventListener('pointercancel', onUp); el.addEventListener('wheel', onWheel, { passive: true }); el.addEventListener('contextmenu', (ev) => ev.preventDefault())
 
     // One-Euro smoothing per hand (screen space).
     type Euro = { first: boolean; x: number; y: number; dx: number; dy: number }
@@ -354,14 +364,17 @@ export function PotteryStudio() {
         if (!hands.length) skelHands = []
         if (contacts.length >= 2) { const mn = contacts.reduce((a, b) => (a.rad < b.rad ? a : b)); mn.inner = true }
       }
-      if (newFrame) {
+      // Souris / tactile : injecte un contact synthétique depuis le pointeur (fonctionne
+      // AVEC ou SANS webcam) — réutilise exactement le même chemin outil + historique.
+      if (mouseNDC) { const m = mapFinger(mouseNDC.x, mouseNDC.y); if (m) { const thick = rIn[m.ring] > EPS ? Math.max(0, rOut[m.ring] - rIn[m.ring]) : rOut[m.ring]; const resist = clamp(0, 1, p.firmness * (0.2 + 2.0 * thick)); contacts.push({ rad: m.rad, ring: m.ring, press: 1, sx: (mouseNDC.x * 0.5 + 0.5) * overlay.width, sy: (-mouseNDC.y * 0.5 + 0.5) * overlay.height, inner: false, resist }) } }
+      if (newFrame || mouseNDC) {
         const sculptingNow = contacts.some((c) => c.press > 0.15)
         if (sculptingNow && !wasSculpting) pushHistory()   // snapshot the pre-stroke state → undo restores it
         wasSculpting = sculptingNow
         applyTool(contacts, p, dt)
       }
-      if (newFrame && contacts.length) hud = { contacts, toolLabel: TOOLS.find((t) => t.kind === p.tool)?.label ?? '' }
-      else if (!contacts.length && newFrame) hud = { contacts: [], toolLabel: hud.toolLabel }
+      if (contacts.length) hud = { contacts, toolLabel: TOOLS.find((t) => t.kind === p.tool)?.label ?? '' }
+      else if (newFrame) hud = { contacts: [], toolLabel: hud.toolLabel }
 
       relaxAndConstrain(p, dt)
 
@@ -426,8 +439,8 @@ export function PotteryStudio() {
 
     return () => {
       running = false; if (rafId) cancelAnimationFrame(rafId)
-      window.removeEventListener('resize', resize); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp)
-      renderer.domElement.removeEventListener('pointerdown', onDown); renderer.domElement.removeEventListener('wheel', onWheel)
+      window.removeEventListener('resize', resize)
+      el.removeEventListener('pointerdown', onDown); el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp); el.removeEventListener('pointercancel', onUp); el.removeEventListener('wheel', onWheel)
       try { landmarker?.close() } catch { /* noop */ }
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
       try { if (recActive && recorder) recorder.stop() } catch { /* noop */ }
@@ -457,7 +470,7 @@ export function PotteryStudio() {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Link to="/" style={{ color: '#aaa', fontSize: 12, textDecoration: 'none' }}>← Studio</Link><button onClick={() => setPanelOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 16 }}>«</button></div>
           </div>
           <div style={{ color: error ? '#ff6b6b' : '#9a8a78', fontSize: 11, marginBottom: 10, lineHeight: 1.3 }}>{error ?? status}</div>
-          <div style={{ fontSize: 10, color: '#ffcf9a', marginBottom: 12, lineHeight: 1.35, background: 'rgba(255,180,0,0.08)', padding: 7, borderRadius: 6 }}>☝️ Le <b>bout de l'index</b> est l'outil. Pince pouce+index pour <b>presser</b> l'argile (ouvre la main pour repositionner). Deux mains = paroi <b>int.</b> (proche de l'axe) + <b>ext.</b> · 🖱️ glisse pour <b>tourner la vue</b> — l'angle change la sculpture.</div>
+          <div style={{ fontSize: 10, color: '#ffcf9a', marginBottom: 12, lineHeight: 1.35, background: 'rgba(255,180,0,0.08)', padding: 7, borderRadius: 6 }}>☝️ Le <b>bout de l'index</b> est l'outil. Pince pouce+index pour <b>presser</b> l'argile (ouvre la main pour repositionner). Deux mains = paroi <b>int.</b> (proche de l'axe) + <b>ext.</b><br />🖱️/👆 <b>Sans caméra</b> : 1 doigt / clic gauche = <b>façonner</b> · clic droit ou 2 doigts = <b>tourner + zoom</b> · molette = zoom.</div>
 
           <Field label="Outil de tournage">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
