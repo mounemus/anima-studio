@@ -76,7 +76,7 @@ export function MorphogenesisStudio() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.5
-    mount.appendChild(renderer.domElement); renderer.domElement.style.cssText = 'width:100%;height:100%;display:block'
+    mount.appendChild(renderer.domElement); renderer.domElement.style.cssText = 'width:100%;height:100%;display:block;touch-action:none;user-select:none'
     // Environment (IBL) — REQUIRED for translucent glass & metallic materials to be visible
     // (transmission/reflection sample the environment ; without it they render black/invisible).
     const pmrem = new THREE.PMREMGenerator(renderer); pmrem.compileEquirectangularShader()
@@ -90,18 +90,30 @@ export function MorphogenesisStudio() {
     let mesh = new THREE.Mesh(new THREE.BufferGeometry(), makeMaterial(matRef.current)); scene.add(mesh)
 
     let dist = 4.2, az = 0.5, pol = 1.15
-    const applyCam = () => { const sp = Math.sin(pol); camera.position.set(dist * sp * Math.sin(az), dist * Math.cos(pol), dist * sp * Math.cos(az)); camera.lookAt(0, 0, 0) }
-    const resize = () => { const w = mount.clientWidth, h = mount.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix() }
+    const target = new THREE.Vector3(0, 0, 0)
+    // Render-on-demand : only repaint when something actually changed (camera, geometry,
+    // material, resize, gesture). Idle GPU cost → ~0 (big win on tablets / long installs).
+    let dirty = true
+    const invalidate = () => { dirty = true }
+    const applyCam = () => { const sp = Math.sin(pol); camera.position.set(target.x + dist * sp * Math.sin(az), target.y + dist * Math.cos(pol), target.z + dist * sp * Math.cos(az)); camera.lookAt(target); invalidate() }
+    const resize = () => { const w = mount.clientWidth, h = mount.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix(); invalidate() }
     const ro = new ResizeObserver(resize); ro.observe(mount); resize(); applyCam()
-    let drag = false, lx = 0, ly = 0
-    const dn = (e: PointerEvent) => { drag = true; lx = e.clientX; ly = e.clientY }
-    const mv = (e: PointerEvent) => { if (!drag) return; az -= (e.clientX - lx) * 0.006; pol = clamp(0.2, 2.9, pol - (e.clientY - ly) * 0.006); lx = e.clientX; ly = e.clientY; applyCam() }
-    const up = () => { drag = false }
+    // Pan the look-at target across the camera's screen plane (two-finger drag).
+    const panScreen = (dx: number, dy: number) => { camera.updateMatrixWorld(); const h = mount.clientHeight || 1; const wpp = (2 * dist * Math.tan((camera.fov * Math.PI / 180) / 2)) / h; const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0); const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1); target.addScaledVector(right, -dx * wpp); target.addScaledVector(up, dy * wpp) }
+    // Unified mouse + touch : 1 pointer = orbit, 2 pointers = pinch-zoom + pan.
+    const ptrs = new Map<number, { x: number; y: number }>()
+    let pinchD = 0, midX = 0, midY = 0
+    const dn = (e: PointerEvent) => { (e.target as Element).setPointerCapture?.(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (ptrs.size === 2) { const p = [...ptrs.values()]; pinchD = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y); midX = (p[0].x + p[1].x) / 2; midY = (p[0].y + p[1].y) / 2 } }
+    const mv = (e: PointerEvent) => { const prev = ptrs.get(e.pointerId); if (!prev) return; ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (ptrs.size >= 2) { const p = [...ptrs.values()]; const d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y); const mx = (p[0].x + p[1].x) / 2, my = (p[0].y + p[1].y) / 2; if (pinchD > 0) dist = clamp(1.6, 12, dist * (pinchD / Math.max(1, d))); panScreen(mx - midX, my - midY); pinchD = d; midX = mx; midY = my; applyCam() }
+      else { az -= (e.clientX - prev.x) * 0.006; pol = clamp(0.2, 2.9, pol - (e.clientY - prev.y) * 0.006); applyCam() } }
+    const up = (e: PointerEvent) => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinchD = 0 }
     const wh = (e: WheelEvent) => { dist = clamp(1.6, 12, dist + e.deltaY * 0.003); applyCam() }
-    renderer.domElement.addEventListener('pointerdown', dn); window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); renderer.domElement.addEventListener('wheel', wh, { passive: true })
+    const el = renderer.domElement
+    el.addEventListener('pointerdown', dn); el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up); el.addEventListener('wheel', wh, { passive: true })
 
     const fit = (g: THREE.BufferGeometry) => { g.computeBoundingBox(); const bb = g.boundingBox!; const c = bb.getCenter(new THREE.Vector3()), s = bb.getSize(new THREE.Vector3()); const ext = Math.max(s.x, s.y, s.z, 0.01); const sc = 2.6 / ext; mesh.scale.setScalar(sc); mesh.position.set(-c.x * sc, -c.y * sc, -c.z * sc) }
-    applyRef.current = (g) => { mesh.geometry.dispose(); mesh.geometry = g ?? new THREE.BufferGeometry(); if (g) fit(g) }
+    applyRef.current = (g) => { mesh.geometry.dispose(); mesh.geometry = g ?? new THREE.BufferGeometry(); if (g) fit(g); invalidate() }
 
     // offscreen thumbnail renderer (reuses this renderer)
     renderThumbRef.current = (gr: Graph) => {
@@ -115,14 +127,23 @@ export function MorphogenesisStudio() {
       renderer.setSize(120, 120, false); renderer.render(tScene, tCam)
       const url = renderer.domElement.toDataURL('image/png')
       renderer.setSize(prevSize.x, prevSize.y, false); geo.dispose(); m.material.dispose()
+      invalidate()   // the shared canvas showed the thumbnail scene → repaint the main view
       return url
     }
 
-    let raf = 0; const loop = () => { mesh.material = mesh.material; (mesh.material as THREE.Material).needsUpdate = false; renderer.render(scene, camera); raf = requestAnimationFrame(loop) }; loop()
-    // material / wireframe live sync
-    const matTimer = setInterval(() => { if ((mesh.material as any).__k !== matRef.current) { mesh.material.dispose(); mesh.material = makeMaterial(matRef.current); (mesh.material as any).__k = matRef.current }; (mesh.material as any).wireframe = wireRef.current }, 120)
+    // Render-on-demand loop : the rAF tick is nearly free when idle; it only issues a GPU
+    // draw when `dirty`. Material / wireframe changes (driven by React refs) are detected
+    // here each tick and flip `dirty` — replaces the old 120 ms polling interval.
+    let raf = 0
+    const loop = () => {
+      if ((mesh.material as any).__k !== matRef.current) { mesh.material.dispose(); mesh.material = makeMaterial(matRef.current); (mesh.material as any).__k = matRef.current; dirty = true }
+      if ((mesh.material as any).wireframe !== wireRef.current) { (mesh.material as any).wireframe = wireRef.current; dirty = true }
+      if (dirty) { dirty = false; renderer.render(scene, camera) }
+      raf = requestAnimationFrame(loop)
+    }
+    loop()
 
-    return () => { cancelAnimationFrame(raf); clearInterval(matTimer); ro.disconnect(); window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); renderer.domElement.removeEventListener('pointerdown', dn); renderer.domElement.removeEventListener('wheel', wh); mesh.geometry.dispose(); envTex?.dispose(); pmrem.dispose(); renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement); applyRef.current = null; renderThumbRef.current = null }
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); el.removeEventListener('pointerdown', dn); el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); el.removeEventListener('wheel', wh); mesh.geometry.dispose(); envTex?.dispose(); pmrem.dispose(); renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement); applyRef.current = null; renderThumbRef.current = null }
   }, [])
 
   // ── Worker : evaluate the graph off the main thread (HD never freezes the UI) ──
@@ -301,24 +322,35 @@ function NodeCanvas({ graph, setGraph, pushHist, selId, setSelId }: { graph: Gra
   const NW = 150, HDRH = 26, ROW = 18
   const wrapRef = useRef<HTMLDivElement>(null)
   const [pan, setPan] = useState({ x: 0, y: 0, k: 1 })
-  const dragRef = useRef<{ mode: 'node' | 'pan' | 'link'; id?: string; ox?: number; oy?: number; from?: { id: string; idx: number } } | null>(null)
+  const dragRef = useRef<{ mode: 'node' | 'pan' | 'link' | 'pinch'; id?: string; ox?: number; oy?: number; from?: { id: string; idx: number } } | null>(null)
+  const ptrs = useRef(new Map<number, { x: number; y: number }>())
+  const pinch = useRef<{ d: number; mx: number; my: number } | null>(null)
   const [tmpLink, setTmpLink] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
   const nodeH = (n: GNode) => HDRH + Math.max(NODE_DEFS[n.type].inputs.length, NODE_DEFS[n.type].outputs.length, 1) * ROW + 6
   const outPos = (n: GNode, i: number) => ({ x: n.x + NW, y: n.y + HDRH + i * ROW + ROW / 2 })
   const inPos = (n: GNode, i: number) => ({ x: n.x, y: n.y + HDRH + i * ROW + ROW / 2 })
   const toGraph = (cx: number, cy: number) => { const r = wrapRef.current!.getBoundingClientRect(); return { x: (cx - r.left - pan.x) / pan.k, y: (cy - r.top - pan.y) / pan.k } }
 
-  const onDownNode = (e: React.PointerEvent, id: string) => { e.stopPropagation(); setSelId(id); const n = graph.nodes.find((x) => x.id === id)!; const g = toGraph(e.clientX, e.clientY); dragRef.current = { mode: 'node', id, ox: g.x - n.x, oy: g.y - n.y } }
+  const onDownNode = (e: React.PointerEvent, id: string) => { e.stopPropagation(); wrapRef.current?.setPointerCapture(e.pointerId); setSelId(id); const n = graph.nodes.find((x) => x.id === id)!; const g = toGraph(e.clientX, e.clientY); dragRef.current = { mode: 'node', id, ox: g.x - n.x, oy: g.y - n.y } }
   const onDownOut = (e: React.PointerEvent, id: string, idx: number) => { e.stopPropagation(); const n = graph.nodes.find((x) => x.id === id)!; const p = outPos(n, idx); dragRef.current = { mode: 'link', from: { id, idx } }; setTmpLink({ x1: p.x, y1: p.y, x2: p.x, y2: p.y }) }
   const onUpIn = (id: string, idx: number) => { const d = dragRef.current; if (d?.mode === 'link' && d.from) { if (d.from.id !== id) { const edges = graph.edges.filter((e) => !(e.to === id && e.toIdx === idx)); pushHist({ ...graph, edges: [...edges, { id: uid('e'), from: d.from.id, fromIdx: d.from.idx, to: id, toIdx: idx }] }) } } dragRef.current = null; setTmpLink(null) }
-  const onMove = (e: React.PointerEvent) => { const d = dragRef.current; if (!d) return; const g = toGraph(e.clientX, e.clientY); if (d.mode === 'node' && d.id) setGraph((gr) => ({ ...gr, nodes: gr.nodes.map((n) => (n.id === d.id ? { ...n, x: g.x - d.ox!, y: g.y - d.oy! } : n)) })); else if (d.mode === 'pan') setPan((p) => ({ ...p, x: p.x + e.movementX, y: p.y + e.movementY })); else if (d.mode === 'link') setTmpLink((t) => (t ? { ...t, x2: g.x, y2: g.y } : t)) }
-  const onUp = () => { if (dragRef.current?.mode === 'node') pushHist(graph); dragRef.current = null; setTmpLink(null) }
-  const onDownBg = () => { dragRef.current = { mode: 'pan' }; setSelId(null) }
-  const onWheel = (e: React.WheelEvent) => { const k = clamp(0.35, 2.2, pan.k * (e.deltaY < 0 ? 1.1 : 0.9)); setPan((p) => ({ ...p, k })) }
+  const onMove = (e: React.PointerEvent) => {
+    if (ptrs.current.has(e.pointerId)) ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    const d = dragRef.current; if (!d) return
+    // Two-finger pinch : zoom toward the pinch midpoint + pan by its motion.
+    if (d.mode === 'pinch' && ptrs.current.size >= 2) { const p = [...ptrs.current.values()]; const dd = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y); const mx = (p[0].x + p[1].x) / 2, my = (p[0].y + p[1].y) / 2; const pv = pinch.current; if (pv) { const r = wrapRef.current!.getBoundingClientRect(); const lx = mx - r.left, ly = my - r.top; setPan((pp) => { const k2 = clamp(0.35, 2.2, pp.k * (dd / Math.max(1, pv.d))); const gx = (lx - pp.x) / pp.k, gy = (ly - pp.y) / pp.k; return { k: k2, x: lx - gx * k2 + (mx - pv.mx), y: ly - gy * k2 + (my - pv.my) } }) } pinch.current = { d: dd, mx, my }; return }
+    const g = toGraph(e.clientX, e.clientY)
+    if (d.mode === 'node' && d.id) setGraph((gr) => ({ ...gr, nodes: gr.nodes.map((n) => (n.id === d.id ? { ...n, x: g.x - d.ox!, y: g.y - d.oy! } : n)) }))
+    else if (d.mode === 'pan') { const dx = e.clientX - (d.ox ?? e.clientX), dy = e.clientY - (d.oy ?? e.clientY); d.ox = e.clientX; d.oy = e.clientY; setPan((p) => ({ ...p, x: p.x + dx, y: p.y + dy })) }
+    else if (d.mode === 'link') setTmpLink((t) => (t ? { ...t, x2: g.x, y2: g.y } : t))
+  }
+  const onUp = (e: React.PointerEvent) => { ptrs.current.delete(e.pointerId); const d = dragRef.current; if (d?.mode === 'node') pushHist(graph); if (ptrs.current.size === 1 && d?.mode === 'pinch') { pinch.current = null; const [rem] = [...ptrs.current.values()]; dragRef.current = { mode: 'pan', ox: rem.x, oy: rem.y }; return } if (ptrs.current.size < 2) pinch.current = null; dragRef.current = null; setTmpLink(null) }
+  const onDownBg = (e: React.PointerEvent) => { ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); wrapRef.current?.setPointerCapture(e.pointerId); if (ptrs.current.size >= 2) { const p = [...ptrs.current.values()]; pinch.current = { d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), mx: (p[0].x + p[1].x) / 2, my: (p[0].y + p[1].y) / 2 }; dragRef.current = { mode: 'pinch' } } else { dragRef.current = { mode: 'pan', ox: e.clientX, oy: e.clientY }; setSelId(null) } }
+  const onWheel = (e: React.WheelEvent) => { const r = wrapRef.current!.getBoundingClientRect(); const lx = e.clientX - r.left, ly = e.clientY - r.top; setPan((p) => { const k2 = clamp(0.35, 2.2, p.k * (e.deltaY < 0 ? 1.1 : 0.9)); const gx = (lx - p.x) / p.k, gy = (ly - p.y) / p.k; return { k: k2, x: lx - gx * k2, y: ly - gy * k2 } }) }
   const bez = (x1: number, y1: number, x2: number, y2: number) => `M${x1},${y1} C${x1 + 60},${y1} ${x2 - 60},${y2} ${x2},${y2}`
 
   return (
-    <div ref={wrapRef} onPointerDown={onDownBg} onPointerMove={onMove} onPointerUp={onUp} onWheel={onWheel} style={{ width: '100%', height: '100%', background: '#0a0c10', overflow: 'hidden', position: 'relative', cursor: 'grab' }}>
+    <div ref={wrapRef} onPointerDown={onDownBg} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel} style={{ width: '100%', height: '100%', background: '#0a0c10', overflow: 'hidden', position: 'relative', cursor: 'grab', touchAction: 'none', userSelect: 'none' }}>
       <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
         <g transform={`translate(${pan.x},${pan.y}) scale(${pan.k})`}>
           {graph.edges.map((e) => { const a = graph.nodes.find((n) => n.id === e.from), b = graph.nodes.find((n) => n.id === e.to); if (!a || !b) return null; const p1 = outPos(a, e.fromIdx), p2 = inPos(b, e.toIdx); return <path key={e.id} d={bez(p1.x, p1.y, p2.x, p2.y)} stroke="#4b566b" strokeWidth={2} fill="none" /> })}
