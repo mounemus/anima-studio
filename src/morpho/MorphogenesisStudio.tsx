@@ -16,6 +16,7 @@ import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { NODE_DEFS, NODE_CATS, evalGraph, makeNode, uid, type Graph, type GNode } from './graph'
+import { lerpGraph, crossGraph, sameStructure } from './morphospace'
 import { analyze, repair, type MeshStats } from './mesh'
 import { PRESETS } from './presets'
 import { textToGraph, llmToGraph, applyCommand, QUICK_COMMANDS, EXAMPLE_PROMPTS, type Built } from './assistant'
@@ -49,6 +50,7 @@ export function MorphogenesisStudio() {
   const [computing, setComputing] = useState(false)
   const [status, setStatus] = useState('Prêt.')
   const [variants, setVariants] = useState<{ graph: Graph; thumb: string }[]>([])
+  const [parents, setParents] = useState<number[]>([])   // morphospace : up to 2 selected variants (A, B)
   const [addMenu, setAddMenu] = useState(false)
   const [repairExport, setRepairExport] = useState(true)
   const [aiInput, setAiInput] = useState('')
@@ -194,10 +196,26 @@ export function MorphogenesisStudio() {
     for (const n of ng.nodes) { const def = NODE_DEFS[n.type]; for (const pr of def.params) { if (pr.type === 'seed') n.params[pr.key] = Math.floor(Math.random() * 9999) + 1; else if (pr.type === 'num' && pr.min !== undefined && pr.max !== undefined) { const cur = (n.params[pr.key] as number); n.params[pr.key] = clamp(pr.min, pr.max, cur + rnd() * (pr.max - pr.min)) } } }
     return ng
   }
-  const genVariants = () => { setStatus('Génération des variantes…'); setTimeout(() => { const vs: { graph: Graph; thumb: string }[] = []; for (let i = 0; i < 8; i++) { const g = i === 0 ? graphRef.current : mutateGraph(graphRef.current, 0.35); vs.push({ graph: g, thumb: renderThumbRef.current?.(g) ?? '' }) } setVariants(vs); setStatus('8 variantes générées.') }, 20) }
+  const thumbsOf = (gs: Graph[]) => gs.map((g) => ({ graph: g, thumb: renderThumbRef.current?.(g) ?? '' }))
+  const genVariants = () => { setStatus('Génération des variantes…'); setTimeout(() => { const gs: Graph[] = []; for (let i = 0; i < 8; i++) gs.push(i === 0 ? graphRef.current : mutateGraph(graphRef.current, 0.35)); setVariants(thumbsOf(gs)); setParents([]); setStatus('8 variantes générées — épingle 2 vignettes (A/B) pour croiser ou interpoler.') }, 20) }
   const mutate = () => pushHist(mutateGraph(graphRef.current, 0.3))
+  // Toggle a variant as breeding parent (max 2, FIFO). Click the ⚲ pin, not the thumbnail.
+  const togglePin = (i: number) => setParents((ps) => ps.includes(i) ? ps.filter((x) => x !== i) : ps.length < 2 ? [...ps, i] : [ps[1], i])
+  const breed = (mode: 'cross' | 'lerp') => {
+    if (parents.length !== 2) return
+    const a = variants[parents[0]].graph, b = variants[parents[1]].graph
+    if (!sameStructure(a, b)) { setStatus('Structures différentes — croisement impossible (mêmes nœuds requis).'); return }
+    setStatus(mode === 'cross' ? 'Croisement…' : 'Interpolation…')
+    setTimeout(() => {
+      const gs: Graph[] = mode === 'cross'
+        ? [a, b, ...Array.from({ length: 6 }, (_, k) => crossGraph(a, b, Math.floor(Math.random() * 1e6) + k * 7 + 1))]
+        : Array.from({ length: 8 }, (_, k) => lerpGraph(a, b, k / 7))
+      setVariants(thumbsOf(gs)); setParents(mode === 'cross' ? [] : [0, 7])
+      setStatus(mode === 'cross' ? 'Croisement A×B — 6 enfants (+ parents).' : 'Interpolation A→B — 8 étapes.')
+    }, 20)
+  }
 
-  const loadPreset = (i: number) => { pushHist(PRESETS[i].build()); setSelId(null); setVariants([]) }
+  const loadPreset = (i: number) => { pushHist(PRESETS[i].build()); setSelId(null); setVariants([]); setParents([]) }
   const importInputRef = useRef<HTMLInputElement>(null)
   const onImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return; e.target.value = ''
@@ -211,10 +229,10 @@ export function MorphogenesisStudio() {
         { id: uid('e'), from: mi.id, fromIdx: 0, to: meta.id, toIdx: 0 },
         { id: uid('e'), from: meta.id, fromIdx: 0, to: out.id, toIdx: 0 },
       ] })
-      setSelId(meta.id); setVariants([]); setStatus(`Importé : ${name} (${tris.toLocaleString()} tris) → nœud « Métamorphose » branché. Règle l'amplitude ou ajoute Torsion / Organique / Effiler…`)
+      setSelId(meta.id); setVariants([]); setParents([]); setStatus(`Importé : ${name} (${tris.toLocaleString()} tris) → nœud « Métamorphose » branché. Règle l'amplitude ou ajoute Torsion / Organique / Effiler…`)
     } catch (err) { setStatus('Import échoué : ' + (err as Error).message) }
   }
-  const applyBuilt = (b: Built) => { pushHist(b.graph); setSelId(null); setVariants([]); if (b.material) setMaterial(b.material) }
+  const applyBuilt = (b: Built) => { pushHist(b.graph); setSelId(null); setVariants([]); setParents([]); if (b.material) setMaterial(b.material) }
   const aiGenerate = async (prompt: string) => {
     const p = prompt.trim(); if (!p) return; setAiInput('')
     setAiLog((l) => [...l, { role: 'you' as const, text: p }, { role: 'ai' as const, text: '✦ L’IA construit le graphe…' }].slice(-12))
@@ -331,7 +349,20 @@ export function MorphogenesisStudio() {
 
           <div style={{ ...hdr, marginTop: 16 }}>Morphospace</div>
           <button onClick={genVariants} style={{ ...card, width: '100%', borderColor: '#8b6df0' }}>🎲 Générer 8 variantes</button>
-          {variants.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>{variants.map((v, i) => (<button key={i} onClick={() => { pushHist(v.graph); setSelId(null) }} title="Adopter cette variante" style={{ padding: 0, border: '1px solid #2a3140', borderRadius: 6, overflow: 'hidden', cursor: 'pointer', background: '#14171d' }}>{v.thumb ? <img src={v.thumb} alt="" style={{ width: '100%', display: 'block' }} /> : <div style={{ height: 96 }} />}</button>))}</div>}
+          {variants.length > 0 && <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>{variants.map((v, i) => {
+              const pin = parents.indexOf(i)
+              return (<div key={i} style={{ position: 'relative', border: pin >= 0 ? '2px solid #8b6df0' : '1px solid #2a3140', borderRadius: 6, overflow: 'hidden', background: '#14171d' }}>
+                <button onClick={() => { pushHist(v.graph); setSelId(null) }} title="Adopter cette variante" style={{ padding: 0, border: 'none', display: 'block', width: '100%', cursor: 'pointer', background: 'transparent' }}>{v.thumb ? <img src={v.thumb} alt="" style={{ width: '100%', display: 'block' }} /> : <div style={{ height: 96 }} />}</button>
+                <button onClick={() => togglePin(i)} title="Épingler comme parent (A / B)" style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, borderRadius: 5, fontSize: 10, fontWeight: 700, border: '1px solid #8b6df0', background: pin >= 0 ? '#8b6df0' : 'rgba(10,12,20,0.7)', color: '#fff', cursor: 'pointer', lineHeight: '18px', padding: 0 }}>{pin === 0 ? 'A' : pin === 1 ? 'B' : '⚲'}</button>
+              </div>)
+            })}</div>
+            {parents.length === 2 && <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <button onClick={() => breed('cross')} style={{ ...card, flex: 1, borderColor: '#4fd1a5' }}>🧬 Croiser A×B</button>
+              <button onClick={() => breed('lerp')} style={{ ...card, flex: 1, borderColor: '#5aa9e6' }}>↔ Interpoler</button>
+            </div>}
+            <p style={{ fontSize: 10, color: '#6b7385', marginTop: 6, lineHeight: 1.4 }}>Clique une vignette = adopter. Épingle ⚲ deux vignettes (A / B), puis croise ou interpole entre elles.</p>
+          </>}
         </div>
       </div>
     </div>

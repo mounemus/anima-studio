@@ -3,10 +3,11 @@
  *  "génération vide / mesh fractionné" bug deterministically, off the browser. */
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { evalGraph, makeNode, uid, type Graph } from './graph'
+import { evalGraph, makeNode, uid, NODE_DEFS, type Graph } from './graph'
 import { weld, repair, analyze } from './mesh'
 import * as D from './deform'
 import { textToGraph } from './assistant'
+import { lerpGraph, crossGraph, sameStructure } from './morphospace'
 import { PRESETS } from './presets'
 
 function inspect(geo: ReturnType<typeof evalGraph>) {
@@ -132,4 +133,34 @@ describe('AI assistant : métamorphose prompts build valid geometry', () => {
       expect(tris, `${prompt}: empty`).toBeGreaterThan(50)
     })
   }
+})
+
+describe('morphospace : interpolation & croisement', () => {
+  const perturb = (g: Graph): Graph => {
+    const b: Graph = JSON.parse(JSON.stringify(g))
+    for (const n of b.nodes) { const def = NODE_DEFS[n.type]; for (const pr of def.params) if (pr.type === 'num' && typeof n.params[pr.key] === 'number') n.params[pr.key] = Math.max(pr.min!, Math.min(pr.max!, (n.params[pr.key] as number) * 1.25 + (pr.max! - pr.min!) * 0.1)) }
+    return b
+  }
+  it('lerp: endpoints match parents, all steps valid & NaN-free', () => {
+    const a = PRESETS[1].build(), b = perturb(a)
+    expect(sameStructure(a, b)).toBe(true)
+    const t0 = lerpGraph(a, b, 0), t1 = lerpGraph(a, b, 1)
+    // find a numeric param and check endpoints
+    const key = NODE_DEFS[a.nodes[0].type].params.find((p) => p.type === 'num')!.key
+    expect(t0.nodes[0].params[key]).toBeCloseTo(a.nodes[0].params[key] as number, 6)
+    expect(t1.nodes[0].params[key]).toBeCloseTo(b.nodes[0].params[key] as number, 6)
+    for (let k = 0; k <= 4; k++) { const g = lerpGraph(a, b, k / 4); const geo = evalGraph(g, 'proxy'); expect(geo).not.toBeNull(); expect(nanCount(geo!)).toBe(0) }
+  }, 20000)
+  it('cross: deterministic for a given seed, geometry valid', () => {
+    const a = PRESETS[1].build(), b = perturb(a)
+    const c1 = crossGraph(a, b, 42), c2 = crossGraph(a, b, 42)
+    expect(JSON.stringify(c1)).toBe(JSON.stringify(c2))
+    const geo = evalGraph(c1, 'proxy'); expect(geo).not.toBeNull(); expect(nanCount(geo!)).toBe(0)
+  }, 20000)
+  it('mismatched structure → falls back to parent A unchanged', () => {
+    const a = PRESETS[0].build(), b = PRESETS[1].build()   // different node counts
+    expect(sameStructure(a, b)).toBe(false)
+    expect(JSON.stringify(lerpGraph(a, b, 0.5))).toBe(JSON.stringify(a))
+    expect(JSON.stringify(crossGraph(a, b, 7))).toBe(JSON.stringify(a))
+  })
 })
