@@ -8,7 +8,7 @@
  *
  * Route /morpho, protégée par FrontGate.
  */
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import * as THREE from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
@@ -174,8 +174,15 @@ export function MorphogenesisStudio() {
     else setTimeout(() => { try { const g = evalGraph(graphRef.current, kind); if (kind === 'proxy' && id !== proxyReqId.current) return; applyRef.current?.(g); setStats(g ? analyze(g) : null); setStatus(g ? (kind === 'hd' ? 'Haute résolution ✓' : 'Aperçu (proxy) ✓') : 'Aucune sortie.') } catch (e) { setStatus('Erreur : ' + (e as Error).message) } setComputing(false) }, 10)
   }
 
-  // Recompute (debounced proxy) whenever the graph changes.
-  useEffect(() => { const t = setTimeout(() => requestEval('proxy'), 45); return () => clearTimeout(t) }, [graph])
+  // Signature of everything that affects the GEOMETRY (structure + params + data), but NOT
+  // node x/y positions. Dragging a node around the editor changes layout only → recomputing
+  // the mesh on every drag frame was pure waste; keying the recompute on this avoids it.
+  const graphSig = useMemo(() => JSON.stringify({
+    n: graph.nodes.map((n) => ({ i: n.id, t: n.type, p: n.params, d: n.data ? n.data.pos.length : 0 })),
+    e: graph.edges.map((e) => `${e.from}:${e.fromIdx}>${e.to}:${e.toIdx}`),
+  }), [graph])
+  // Recompute (debounced proxy) whenever the geometry-affecting signature changes.
+  useEffect(() => { const t = setTimeout(() => requestEval('proxy'), 45); return () => clearTimeout(t) }, [graphSig])
   const computeHD = () => { setStatus('Calcul haute résolution…'); requestEval('hd') }
 
   // export (needs the current viewport mesh geometry → recompute HD)
@@ -197,10 +204,14 @@ export function MorphogenesisStudio() {
     setStatus(`Import de ${f.name}…`)
     try {
       const { data, name, tris } = await importFile(f)
-      const mi = makeNode('meshimport', 60, 120); mi.data = data
-      const out = makeNode('output', 280, 120)
-      pushHist({ nodes: [mi, out], edges: [{ id: uid('e'), from: mi.id, fromIdx: 0, to: out.id, toIdx: 0 }] })
-      setSelId(mi.id); setVariants([]); setStatus(`Importé : ${name} (${tris.toLocaleString()} tris). Ajoute « Maillage → champ » pour le rendre organique.`)
+      const mi = makeNode('meshimport', 40, 120); mi.data = data
+      const meta = makeNode('marabesque', 250, 120); meta.params.amp = 0   // identity by default → l'import reste intact tant qu'on ne touche pas l'amplitude
+      const out = makeNode('output', 470, 120)
+      pushHist({ nodes: [mi, meta, out], edges: [
+        { id: uid('e'), from: mi.id, fromIdx: 0, to: meta.id, toIdx: 0 },
+        { id: uid('e'), from: meta.id, fromIdx: 0, to: out.id, toIdx: 0 },
+      ] })
+      setSelId(meta.id); setVariants([]); setStatus(`Importé : ${name} (${tris.toLocaleString()} tris) → nœud « Métamorphose » branché. Règle l'amplitude ou ajoute Torsion / Organique / Effiler…`)
     } catch (err) { setStatus('Import échoué : ' + (err as Error).message) }
   }
   const applyBuilt = (b: Built) => { pushHist(b.graph); setSelId(null); setVariants([]); if (b.material) setMaterial(b.material) }
@@ -269,7 +280,17 @@ export function MorphogenesisStudio() {
           </> : <>
             <div style={hdr}>Ajouter un nœud</div>
             <button onClick={() => setAddMenu((v) => !v)} style={{ ...card, width: '100%' }}>＋ Palette de nœuds</button>
-            {addMenu && <div style={{ marginTop: 6 }}>{NODE_CATS.map((cat) => (<div key={cat} style={{ marginBottom: 6 }}><div style={{ fontSize: 10, color: '#6b7385', textTransform: 'uppercase', margin: '4px 0' }}>{cat}</div>{Object.values(NODE_DEFS).filter((d) => d.cat === cat).map((d) => (<button key={d.type} onClick={() => { const nn = makeNode(d.type, 120 + Math.random() * 60, 120 + Math.random() * 60); pushHist({ ...graph, nodes: [...graph.nodes, nn] }); setSelId(nn.id) }} style={{ ...chip, borderColor: d.color }}>{d.title}</button>))}</div>))}</div>}
+            {addMenu && <div style={{ marginTop: 6 }}>{NODE_CATS.map((cat) => (<div key={cat} style={{ marginBottom: 6 }}><div style={{ fontSize: 10, color: '#6b7385', textTransform: 'uppercase', margin: '4px 0' }}>{cat}</div>{Object.values(NODE_DEFS).filter((d) => d.cat === cat).map((d) => (<button key={d.type} onClick={() => {
+                  const sel = graph.nodes.find((n) => n.id === selId)
+                  const px = sel ? sel.x + 200 : (graph.nodes.length ? Math.max(...graph.nodes.map((n) => n.x)) + 60 : 120)
+                  const py = sel ? sel.y : (graph.nodes.length ? Math.round(graph.nodes.reduce((s, n) => s + n.y, 0) / graph.nodes.length) : 120)
+                  const nn = makeNode(d.type, px, py)
+                  const edges = [...graph.edges]
+                  const selDef = sel ? NODE_DEFS[sel.type] : null
+                  const selOutFree = sel ? !edges.some((e) => e.from === sel.id) : false   // auto-connect only a dangling output
+                  if (sel && selDef?.outputs[0] && d.inputs[0] && selDef.outputs[0].type === d.inputs[0].type && selOutFree) edges.push({ id: uid('e'), from: sel.id, fromIdx: 0, to: nn.id, toIdx: 0 })
+                  pushHist({ nodes: [...graph.nodes, nn], edges }); setSelId(nn.id)
+                }} style={{ ...chip, borderColor: d.color }}>{d.title}</button>))}</div>))}</div>}
             <div style={{ ...hdr, marginTop: 14 }}>Graphe</div>
             <button onClick={() => { const json = JSON.stringify(graph); dl(new Blob([json], { type: 'application/json' }), 'graph.json') }} style={{ ...card, width: '100%' }}>⬇ Exporter le graphe (JSON)</button>
             <p style={{ fontSize: 10, color: '#6b7385', marginTop: 8, lineHeight: 1.4 }}>Glisse les nœuds, tire d'une sortie vers une entrée pour connecter. Clique un nœud pour ses paramètres.</p>
