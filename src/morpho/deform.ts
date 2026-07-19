@@ -95,3 +95,42 @@ export function rippleMesh(g: THREE.BufferGeometry, amp: number, freq: number): 
     return [x + nx * d, y + ny * d, z + nz * d]
   })
 }
+
+/** Moucharabieh : radial interlaced lattice — two counter-rotating angular×height wave
+ *  families multiply into a diamond net of raised ribs (pierced-screen ornament). */
+export function moucharabiehMesh(g: THREE.BufferGeometry, amp: number, nrad: number, nh: number): THREE.BufferGeometry {
+  const f = frame(g)
+  return mapVerts(g, (x, y, z, nx, ny, nz) => {
+    const ang = Math.atan2(z - f.cz, x - f.cx), t = (y - f.minY) / f.h
+    const a = Math.cos(nrad * ang + nh * Math.PI * 2 * t), b = Math.cos(nrad * ang - nh * Math.PI * 2 * t)
+    const grid = a * b                       // diamond lattice in [-1,1]
+    const d = amp * Math.sign(grid) * Math.sqrt(Math.abs(grid))   // crisper ribs
+    return [x + nx * d, y + ny * d, z + nz * d]
+  })
+}
+
+/** Plissé : accordion pleats — a triangular wave of the azimuth displaces vertices
+ *  radially into sharp vertical folds (fan / pleated-skirt look). */
+export function pleatMesh(g: THREE.BufferGeometry, amp: number, folds: number): THREE.BufferGeometry {
+  const f = frame(g)
+  return mapVerts(g, (x, y, z) => {
+    const dx = x - f.cx, dz = z - f.cz, r = Math.hypot(dx, dz)
+    const ang = Math.atan2(dz, dx)
+    const ph = folds * (ang / (Math.PI * 2))
+    const tri = 2 * Math.abs(ph - Math.round(ph)) - 0.5   // triangle wave, centered
+    const d = amp * tri * 2
+    if (r < 1e-5) return [x, y, z]
+    return [x + (dx / r) * d, y, z + (dz / r) * d]
+  })
+}
+
+/** Cristallin : facet the surface by snapping vertices toward a coarse 3D lattice
+ *  (k = amount, cells = lattice fineness) → angular, gem-like faceting. */
+export function crystallizeMesh(g: THREE.BufferGeometry, k: number, cells: number): THREE.BufferGeometry {
+  const f = frame(g)
+  const s = Math.max(2, cells) / (2 * f.R)   // lattice spacing relative to size
+  return mapVerts(g, (x, y, z) => {
+    const qx = Math.round(x * s) / s, qy = Math.round(y * s) / s, qz = Math.round(z * s) / s
+    return [x + (qx - x) * k, y + (qy - y) * k, z + (qz - z) * k]
+  })
+}

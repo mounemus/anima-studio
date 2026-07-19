@@ -96,6 +96,13 @@ export function textToGraph(prompt: string): Built {
   steps.push({ type: 'surface', params: { res: hi ? 108 : 82, bound: 1.35 } }); explain.push(`Surface (marching cubes) — ${hi ? 'haute' : 'moyenne'} résolution.`)
   if (!has('anguleux', 'brut', 'faceted', 'low-poly', 'facetté')) { steps.push({ type: 'smooth', params: { iter: has('très lisse', 'tres lisse', 'poli', 'lisse') ? 3 : 1 } }); explain.push('Lissage laplacien.') }
 
+  // — métamorphoses de maillage (appliquées APRÈS la surface, sur le maillage lissé) —
+  if (has('moucharabieh', 'mouchara', 'claustra', 'entrelac', 'résille', 'resille')) { steps.push({ type: 'mmoucharabieh', params: { amp: 0.11, nrad: nAfter(/(\d+)\s*motif/) ?? 8, nh: 5 } }); explain.push('Moucharabieh — résille radiale entrelacée.') }
+  else if (has('arabesque')) { steps.push({ type: 'marabesque', params: { amp: 0.12, freq: 6, twist: 1 } }); explain.push('Arabesque — relief sinusoïdal entrelacé.') }
+  if (has('plissé', 'plisse', 'pleat', 'accordéon', 'accordeon', 'godet', ' plis', 'drapé', 'drape')) { steps.push({ type: 'mpleat', params: { amp: 0.1, folds: nAfter(/(\d+)\s*pli/) ?? 14 } }); explain.push('Plissé — plis en accordéon.') }
+  if (has('cristallin', 'cristal', 'crystal', 'facett', 'gemme', ' gem')) { steps.push({ type: 'mcrystal', params: { k: 0.55, cells: 9 } }); explain.push('Cristallin — facettes anguleuses.') }
+  if (has('peau organique', 'écailles', 'ecailles', 'noueux', 'grumeleux')) { steps.push({ type: 'morganic', params: { amp: 0.1, freq: 3 } }); explain.push('Peau organique — relief fBm le long des normales.') }
+
   if (material) explain.push(`Matériau : ${material}.`)
   return { graph: chainGraph(steps), explain, material }
 }
@@ -107,6 +114,22 @@ export function applyCommand(cmd: string, graph: Graph): Built {
   const find = (type: string) => g.nodes.find((n) => n.type === type)
   const pct = (() => { const m = t.match(/(\d+)\s*%/); return m ? parseInt(m[1], 10) / 100 : null })()
   const N = (v: unknown, d = 0) => (typeof v === 'number' ? v : d)
+
+  // — Métamorphoses de maillage : s'insèrent après la surface (avant la Sortie), empilables.
+  //   Reconnaît « rends-le arabesque », « façon moucharabieh », « plissé », « cristallin »… —
+  const META: [string[], string, Record<string, number>][] = [
+    [['moucharabieh', 'mouchara', 'claustra', 'entrelac', 'résille', 'resille'], 'mmoucharabieh', { amp: 0.11, nrad: 8, nh: 5 }],
+    [['arabesque'], 'marabesque', { amp: 0.12, freq: 6, twist: 1 }],
+    [['plissé', 'plisse', 'accordéon', 'accordeon', 'godet', ' plis', 'drapé', 'drape'], 'mpleat', { amp: 0.1, folds: 14 }],
+    [['cristallin', 'cristal', 'crystal', 'facett', 'gemme', ' gem'], 'mcrystal', { k: 0.55, cells: 9 }],
+    [['peau organique', 'écailles', 'ecailles', 'noueux', 'grumeleux'], 'morganic', { amp: 0.1, freq: 3 }],
+    [['gonfl', 'boursoufl'], 'minflate', { k: 0.09 }],
+    [['sphérifi', 'spherifi', 'arrondi-le'], 'mspherify', { k: 0.4 }],
+    [['ondul'], 'mripple', { amp: 0.08, freq: 2 }],
+  ]
+  let metaHit = false
+  for (const [kws, ty, ps] of META) { if (has(...kws)) { insertBefore(g, 'output', ty, ps); explain.push(`Métamorphose « ${NODE_DEFS[ty].title} » appliquée.`); metaHit = true } }
+  if (metaHit) return { graph: g, explain, material: detectMat(t) }
 
   if (has('plus organique', 'more organic', 'organique')) {
     let d = find('displace'); if (!d) d = insertBefore(g, 'surface', 'displace', { type: 'fbm', amp: 0.12, freq: 3 }) ?? undefined
@@ -153,22 +176,32 @@ export function applyCommand(cmd: string, graph: Graph): Built {
 
 // ── Real LLM path (uses the admin-configured Anthropic key via /api/morpho-assistant) ──
 const LINEAR_TYPES = ['sphere', 'box', 'torus', 'capsule', 'gyroid', 'schwarz', 'mandelbulb', 'voronoi', 'metaballs', 'bloom', 'dla', 'reaction', 'helix', 'displace', 'shell', 'twist', 'taper', 'stretch', 'radial', 'mirror', 'relief', 'surface', 'smooth', 'decimate', 'thicken']
+// Mesh-space métamorphoses — act on the MESH, so they come AFTER "surface" (and "smooth").
+const META_TYPES = ['mtwist', 'mtaper', 'mbend', 'mshear', 'minflate', 'mspherify', 'marabesque', 'mmoucharabieh', 'mpleat', 'mcrystal', 'morganic', 'mripple']
+function specOf(types: string[]): string {
+  return types.map((ty) => { const d = NODE_DEFS[ty]; const ps = d.params.map((p) => p.type === 'select' ? `${p.key}∈{${p.options!.map((o) => o.v).join('|')}}` : p.type === 'seed' ? `${p.key}(entier)` : `${p.key}(${p.min}…${p.max})`).join(', '); return `- ${ty} [${d.cat}] «${d.title}»${ps ? ' : ' + ps : ''}` }).join('\n')
+}
 function buildSystemPrompt(): string {
-  const spec = LINEAR_TYPES.map((ty) => { const d = NODE_DEFS[ty]; const ps = d.params.map((p) => p.type === 'select' ? `${p.key}∈{${p.options!.map((o) => o.v).join('|')}}` : p.type === 'seed' ? `${p.key}(entier)` : `${p.key}(${p.min}…${p.max})`).join(', '); return `- ${ty} [${d.cat}]${ps ? ' : ' + ps : ''}` }).join('\n')
+  const spec = specOf(LINEAR_TYPES)
+  const metaspec = specOf(META_TYPES)
   return `Tu es le moteur de MORPHOGENESIS STUDIO, un atelier 3D génératif nodal. Tu convertis une description en une CHAÎNE de nœuds (pipeline linéaire) qui produit une forme organique/fractale/cellulaire via un champ scalaire → marching cubes.
 
 RÈGLES :
 - Réponds UNIQUEMENT par un objet JSON, rien d'autre.
 - Format : {"pipeline":[{"type":"...","params":{...}}, ...], "material":"clay|matte|chrome|gloss|translucent", "explain":["phrase courte par nœud"]}
 - La pipeline commence par UN nœud source (champ), enchaîne des transformations/déplacements, et se termine par "surface" puis (optionnel) "smooth".
-- Chaque nœud passe son champ au suivant. N'utilise PAS de nœud "boolean" ni "output".
+- APRÈS "surface"/"smooth", tu peux ajouter 1 à 3 MÉTAMORPHOSES DE MAILLAGE (voir liste) pour l'ornement : arabesque, moucharabieh (résille), plissé, cristallin (facettes), organique (peau fBm), torsion/effilé/courber/gonfler/sphérifier. Ex. « arabesque » → marabesque ; « façon moucharabieh » → mmoucharabieh ; « plissé » → mpleat ; « cristallin/facetté » → mcrystal ; « peau organique/écailles » → morganic.
+- Chaque nœud passe sa donnée au suivant. N'utilise PAS de nœud "boolean" ni "output".
 - Varie les silhouettes : colonne (metaballs shape=column + stretch sy>1.4), relief mural (metaballs shape=disc + relief), spirale/coquille (helix + twist), vase (capsule + stretch + shell), etc. Évite de tout faire sphérique.
 - DÔME / cloche / ombrelle / méduse / champignon → metaballs shape=disc + stretch sy≈0.7 (APLATIR, jamais une colonne fine). Ajoute displace ridged pour les nervures.
 - La symétrie "radial" fonctionne sur TOUT champ (union de copies), utilise-la librement pour des lobes/branches.
 - Respecte les bornes des paramètres. Pour "surface", res 80–110 et bound 1.2–1.4.
 
-TYPES DE NŒUDS DISPONIBLES :
+TYPES DE NŒUDS (champ → surface) :
 ${spec}
+
+MÉTAMORPHOSES DE MAILLAGE (à placer APRÈS "surface"/"smooth") :
+${metaspec}
 
 Exemple — "colonne gothique à nervures noire" →
 {"pipeline":[{"type":"metaballs","params":{"shape":"column","count":22,"radius":0.26,"spread":0.5}},{"type":"stretch","params":{"sy":2,"sxz":0.72}},{"type":"displace","params":{"type":"ridged","amp":0.13,"freq":4}},{"type":"radial","params":{"n":6}},{"type":"surface","params":{"res":92,"bound":1.35}},{"type":"smooth","params":{"iter":1}}],"material":"gloss","explain":["Metaballs en colonne","Étirement vertical","Nervures ridged","Symétrie ×6","Maillage","Lissage"]}`
@@ -196,17 +229,20 @@ export async function llmToGraph(prompt: string): Promise<Built> {
   if (!steps.length) throw new Error('Pipeline vide')
   const surf = rawPipe.find((s) => s?.type === 'surface'); steps.push({ type: 'surface', params: sanitizeParams('surface', surf?.params ?? { res: 84, bound: 1.35 }) })
   const sm = rawPipe.find((s) => s?.type === 'smooth'); if (sm || rawPipe.length <= 3) steps.push({ type: 'smooth', params: sanitizeParams('smooth', sm?.params ?? { iter: 1 }) })
+  // Mesh métamorphoses go AFTER the surface/smooth, in the order the model emitted them.
+  const metaSteps: Step[] = rawPipe.filter((s) => s && typeof s.type === 'string' && META_TYPES.includes(s.type)).map((s) => ({ type: s.type, params: sanitizeParams(s.type, s.params) })).slice(0, 3)
+  steps.push(...metaSteps)
   const material = VALID_MATS.includes(obj.material) ? (obj.material as MatKind) : undefined
   const explain = Array.isArray(obj.explain) ? obj.explain.map(String).slice(0, 8) : ['Graphe généré par l’IA.']
   return { graph: chainGraph(steps), explain, material }
 }
 
-export const QUICK_COMMANDS = ['Plus organique', 'Réduis les pointes', 'Augmente la porosité', 'Rends symétrique', 'Allège de 30%', 'Plus lisse', 'Décime le maillage', 'Épaissis', 'Prépare pour l’impression']
+export const QUICK_COMMANDS = ['Rends-le arabesque', 'Façon moucharabieh', 'Plissé', 'Cristallin', 'Peau organique', 'Plus organique', 'Augmente la porosité', 'Rends symétrique', 'Allège de 30%', 'Plus lisse', 'Prépare pour l’impression']
 export const EXAMPLE_PROMPTS = [
   'Coquille spiralée translucide à nervures fractales',
-  'Colonne gothique symétrique en tubes organiques noirs',
+  'Colonne gothique moucharabieh cristalline',
+  'Vase élancé plissé en céramique',
+  'Dôme organique façon arabesque',
   'Panneau mural relief corallien poreux',
-  'Vase élancé creux cellulaire en céramique',
-  'Treillis d’os imprimable allongé',
   'Réseau Voronoï radial translucide',
 ]

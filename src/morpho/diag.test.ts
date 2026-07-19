@@ -6,6 +6,7 @@ import * as THREE from 'three'
 import { evalGraph, makeNode, uid, type Graph } from './graph'
 import { weld, repair, analyze } from './mesh'
 import * as D from './deform'
+import { textToGraph } from './assistant'
 import { PRESETS } from './presets'
 
 function inspect(geo: ReturnType<typeof evalGraph>) {
@@ -75,6 +76,7 @@ describe('mesh metamorphoses (deform.ts) — valid on any mesh', () => {
     ['twist', (g) => D.twistMesh(g, 1.6)], ['taper', (g) => D.taperMesh(g, 0.5)], ['bend', (g) => D.bendMesh(g, 1)],
     ['shear', (g) => D.shearMesh(g, 0.3)], ['inflate', (g) => D.inflateMesh(g, 0.06)], ['spherify', (g) => D.spherifyMesh(g, 0.4)],
     ['arabesque', (g) => D.arabesqueMesh(g, 0.12, 6, 1)], ['organic', (g) => D.organicMesh(g, 0.12, 3, 1)], ['ripple', (g) => D.rippleMesh(g, 0.08, 2)],
+    ['moucharabieh', (g) => D.moucharabiehMesh(g, 0.11, 8, 5)], ['pleat', (g) => D.pleatMesh(g, 0.1, 14)], ['crystal', (g) => D.crystallizeMesh(g, 0.55, 9)],
   ]
   for (const [name, fn] of cases) {
     it(`${name}: NaN-free, keeps vertex count`, () => {
@@ -106,4 +108,28 @@ describe('imported mesh CAN be metamorphosed through the graph', () => {
     const tris = (geo!.getIndex()?.count ?? geo!.getAttribute('position').count) / 3
     expect(tris, 'metamorphosed import is empty').toBeGreaterThan(50)
   })
+})
+
+describe('AI assistant : métamorphose prompts build valid geometry', () => {
+  const prompts = [
+    'Colonne gothique moucharabieh cristalline',
+    'Vase élancé plissé en céramique',
+    'Dôme organique façon arabesque',
+    'Coquille spiralée à peau organique',
+  ]
+  for (const prompt of prompts) {
+    it(`"${prompt}" → non-empty, NaN-free`, () => {
+      const built = textToGraph(prompt)
+      // the mesh métamorphose node(s) must sit AFTER the surface node in the chain
+      const types = built.graph.nodes.map((n) => n.type)
+      const si = types.indexOf('surface')
+      const metaIdx = types.findIndex((t) => t.startsWith('m') && ['mmoucharabieh', 'mcrystal', 'mpleat', 'marabesque', 'morganic'].includes(t))
+      if (metaIdx >= 0 && si >= 0) expect(metaIdx, `${prompt}: métamorphose placed before surface`).toBeGreaterThan(si)
+      const geo = evalGraph(built.graph, 'proxy')
+      expect(geo, `${prompt}: no geometry`).not.toBeNull()
+      expect(nanCount(geo!), `${prompt}: NaN`).toBe(0)
+      const tris = (geo!.getIndex()?.count ?? geo!.getAttribute('position').count) / 3
+      expect(tris, `${prompt}: empty`).toBeGreaterThan(50)
+    })
+  }
 })
