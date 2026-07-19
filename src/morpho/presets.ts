@@ -40,4 +40,21 @@ export const PRESETS: { name: string; desc: string; build: () => Graph }[] = [
   { name: '🦴 Bone Lattice', desc: 'Structure trabéculaire Schwarz allongée — treillis léger imprimable.', build: () => chain([['schwarz', { freq: 9, thick: 0.7, bound: 1 }], ['stretch', { sy: 1.5, sxz: 0.85 }], ['surface', { res: 108, bound: 1.25 }]]) },
   { name: '🍶 Klein Bottle', desc: 'Surface paramétrique non-orientable — bouteille de Klein immergée.', build: () => chain([['klein', { res: 96 }], ['smooth', { iter: 1 }]]) },
   { name: '♾️ Möbius', desc: 'Ruban de Möbius paramétrique à torsion réglable.', build: () => chain([['mobius', { res: 140, width: 0.42, twists: 1 }], ['smooth', { iter: 1 }]]) },
+  { name: '🔩 Colonne perforée', desc: 'Colonne pleine percée par un réseau gyroïde — booléen de maillage robuste (soustraction).', build: () => {
+    const cap = makeNode('capsule', 40, 60); Object.assign(cap.params, { h: 0.75, r: 0.5 })
+    const str = makeNode('stretch', 220, 60); Object.assign(str.params, { sy: 1.7, sxz: 0.9 })
+    const sA = makeNode('surface', 400, 60); Object.assign(sA.params, { res: 96, bound: 1.35 })
+    const gyr = makeNode('gyroid', 40, 300); Object.assign(gyr.params, { freq: 8, thick: 0.42, bound: 1.25 })
+    const sB = makeNode('surface', 220, 300); Object.assign(sB.params, { res: 96, bound: 1.35 })
+    const bool = makeNode('meshbool', 600, 160); bool.params.op = 'subtract'
+    const out = makeNode('output', 780, 160)
+    return { nodes: [cap, str, sA, gyr, sB, bool, out], edges: [
+      { id: 'e0', from: cap.id, fromIdx: 0, to: str.id, toIdx: 0 },
+      { id: 'e1', from: str.id, fromIdx: 0, to: sA.id, toIdx: 0 },
+      { id: 'e2', from: sA.id, fromIdx: 0, to: bool.id, toIdx: 0 },
+      { id: 'e3', from: gyr.id, fromIdx: 0, to: sB.id, toIdx: 0 },
+      { id: 'e4', from: sB.id, fromIdx: 0, to: bool.id, toIdx: 1 },
+      { id: 'e5', from: bool.id, fromIdx: 0, to: out.id, toIdx: 0 },
+    ] }
+  } },
 ]

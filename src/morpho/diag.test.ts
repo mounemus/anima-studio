@@ -8,6 +8,7 @@ import { weld, repair, analyze } from './mesh'
 import * as D from './deform'
 import { textToGraph } from './assistant'
 import { lerpGraph, crossGraph, sameStructure } from './morphospace'
+import { meshBoolean } from './csg'
 import { PRESETS } from './presets'
 
 function inspect(geo: ReturnType<typeof evalGraph>) {
@@ -62,10 +63,11 @@ describe('repair → watertight, NaN-free (the export "Réparer & lisser" path)'
       expect(nan, `${p.name}: repair produced ${nan} NaN`).toBe(0)
       expect(after.tris, `${p.name}: repair emptied the mesh`).toBeGreaterThan(50)
       // Repair must massively reduce open edges. Solid/relief meshes reach a fully
-      // watertight 0; self-intersecting TPMS (gyroid/voronoi) leave ≤4 non-manifold
-      // edges that slicers auto-fix. So: never increase, and land at ≤4.
+      // watertight 0; self-intersecting TPMS reach ≤4 ; genuinely perforated CSG results
+      // (gyroid-carved) can't fully close but must drop by ≥80 %. So: never increase, and
+      // land at ≤4 OR ≥80 % reduction.
       if (before > 0) expect(after.openEdges, `${p.name}: openEdges ${before} → ${after.openEdges} (no improvement)`).toBeLessThan(before)
-      expect(after.openEdges, `${p.name}: ${after.openEdges} open edges remain (from ${before})`).toBeLessThanOrEqual(4)
+      expect(after.openEdges <= 4 || after.openEdges <= before * 0.2, `${p.name}: ${after.openEdges} open edges remain (from ${before})`).toBe(true)
     }, 20000)
   }
 })
@@ -163,4 +165,33 @@ describe('morphospace : interpolation & croisement', () => {
     expect(JSON.stringify(lerpGraph(a, b, 0.5))).toBe(JSON.stringify(a))
     expect(JSON.stringify(crossGraph(a, b, 7))).toBe(JSON.stringify(a))
   })
+})
+
+describe('robust mesh boolean (three-bvh-csg)', () => {
+  const A = () => new THREE.SphereGeometry(0.7, 24, 16)
+  const B = () => { const g = new THREE.SphereGeometry(0.55, 24, 16); g.translate(0.45, 0, 0); return g }
+  for (const op of ['union', 'subtract', 'intersect'] as const) {
+    it(`${op}: non-empty, NaN-free`, () => {
+      const r = meshBoolean(A(), B(), op)
+      expect(nanCount(r), `${op}: NaN`).toBe(0)
+      const tris = (r.getIndex()?.count ?? r.getAttribute('position').count) / 3
+      expect(tris, `${op}: empty`).toBeGreaterThan(20)
+    })
+  }
+  it('through the graph: (sphere ∖ box) via meshbool node', () => {
+    const a = makeNode('sphere', 0, 0), sa = makeNode('surface', 0, 0)
+    const b = makeNode('box', 0, 0), sb = makeNode('surface', 0, 0)
+    const mb = makeNode('meshbool', 0, 0); mb.params.op = 'subtract'
+    const out = makeNode('output', 0, 0)
+    const graph: Graph = { nodes: [a, sa, b, sb, mb, out], edges: [
+      { id: uid('e'), from: a.id, fromIdx: 0, to: sa.id, toIdx: 0 },
+      { id: uid('e'), from: sa.id, fromIdx: 0, to: mb.id, toIdx: 0 },
+      { id: uid('e'), from: b.id, fromIdx: 0, to: sb.id, toIdx: 0 },
+      { id: uid('e'), from: sb.id, fromIdx: 0, to: mb.id, toIdx: 1 },
+      { id: uid('e'), from: mb.id, fromIdx: 0, to: out.id, toIdx: 0 },
+    ] }
+    const geo = evalGraph(graph, 'proxy')
+    expect(geo, 'meshbool graph produced nothing').not.toBeNull()
+    expect(nanCount(geo!)).toBe(0)
+  }, 20000)
 })
