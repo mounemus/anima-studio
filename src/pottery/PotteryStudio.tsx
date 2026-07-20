@@ -141,14 +141,6 @@ export function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: num
   for (let vi = 0; vi < nv; vi++) { const x = pos[vi * 3], y = pos[vi * 3 + 1], z = pos[vi * 3 + 2]; uv.push(Math.atan2(z, x) / (Math.PI * 2) + 0.5, (y - Y0) / HMAX) }
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx)
-  if (relief) {
-    // Per-vertex Raku colour sampled at the SAME field point as the groove → they align.
-    const base = new THREE.Color(relief.color), cream = new THREE.Color(0xefe9dc)
-    const bR = lerp(cream.r, base.r, 0.16), bG = lerp(cream.g, base.g, 0.16), bB = lerp(cream.b, base.b, 0.16)
-    const col = new Float32Array(nv * 3)
-    for (let vi = 0; vi < nv; vi++) { const x = pos[vi * 3], y = pos[vi * 3 + 1], z = pos[vi * 3 + 2], rr = Math.hypot(x, z) || 1e-6, t = (y - Y0) / HMAX; const c = rakuColor(x / rr, t, z / rr, relief.o, relief.seed, bR, bG, bB); col[vi * 3] = c[0]; col[vi * 3 + 1] = c[1]; col[vi * 3 + 2] = c[2] }
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3))
-  }
   g.computeVertexNormals()
   return g
 }
@@ -242,33 +234,23 @@ function rakuColor(nx: number, t: number, nz: number, o: GlazeOpts, seed: number
   return [R, G, B]
 }
 
-/** Bake a realistic Raku glaze into a seamless texture (cylinder-sampled) — multi-scale
- *  crackle (big + fine cracks), carbon smoke zones, copper lustre patches. Exportable. */
+/** Bake the Raku glaze into a high-res seamless texture — sampled at EXACTLY the mesh's UV
+ *  parameterisation (u→angle, v→height) so the crisp crackle lines align with the geometry
+ *  grooves. Gives sharp cells (no per-vertex pixelation) and exports in the GLB. */
 export function bakeRakuTexture(color: string, o: GlazeOpts, seed: number, res = 512): THREE.Texture | null {
   if (typeof document === 'undefined') return null
-  const H = clamp(128, 1024, res), W = H * 2, cv = document.createElement('canvas'); cv.width = W; cv.height = H
+  const H = Math.round(clamp(128, 1024, res)), W = H * 2, cv = document.createElement('canvas'); cv.width = W; cv.height = H
   const ctx = cv.getContext('2d'); if (!ctx) return null
-  const img = ctx.createImageData(W, H), d = img.data, S = (seed % 500) * 0.137 + 1.7
-  const base = new THREE.Color(color), cream = new THREE.Color(0xeae3d2)
-  const bR = lerp(cream.r, base.r, 0.28), bG = lerp(cream.g, base.g, 0.28), bB = lerp(cream.b, base.b, 0.28)
-  const scales = [[3.0, 0.05, 1.0], [6.2, 0.032, 0.85], [12.5, 0.02, 0.6], [22, 0.013, 0.4]]   // fractal crack octaves
+  const img = ctx.createImageData(W, H), d = img.data
+  const base = new THREE.Color(color), cream = new THREE.Color(0xefe9dc)
+  const bR = lerp(cream.r, base.r, 0.16), bG = lerp(cream.g, base.g, 0.16), bB = lerp(cream.b, base.b, 0.16)
   for (let py = 0; py < H; py++) for (let px = 0; px < W; px++) {
-    const u = px / W, v = py / H, ang = u * Math.PI * 2, cx = Math.cos(ang), cz = Math.sin(ang), yy = v * 1.7
-    const warp = fbm3(cx * 2.2 + S, yy * 2.2 + S, cz * 2.2 + S) * 0.35            // domain warp → irregular cells
-    const mott = fbm3(cx * 4 + S * 2, yy * 4 + S * 2, cz * 4 + S * 2)
-    let R = bR - mott * 0.05, G = bG - mott * 0.05, B = bB - mott * 0.06
-    let crack = 0
-    for (const [sc, th, amt] of scales) { const e = cellEdge(cx * sc + warp + S, yy * sc + warp + S, cz * sc + warp + S); crack = Math.max(crack, (1 - smooth01(0, th, e)) * amt) }
-    const ck = crack * o.crackle
-    const carbon = smooth01(0.52, 0.86, fbm3(cx * 1.7 + S * 3, yy * 1.7 + S * 3, cz * 1.7 + S * 3)) * o.carbon
-    const cu = smooth01(0.58, 0.9, fbm3(cx * 2.6 + S * 4, yy * 2.6 + S * 4, cz * 2.6 + S * 4)) * o.lustre
-    R = lerp(R, 0.09, ck); G = lerp(G, 0.06, ck); B = lerp(B, 0.05, ck)                 // carbon-filled crack lines
-    R = lerp(R, 0.045, carbon); G = lerp(G, 0.045, carbon); B = lerp(B, 0.052, carbon)  // smoked black zones
-    R = lerp(R, 0.74, cu * 0.55); G = lerp(G, 0.42, cu * 0.55); B = lerp(B, 0.30, cu * 0.55) // copper patches
-    const off = (py * W + px) * 4; d[off] = R * 255; d[off + 1] = G * 255; d[off + 2] = B * 255; d[off + 3] = 255
+    const u = px / W, t = 1 - py / H, ang = (u - 0.5) * Math.PI * 2   // match geometry UV (u = atan2/2π+0.5, v = height)
+    const c = rakuColor(Math.cos(ang), t, Math.sin(ang), o, seed, bR, bG, bB)
+    const off = (py * W + px) * 4; d[off] = clamp(0, 1, c[0]) * 255; d[off + 1] = clamp(0, 1, c[1]) * 255; d[off + 2] = clamp(0, 1, c[2]) * 255; d[off + 3] = 255
   }
   ctx.putImageData(img, 0, 0)
-  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping; tex.anisotropy = 4
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping; tex.anisotropy = 8
   return tex
 }
 
@@ -288,10 +270,11 @@ export function makeGlaze(kind: Glaze, color: string, o: GlazeOpts, seed: number
   return m
 }
 
-/** Material for a FIRED Raku mesh : reads the baked per-vertex colours, adds iridescent lustre. */
-export function makeRakuFired(o: GlazeOpts): THREE.Material {
-  // Satin glaze, not chrome : low metalness, a touch of clearcoat + subtle iridescence.
-  const m = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.04 + 0.28 * o.lustre, clearcoat: 0.45, clearcoatRoughness: 0.35, envMapIntensity: 1.0, side: THREE.DoubleSide })
+/** Material for a FIRED Raku mesh : a crisp baked crackle TEXTURE (aligned to the mesh UVs)
+ *  + iridescent lustre. Satin glaze, not chrome. Texture exports in the GLB. */
+export function makeRakuFired(o: GlazeOpts, color = '#eae3d2', seed = 1, res = 512): THREE.Material {
+  const tex = bakeRakuTexture(color, o, seed, res)
+  const m = new THREE.MeshPhysicalMaterial({ color: tex ? new THREE.Color(0xffffff) : new THREE.Color(color), map: tex, roughness: 0.5, metalness: 0.04 + 0.28 * o.lustre, clearcoat: 0.45, clearcoatRoughness: 0.35, envMapIntensity: 1.0, side: THREE.DoubleSide })
   m.iridescence = clamp(0, 1, o.lustre * 0.35); m.iridescenceIOR = 1.28; m.iridescenceThicknessRange = [140, 380]
   m.userData.rakuFired = true
   return m
@@ -533,7 +516,7 @@ export function PotteryStudio() {
         const stl = new STLExporter().parse(new THREE.Mesh(geo, new THREE.MeshStandardMaterial()), { binary: false })
         downloadBlob(new Blob([stl], { type: 'model/stl' }), `poterie-${Date.now()}.stl`); setStatus(rakuOn ? 'Export STL (craquelé gravé dans le maillage).' : 'Export STL (vase étanche imprimable).')
       } else {
-        const mat = rakuOn ? makeRakuFired({ crackle: pp.crackle, carbon: pp.carbon, lustre: pp.lustre }) : makeGlaze(pp.glaze, pp.clayColor, { crackle: pp.crackle, carbon: pp.carbon, lustre: pp.lustre }, pp.rakuSeed)
+        const mat = rakuOn ? makeRakuFired({ crackle: pp.crackle, carbon: pp.carbon, lustre: pp.lustre }, pp.clayColor, pp.rakuSeed, 1024) : makeGlaze(pp.glaze, pp.clayColor, { crackle: pp.crackle, carbon: pp.carbon, lustre: pp.lustre }, pp.rakuSeed)
         const g = new THREE.Group(); g.add(new THREE.Mesh(geo, mat))
         new GLTFExporter().parse(g, (res) => { downloadBlob(new Blob([res as ArrayBuffer], { type: 'model/gltf-binary' }), `poterie-${Date.now()}.glb`); geo.dispose() }, () => setStatus('Échec export GLB.'), { binary: true })
         setStatus(rakuOn ? 'Export GLB (Raku : relief + couleurs cuites).' : 'Export GLB (émail conservé).')
@@ -575,7 +558,7 @@ export function PotteryStudio() {
       const gsig = `${p.glaze}|${p.clayColor}|${p.rakuSeed}|${fired}`
       if (gsig !== lastGlazeSig) {
         lastGlazeSig = gsig; reliefDirty = true; clayMesh.material.dispose()
-        clayMesh.material = (p.glaze === 'raku' && fired) ? makeRakuFired({ crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }) : makeGlaze(p.glaze, p.clayColor, { crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, p.rakuSeed, 256)
+        clayMesh.material = (p.glaze === 'raku' && fired) ? makeRakuFired({ crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, p.clayColor, p.rakuSeed, 512) : makeGlaze(p.glaze, p.clayColor, { crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, p.rakuSeed, 256)
       }
       ;(clayMesh.material as THREE.Material & { wireframe: boolean }).wireframe = p.wireframe
 

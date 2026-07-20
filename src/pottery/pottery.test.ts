@@ -67,29 +67,25 @@ describe('pottery firing & glaze', () => {
       expect(m.side).toBeDefined()
     })
   }
-  it('raku raw preview material + fired vertex-colour material', () => {
+  it('raku raw preview material + fired textured material', () => {
     const raw = makeGlaze('raku', '#c8794a', { crackle: 0.7, carbon: 0.6, lustre: 0.8 }, 7) as THREE.MeshPhysicalMaterial
     expect(raw.userData.raku).toBe(true)
-    const fired = makeRakuFired({ crackle: 0.7, carbon: 0.6, lustre: 0.8 }) as THREE.MeshPhysicalMaterial
-    expect(fired.vertexColors).toBe(true)
+    const fired = makeRakuFired({ crackle: 0.7, carbon: 0.6, lustre: 0.8 }, '#c8794a', 7, 256) as THREE.MeshPhysicalMaterial
+    expect(fired).toBeInstanceOf(THREE.MeshPhysicalMaterial)
+    expect(fired.userData.rakuFired).toBe(true)
     expect(fired.iridescence).toBeGreaterThan(0)
     expect(() => bakeRakuTexture('#c8794a', { crackle: 0.7, carbon: 0.6, lustre: 0.8 }, 7)).not.toThrow()
   })
-  it('geometry carries UVs; relief carves cracks INTO the mesh + bakes vertex colours', () => {
+  it('geometry carries UVs; relief carves crack grooves INTO the mesh (finer, no vertex colours)', () => {
     const { rOut, rIn, top } = profile('vase')
     const smooth = buildPotGeometry(rOut, rIn, top, { ...DECO0, handles: 2 })
     expect(smooth.getAttribute('uv').count).toBe(smooth.getAttribute('position').count)
-    expect(smooth.getAttribute('color'), 'smooth mesh should have no vertex colours').toBeFalsy()
-    // fired relief mesh : finer tessellation, has colour, some outer verts pushed inward (grooves)
     const relief = buildPotGeometry(rOut, rIn, top, DECO0, { depth: 0.03, seed: 7, o: { crackle: 1, carbon: 0.6, lustre: 0.8 }, color: '#c8794a' }, 200)
-    const col = relief.getAttribute('color')
-    expect(col, 'relief has no colour attribute').toBeTruthy()
-    expect(col.count).toBe(relief.getAttribute('position').count)
-    let cnan = 0; const ca = col.array as ArrayLike<number>; for (let i = 0; i < ca.length; i++) if (!Number.isFinite(ca[i])) cnan++
-    expect(cnan, 'colour NaN').toBe(0)
+    expect(relief.getAttribute('color'), 'colour comes from the texture, not vertices').toBeFalsy()
+    expect(relief.getAttribute('uv').count).toBe(relief.getAttribute('position').count)
     // grooves : the relief outer-wall radii should dip below the smooth radii somewhere
-    const rad = (g: THREE.BufferGeometry) => { const p = g.getAttribute('position').array as ArrayLike<number>; let mn = 9, mx = 0; for (let i = 0; i < p.length; i += 3) { const r = Math.hypot(p[i], p[i + 2]); if (r > 0.05) { mn = Math.min(mn, r); mx = Math.max(mx, r) } } return { mn, mx } }
-    expect(rad(relief).mn, 'no grooves carved').toBeLessThan(rad(smooth).mn + 1e-4)
+    const rad = (g: THREE.BufferGeometry) => { const p = g.getAttribute('position').array as ArrayLike<number>; let mn = 9; for (let i = 0; i < p.length; i += 3) { const r = Math.hypot(p[i], p[i + 2]); if (r > 0.05) mn = Math.min(mn, r) } return mn }
+    expect(rad(relief), 'no grooves carved').toBeLessThan(rad(smooth) + 1e-4)
     expect(relief.getAttribute('position').count, 'relief not finer than smooth').toBeGreaterThan(smooth.getAttribute('position').count)
   })
   it('rakuSample forms a crack network (varied, not flat) + has micro/speck fields', () => {
