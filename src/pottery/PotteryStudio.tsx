@@ -26,6 +26,7 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { fillHoles } from '../morpho/mesh'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 const GESTURE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
@@ -320,12 +321,13 @@ export function PotteryStudio() {
   const [showMeasure, setShowMeasure] = useState(true)
   const [bgMode, setBgMode] = useState<'webcam' | 'black'>('webcam')
   const [panelOpen, setPanelOpen] = useState(true)
+  const [paused, setPaused] = useState(false)      // fige la simulation (tour + sculpture) pour rendre/voir sans interférence
   const [recording, setRecording] = useState(false)
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, crackRelief, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode })
-  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, crackRelief, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode }
+  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, crackRelief, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode, paused })
+  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, crackRelief, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode, paused }
   const resetRef = useRef(false)         // reset to a fresh lump
   const startRef = useRef<StartShape | null>(null)   // apply a starting shape
   const trueRef = useRef(false)          // "régulariser" : strongly true-up the profile
@@ -524,8 +526,10 @@ export function PotteryStudio() {
     // welds fully; GLB keeps UVs for the texture (seam vertices coincide → still closed-looking).
     const openEdgeCount = (g: THREE.BufferGeometry) => { const idx = g.getIndex(); if (!idx) return -1; const a = idx.array as ArrayLike<number>; const m = new Map<string, number>(); for (let i = 0; i < a.length; i += 3) { const t = [a[i], a[i + 1], a[i + 2]]; for (let j = 0; j < 3; j++) { const p = t[j], q = t[(j + 1) % 3], k = p < q ? `${p}_${q}` : `${q}_${p}`; m.set(k, (m.get(k) ?? 0) + 1) } } let o = 0; for (const c of m.values()) if (c !== 2) o++; return o }
     const finalize = (g: THREE.BufferGeometry, keepUV: boolean) => {
-      const src = g.clone(); if (!keepUV) src.deleteAttribute('uv')
-      let w = mergeVertices(src, 1e-4)                       // close seams → watertight
+      const src = g.clone(); src.deleteAttribute('uv')     // weld/close on positions only (UV seams would block welding)
+      let w = mergeVertices(src, 1e-4)                      // weld coincident vertices (seams)
+      if (openEdgeCount(w) > 0) w = fillHoles(w)            // cap any residual hole → guaranteed closed/watertight
+      if (keepUV) { const pos = w.getAttribute('position'); const uv: number[] = []; for (let i = 0; i < pos.count; i++) { const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i); uv.push(Math.atan2(z, x) / (Math.PI * 2) + 0.5, (y - Y0) / HMAX) } w.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)) }
       w.computeVertexNormals()
       w.computeBoundingBox(); const b = w.boundingBox!; w.translate(0, -b.min.y, 0)  // base at origin → detached from the wheel
       return w
@@ -596,7 +600,8 @@ export function PotteryStudio() {
 
       let newFrame = false
       const contacts: Contact[] = []
-      if (video.readyState >= 2 && video.currentTime !== lastVideoTime && landmarker) {
+      if (p.paused) skelHands = []   // en pause : fige tout (tour + sculpture), on ne fait que rendre/orbiter
+      if (!p.paused && video.readyState >= 2 && video.currentTime !== lastVideoTime && landmarker) {
         lastVideoTime = video.currentTime; newFrame = true
         const res = landmarker.recognizeForVideo(video, performance.now())
         const hands = res.landmarks ?? []
@@ -622,8 +627,8 @@ export function PotteryStudio() {
       }
       // Souris / tactile : injecte un contact synthétique depuis le pointeur (fonctionne
       // AVEC ou SANS webcam) — réutilise exactement le même chemin outil + historique.
-      if (mouseNDC) { const m = mapFinger(mouseNDC.x, mouseNDC.y); if (m) { const thick = rIn[m.ring] > EPS ? Math.max(0, rOut[m.ring] - rIn[m.ring]) : rOut[m.ring]; const resist = clamp(0, 1, p.firmness * (0.2 + 2.0 * thick)); contacts.push({ rad: m.rad, ring: m.ring, press: 1, sx: (mouseNDC.x * 0.5 + 0.5) * overlay.width, sy: (-mouseNDC.y * 0.5 + 0.5) * overlay.height, inner: false, resist }) } }
-      if (newFrame || mouseNDC) {
+      if (!p.paused && mouseNDC) { const m = mapFinger(mouseNDC.x, mouseNDC.y); if (m) { const thick = rIn[m.ring] > EPS ? Math.max(0, rOut[m.ring] - rIn[m.ring]) : rOut[m.ring]; const resist = clamp(0, 1, p.firmness * (0.2 + 2.0 * thick)); contacts.push({ rad: m.rad, ring: m.ring, press: 1, sx: (mouseNDC.x * 0.5 + 0.5) * overlay.width, sy: (-mouseNDC.y * 0.5 + 0.5) * overlay.height, inner: false, resist }) } }
+      if (!p.paused && (newFrame || mouseNDC)) {
         const sculptingNow = contacts.some((c) => c.press > 0.15)
         if (sculptingNow && !wasSculpting) pushHistory()   // snapshot the pre-stroke state → undo restores it
         wasSculpting = sculptingNow
@@ -633,7 +638,7 @@ export function PotteryStudio() {
       if (contacts.length) hud = { contacts, toolLabel: TOOLS.find((t) => t.kind === p.tool)?.label ?? '' }
       else if (newFrame) hud = { contacts: [], toolLabel: hud.toolLabel }
 
-      relaxAndConstrain(p, dt)
+      if (!p.paused) relaxAndConstrain(p, dt)
 
       // Mesh : fired raku → cached RELIEF mesh (cracks carved in geometry + vertex colours) ;
       // otherwise the smooth live clay, rebuilt each frame from the profiles.
@@ -644,7 +649,8 @@ export function PotteryStudio() {
         const geo = buildPotGeometry(rOut, rIn, top, decoFrom(p)); const old = clayMesh.geometry; clayMesh.geometry = geo; if (old !== reliefGeo) old.dispose()
       }
 
-      wheelAngle += p.wheelSpeed * dt * 2.2; spin.rotation.y = wheelAngle
+      if (!p.paused) wheelAngle += p.wheelSpeed * dt * 2.2
+      spin.rotation.y = wheelAngle
       applyCam(); renderer.render(scene, camera)
 
       // ── Overlay HUD ──
@@ -748,6 +754,8 @@ export function PotteryStudio() {
           </div>
           <div style={{ color: error ? '#ff6b6b' : '#9a8a78', fontSize: 11, marginBottom: 10, lineHeight: 1.3 }}>{error ?? status}</div>
           <div style={{ fontSize: 10, color: '#ffcf9a', marginBottom: 12, lineHeight: 1.35, background: 'rgba(255,180,0,0.08)', padding: 7, borderRadius: 6 }}>☝️ Le <b>bout de l'index</b> est l'outil. Pince pouce+index pour <b>presser</b> l'argile (ouvre la main pour repositionner). Deux mains = paroi <b>int.</b> (proche de l'axe) + <b>ext.</b><br />🖱️/👆 <b>Sans caméra</b> : 1 doigt / clic gauche = <b>façonner</b> · clic droit ou 2 doigts = <b>tourner + zoom</b> · molette = zoom.</div>
+
+          <button onClick={() => setPaused((v) => !v)} style={{ ...selStyle, marginBottom: 10, background: paused ? 'rgba(90,200,255,0.28)' : 'rgba(255,255,255,0.1)', borderColor: paused ? '#5ac8ff' : 'rgba(255,255,255,0.2)' }} title="Fige le tour et la sculpture (les mains/la souris n'agissent plus) pour orbiter, capturer ou rendre sans interférence.">{paused ? '▶ Reprendre la modélisation' : '⏸ Pause (figer pour rendre / voir)'}</button>
 
           <Field label="Forme de départ">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>

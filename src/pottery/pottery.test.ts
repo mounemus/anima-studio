@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { fillHoles } from '../morpho/mesh'
 import { startProfile, buildPotGeometry, makeGlaze, makeRakuFired, bakeRakuTexture, rakuSample, START_SHAPES, DECORS, GLAZES, DECO0, NR, DY, VOL_K, type Deco } from './PotteryStudio'
 
 const volumeOf = (rOut: Float32Array, rIn: Float32Array, top: number) => {
@@ -23,6 +24,17 @@ describe('finalize : welded pot is watertight (closed) & detachable', () => {
       expect(openEdges(w), `${s.kind}: not watertight`).toBe(0)
     })
   }
+})
+
+describe('finalize : fillHoles seals residual boundaries (open → watertight)', () => {
+  it('caps an open-ended tube so no boundary edge remains', () => {
+    const tube = new THREE.CylinderGeometry(0.5, 0.5, 1, 24, 1, true)   // openEnded: 2 boundary loops
+    tube.deleteAttribute('uv'); tube.deleteAttribute('normal')
+    const w = mergeVertices(tube, 1e-4)
+    expect(openEdges(w), 'open tube should have boundary edges').toBeGreaterThan(0)
+    const sealed = fillHoles(w)
+    expect(openEdges(sealed), 'fillHoles left a hole').toBe(0)
+  })
 })
 
 describe('pottery starting profiles', () => {
