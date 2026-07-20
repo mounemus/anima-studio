@@ -189,6 +189,13 @@ export const GLAZES: { kind: Glaze; label: string }[] = [
 ]
 export interface GlazeOpts { crackle: number; carbon: number; lustre: number }
 
+// Photoreal AI-generated Raku glaze textures (bundled in public/textures/raku/). The user
+// picks one manually, or leaves it random (a new one each firing).
+export const RAKU_VARIANTS: { id: string; label: string }[] = [
+  { id: 'raku1', label: '🕸 Craquelé fin' }, { id: 'raku2', label: '❄ Craquelé blanc dense' }, { id: 'raku3', label: '💨 Raku fumé' },
+  { id: 'raku4', label: '🌈 Cuivré irisé' }, { id: 'raku5', label: '✨ Kintsugi (or)' }, { id: 'raku6', label: '🟢 Céladon craquelé' }, { id: 'raku7', label: '⚫ Tenmoku noir' },
+]
+
 // ── Procedural noise (JS) for BAKING the Raku into a texture (so it exports in the GLB
 //    and can be multi-scale/fractal, not a flat monotone Voronoï). ──
 const smooth01 = (a: number, b: number, x: number) => { const t = clamp(0, 1, (x - a) / (b - a || 1e-6)); return t * t * (3 - 2 * t) }
@@ -302,6 +309,7 @@ export function PotteryStudio() {
   const [crackle, setCrackle] = useState(0.6)      // raku : craquelure
   const [carbon, setCarbon] = useState(0.5)        // raku : enfumage
   const [lustre, setLustre] = useState(0.7)        // raku : lustre métallique irisé
+  const [rakuVariant, setRakuVariant] = useState(-1)   // -1 = aléatoire, sinon index de RAKU_VARIANTS
   const [rakuSeed, setRakuSeed] = useState(1)      // re-roll on each "cuire" → aléatoire
   const [clayColor, setClayColor] = useState('#b5651d')
   const [wireframe, setWireframe] = useState(false)
@@ -314,8 +322,8 @@ export function PotteryStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode })
-  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode }
+  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode })
+  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode }
   const resetRef = useRef(false)         // reset to a fresh lump
   const startRef = useRef<StartShape | null>(null)   // apply a starting shape
   const trueRef = useRef(false)          // "régulariser" : strongly true-up the profile
@@ -354,12 +362,12 @@ export function PotteryStudio() {
     // Firing : raku « cuit » swaps in a photoreal AI crackle-glaze TEXTURE + a RELIEF mesh whose
     // grooves are carved where that texture is dark (aligned craquelé). Cached until re-fired.
     let fired = false, reliefGeo: THREE.BufferGeometry | null = null, reliefDirty = true
-    const RAKU_URLS = ['/textures/raku/raku1.jpg', '/textures/raku/raku2.jpg', '/textures/raku/raku3.jpg']
+    const RAKU_URLS = RAKU_VARIANTS.map((v) => `/textures/raku/${v.id}.jpg`)
     const texLoader = new THREE.TextureLoader()
     const rakuTex = RAKU_URLS.map((u) => { const t = texLoader.load(u); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.anisotropy = 8; return t })
     const rakuLum: (((u: number, v: number) => number) | null)[] = RAKU_URLS.map(() => null)
     RAKU_URLS.forEach((u, k) => { const im = new Image(); im.onload = () => { const cc = document.createElement('canvas'); cc.width = 256; cc.height = 256; const cx = cc.getContext('2d'); if (!cx) return; cx.drawImage(im, 0, 0, 256, 256); const dd = cx.getImageData(0, 0, 256, 256).data; rakuLum[k] = (uu, vv) => { const px = Math.floor(((uu % 1 + 1) % 1) * 255), py = Math.floor(clamp(0, 1, 1 - vv) * 255), i = (py * 256 + px) * 4; return (dd[i] + dd[i + 1] + dd[i + 2]) / 765 }; reliefDirty = true }; im.src = u })
-    const rakuPick = (seed: number) => Math.abs(Math.round(seed)) % rakuTex.length
+    const rakuPick = (seed: number) => { const v = paramsRef.current.rakuVariant; return v >= 0 && v < rakuTex.length ? v : Math.abs(Math.round(seed)) % rakuTex.length }
 
     // ── Clay state (radial profiles) ──
     const rOut = new Float32Array(NR), rIn = new Float32Array(NR)
@@ -560,7 +568,7 @@ export function PotteryStudio() {
 
       // Glaze / firing material. When a raku pot is FIRED we use the vertex-colour material on
       // the relief mesh ; otherwise the flat glaze material (rebuilt only on glaze/colour/seed).
-      const gsig = `${p.glaze}|${p.clayColor}|${p.rakuSeed}|${fired}`
+      const gsig = `${p.glaze}|${p.clayColor}|${p.rakuSeed}|${p.rakuVariant}|${fired}`
       if (gsig !== lastGlazeSig) {
         lastGlazeSig = gsig; reliefDirty = true; clayMesh.material.dispose()
         clayMesh.material = (p.glaze === 'raku' && fired) ? makeRakuFired({ crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, rakuTex[rakuPick(p.rakuSeed)]) : makeGlaze(p.glaze, p.clayColor, { crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, p.rakuSeed, 256)
@@ -771,10 +779,9 @@ export function PotteryStudio() {
           <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Cuisson & émaillage</div>
           <Field label="Émail / finition"><select value={glaze} onChange={(e) => setGlaze(e.target.value as Glaze)} style={selStyle}>{GLAZES.map((g) => <option key={g.kind} value={g.kind}>{g.label}</option>)}</select></Field>
           {glaze === 'raku' && <>
-            <Field label={`Craquelure — ${Math.round(crackle * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={crackle} onChange={(e) => setCrackle(+e.target.value)} style={rngStyle} /></Field>
-            <Field label={`Enfumage (carbone) — ${Math.round(carbon * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={carbon} onChange={(e) => setCarbon(+e.target.value)} style={rngStyle} /></Field>
+            <Field label="Variante de craquelé"><select value={rakuVariant} onChange={(e) => { setRakuVariant(+e.target.value); fireRef.current = true }} style={selStyle}><option value={-1}>🎲 Aléatoire (change à chaque cuisson)</option>{RAKU_VARIANTS.map((v, i) => <option key={v.id} value={i}>{v.label}</option>)}</select></Field>
             <Field label={`Lustre métallique irisé — ${Math.round(lustre * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={lustre} onChange={(e) => setLustre(+e.target.value)} style={rngStyle} /></Field>
-            <button onClick={() => { fireRef.current = true; setRakuSeed(Math.floor(Math.random() * 99999) + 1) }} style={{ ...selStyle, marginBottom: 8, background: 'rgba(255,120,40,0.22)', borderColor: 'rgba(255,120,40,0.55)' }} title="Cuit le raku : grave le craquelé dans le maillage (relief réel, exporté). Chaque cuisson est unique.">🔥 Enfourner — cuire le Raku (relief)</button>
+            <button onClick={() => { fireRef.current = true; setRakuSeed(Math.floor(Math.random() * 99999) + 1) }} style={{ ...selStyle, marginBottom: 8, background: 'rgba(255,120,40,0.22)', borderColor: 'rgba(255,120,40,0.55)' }} title="Cuit le raku : applique la texture choisie et grave le craquelé dans le maillage (exporté STL/GLB).">🔥 Enfourner — cuire le Raku (relief)</button>
           </>}
           <p style={{ color: '#9a8a78', fontSize: 10, margin: '0 0 4px', lineHeight: 1.35 }}>Raku : véritable <b>texture de craquelé photoréaliste</b> (générée par IA). <b>Enfourner</b> applique la texture <b>et</b> grave les fissures dans le maillage (relief aligné, exporté STL/GLB) ; chaque cuisson pioche une variante. Le curseur <b>Lustre</b> règle l'irisation.</p>
 
