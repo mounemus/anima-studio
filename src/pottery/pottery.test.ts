@@ -2,6 +2,7 @@
  *  spout / handles) are pure math — verify they produce valid, NaN-free meshes off the browser. */
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { startProfile, buildPotGeometry, makeGlaze, makeRakuFired, bakeRakuTexture, rakuSample, START_SHAPES, DECORS, GLAZES, DECO0, NR, DY, VOL_K, type Deco } from './PotteryStudio'
 
 const volumeOf = (rOut: Float32Array, rIn: Float32Array, top: number) => {
@@ -10,6 +11,19 @@ const volumeOf = (rOut: Float32Array, rIn: Float32Array, top: number) => {
 const geomNaN = (g: ReturnType<typeof buildPotGeometry>) => { const a = g.getAttribute('position').array as ArrayLike<number>; let n = 0; for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) n++; return n }
 const tris = (g: ReturnType<typeof buildPotGeometry>) => g.getIndex()!.count / 3
 const profile = (kind: Parameters<typeof startProfile>[0]) => { const rOut = new Float32Array(NR), rIn = new Float32Array(NR); const top = startProfile(kind, 1, rOut, rIn); return { rOut, rIn, top } }
+
+const openEdges = (g: THREE.BufferGeometry) => { const idx = g.getIndex()!; const a = idx.array as ArrayLike<number>; const m = new Map<string, number>(); for (let i = 0; i < a.length; i += 3) { const t = [a[i], a[i + 1], a[i + 2]]; for (let j = 0; j < 3; j++) { const p = t[j], q = t[(j + 1) % 3], k = p < q ? `${p}_${q}` : `${q}_${p}`; m.set(k, (m.get(k) ?? 0) + 1) } } let o = 0; for (const c of m.values()) if (c !== 2) o++; return o }
+
+describe('finalize : welded pot is watertight (closed) & detachable', () => {
+  for (const s of START_SHAPES) {
+    it(`${s.kind}: welds to a closed manifold (0 open edges)`, () => {
+      const { rOut, rIn, top } = (() => { const rOut = new Float32Array(NR), rIn = new Float32Array(NR); const top = startProfile(s.kind, 1, rOut, rIn); return { rOut, rIn, top } })()
+      const g = buildPotGeometry(rOut, rIn, top); g.deleteAttribute('uv')
+      const w = mergeVertices(g, 1e-4)
+      expect(openEdges(w), `${s.kind}: not watertight`).toBe(0)
+    })
+  }
+})
 
 describe('pottery starting profiles', () => {
   for (const s of START_SHAPES) {

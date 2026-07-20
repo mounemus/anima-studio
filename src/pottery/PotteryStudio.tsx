@@ -25,6 +25,7 @@ import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 const GESTURE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
@@ -310,6 +311,7 @@ export function PotteryStudio() {
   const [carbon, setCarbon] = useState(0.5)        // raku : enfumage
   const [lustre, setLustre] = useState(0.7)        // raku : lustre métallique irisé
   const [rakuVariant, setRakuVariant] = useState(-1)   // -1 = aléatoire, sinon index de RAKU_VARIANTS
+  const [crackRelief, setCrackRelief] = useState(false)   // graver le craquelé en relief (OFF = maillage lisse & fidèle)
   const [rakuSeed, setRakuSeed] = useState(1)      // re-roll on each "cuire" → aléatoire
   const [clayColor, setClayColor] = useState('#b5651d')
   const [wireframe, setWireframe] = useState(false)
@@ -322,8 +324,8 @@ export function PotteryStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode })
-  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode }
+  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, crackRelief, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode })
+  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, crackRelief, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode }
   const resetRef = useRef(false)         // reset to a fresh lump
   const startRef = useRef<StartShape | null>(null)   // apply a starting shape
   const trueRef = useRef(false)          // "régulariser" : strongly true-up the profile
@@ -517,23 +519,37 @@ export function PotteryStudio() {
     }
 
     const decoFrom = (p: typeof paramsRef.current): Deco => ({ type: p.decorType, count: Math.round(p.flutes), depth: p.fluteDepth, foot: p.foot, spout: p.spout, handles: Math.round(p.handles), handleSize: p.handleSize })
+    // Finalise the model for export : detach from the wheel (base to the origin) and CLOSE
+    // the mesh (weld coincident vertices → watertight manifold). STL drops UVs so the seam
+    // welds fully; GLB keeps UVs for the texture (seam vertices coincide → still closed-looking).
+    const openEdgeCount = (g: THREE.BufferGeometry) => { const idx = g.getIndex(); if (!idx) return -1; const a = idx.array as ArrayLike<number>; const m = new Map<string, number>(); for (let i = 0; i < a.length; i += 3) { const t = [a[i], a[i + 1], a[i + 2]]; for (let j = 0; j < 3; j++) { const p = t[j], q = t[(j + 1) % 3], k = p < q ? `${p}_${q}` : `${q}_${p}`; m.set(k, (m.get(k) ?? 0) + 1) } } let o = 0; for (const c of m.values()) if (c !== 2) o++; return o }
+    const finalize = (g: THREE.BufferGeometry, keepUV: boolean) => {
+      const src = g.clone(); if (!keepUV) src.deleteAttribute('uv')
+      let w = mergeVertices(src, 1e-4)                       // close seams → watertight
+      w.computeVertexNormals()
+      w.computeBoundingBox(); const b = w.boundingBox!; w.translate(0, -b.min.y, 0)  // base at origin → detached from the wheel
+      return w
+    }
     const doExport = (fmt: 'stl' | 'glb') => {
       const pp = paramsRef.current
       const rakuOn = pp.glaze === 'raku'
-      // Raku exports the RELIEF mesh at high tessellation : cracks are real geometry (visible
-      // in STL too) + baked vertex colours (GLB). Other glazes export the plain solid.
-      const geo = rakuOn
-        ? buildPotGeometry(rOut, rIn, top, decoFrom(pp), { depth: 0.012, lum: rakuLum[rakuPick(pp.rakuSeed)] ?? undefined }, 340)
-        : buildPotGeometry(rOut, rIn, top, decoFrom(pp))
+      const relief = rakuOn && pp.crackRelief ? { depth: 0.008, lum: rakuLum[rakuPick(pp.rakuSeed)] ?? undefined } : undefined
+      const raw = buildPotGeometry(rOut, rIn, top, decoFrom(pp), relief, relief ? 340 : NS)
       if (fmt === 'stl') {
+        const geo = finalize(raw, false)
+        const open = openEdgeCount(geo)
         const stl = new STLExporter().parse(new THREE.Mesh(geo, new THREE.MeshStandardMaterial()), { binary: false })
-        downloadBlob(new Blob([stl], { type: 'model/stl' }), `poterie-${Date.now()}.stl`); setStatus(rakuOn ? 'Export STL (craquelé gravé dans le maillage).' : 'Export STL (vase étanche imprimable).')
+        downloadBlob(new Blob([stl], { type: 'model/stl' }), `poterie-${Date.now()}.stl`)
+        setStatus(`Modèle finalisé → STL. Détaché du tour, maillage ${open === 0 ? 'FERMÉ (étanche) ✓' : `${open} bords ouverts`}.`)
+        geo.dispose()
       } else {
+        const geo = finalize(raw, true)
         const mat = rakuOn ? makeRakuFired({ crackle: pp.crackle, carbon: pp.carbon, lustre: pp.lustre }, rakuTex[rakuPick(pp.rakuSeed)]) : makeGlaze(pp.glaze, pp.clayColor, { crackle: pp.crackle, carbon: pp.carbon, lustre: pp.lustre }, pp.rakuSeed)
         const g = new THREE.Group(); g.add(new THREE.Mesh(geo, mat))
         new GLTFExporter().parse(g, (res) => { downloadBlob(new Blob([res as ArrayBuffer], { type: 'model/gltf-binary' }), `poterie-${Date.now()}.glb`); geo.dispose() }, () => setStatus('Échec export GLB.'), { binary: true })
-        setStatus(rakuOn ? 'Export GLB (Raku : relief + couleurs cuites).' : 'Export GLB (émail conservé).')
+        setStatus('Modèle finalisé → GLB (émail + texture, détaché du tour).')
       }
+      raw.dispose()
     }
 
     // ── Recording : webcam + 3D + overlay → WebM ──
@@ -568,7 +584,7 @@ export function PotteryStudio() {
 
       // Glaze / firing material. When a raku pot is FIRED we use the vertex-colour material on
       // the relief mesh ; otherwise the flat glaze material (rebuilt only on glaze/colour/seed).
-      const gsig = `${p.glaze}|${p.clayColor}|${p.rakuSeed}|${p.rakuVariant}|${fired}`
+      const gsig = `${p.glaze}|${p.clayColor}|${p.rakuSeed}|${p.rakuVariant}|${p.crackRelief}|${fired}`
       if (gsig !== lastGlazeSig) {
         lastGlazeSig = gsig; reliefDirty = true; clayMesh.material.dispose()
         clayMesh.material = (p.glaze === 'raku' && fired) ? makeRakuFired({ crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, rakuTex[rakuPick(p.rakuSeed)]) : makeGlaze(p.glaze, p.clayColor, { crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, p.rakuSeed, 256)
@@ -621,8 +637,8 @@ export function PotteryStudio() {
 
       // Mesh : fired raku → cached RELIEF mesh (cracks carved in geometry + vertex colours) ;
       // otherwise the smooth live clay, rebuilt each frame from the profiles.
-      if (p.glaze === 'raku' && fired) {
-        if (reliefDirty || !reliefGeo) { reliefGeo?.dispose(); reliefGeo = buildPotGeometry(rOut, rIn, top, decoFrom(p), { depth: 0.012, lum: rakuLum[rakuPick(p.rakuSeed)] ?? undefined }, 260); reliefDirty = false }
+      if (p.glaze === 'raku' && fired && p.crackRelief) {
+        if (reliefDirty || !reliefGeo) { reliefGeo?.dispose(); reliefGeo = buildPotGeometry(rOut, rIn, top, decoFrom(p), { depth: 0.008, lum: rakuLum[rakuPick(p.rakuSeed)] ?? undefined }, 260); reliefDirty = false }
         if (clayMesh.geometry !== reliefGeo) { const old = clayMesh.geometry; clayMesh.geometry = reliefGeo; if (old !== reliefGeo) old.dispose() }
       } else {
         const geo = buildPotGeometry(rOut, rIn, top, decoFrom(p)); const old = clayMesh.geometry; clayMesh.geometry = geo; if (old !== reliefGeo) old.dispose()
@@ -781,7 +797,8 @@ export function PotteryStudio() {
           {glaze === 'raku' && <>
             <Field label="Variante de craquelé"><select value={rakuVariant} onChange={(e) => { setRakuVariant(+e.target.value); fireRef.current = true }} style={selStyle}><option value={-1}>🎲 Aléatoire (change à chaque cuisson)</option>{RAKU_VARIANTS.map((v, i) => <option key={v.id} value={i}>{v.label}</option>)}</select></Field>
             <Field label={`Lustre métallique irisé — ${Math.round(lustre * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={lustre} onChange={(e) => setLustre(+e.target.value)} style={rngStyle} /></Field>
-            <button onClick={() => { fireRef.current = true; setRakuSeed(Math.floor(Math.random() * 99999) + 1) }} style={{ ...selStyle, marginBottom: 8, background: 'rgba(255,120,40,0.22)', borderColor: 'rgba(255,120,40,0.55)' }} title="Cuit le raku : applique la texture choisie et grave le craquelé dans le maillage (exporté STL/GLB).">🔥 Enfourner — cuire le Raku (relief)</button>
+            <label style={chkRow} title="Grave de fines rainures de craquelé dans la géométrie. Désactivé = maillage lisse et fidèle à la forme (recommandé pour l'impression)."><input type="checkbox" checked={crackRelief} onChange={(e) => { setCrackRelief(e.target.checked); fireRef.current = true }} style={{ accentColor: '#ffb47a' }} /> ⛰ Graver le craquelé en relief (sinon lisse)</label>
+            <button onClick={() => { fireRef.current = true; setRakuSeed(Math.floor(Math.random() * 99999) + 1) }} style={{ ...selStyle, marginTop: 6, marginBottom: 8, background: 'rgba(255,120,40,0.22)', borderColor: 'rgba(255,120,40,0.55)' }} title="Cuit le raku : applique la texture choisie (et le relief si activé).">🔥 Enfourner — cuire le Raku</button>
           </>}
           <p style={{ color: '#9a8a78', fontSize: 10, margin: '0 0 4px', lineHeight: 1.35 }}>Raku : véritable <b>texture de craquelé photoréaliste</b> (générée par IA). <b>Enfourner</b> applique la texture <b>et</b> grave les fissures dans le maillage (relief aligné, exporté STL/GLB) ; chaque cuisson pioche une variante. Le curseur <b>Lustre</b> règle l'irisation.</p>
 
@@ -793,9 +810,10 @@ export function PotteryStudio() {
           <label style={chkRow}><input type="checkbox" checked={showMeasure} onChange={(e) => setShowMeasure(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> 📏 Cotes (hauteur / Ø / paroi / volume)</label>
           <Field label="Fond"><select value={bgMode} onChange={(e) => setBgMode(e.target.value as 'webcam' | 'black')} style={selStyle}><option value="webcam">📷 Webcam</option><option value="black">⬛ Atelier sombre</option></select></Field>
 
-          <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Export</div>
+          <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Finaliser & exporter</div>
+          <button onClick={() => { exportRef.current = 'stl' }} style={{ ...selStyle, marginBottom: 8, background: 'rgba(90,200,120,0.22)', borderColor: 'rgba(90,200,120,0.55)' }} title="Détache la pièce du tour, ferme le maillage (soudé, étanche) et exporte un STL imprimable.">✅ Finaliser le modèle → STL imprimable</button>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}><button onClick={exportPng} style={{ ...selStyle, flex: 1 }}>📸 PNG</button><button onClick={() => { exportRef.current = 'glb' }} style={{ ...selStyle, flex: 1 }} title="Modèle finalisé avec émail/texture (couleur conservée)">🏺 .glb (couleur)</button></div>
           <button onClick={() => { recording ? recCtl.current?.stop() : recCtl.current?.start() }} style={{ ...selStyle, marginBottom: 8, background: recording ? 'rgba(255,40,60,0.35)' : 'rgba(255,255,255,0.1)', borderColor: recording ? '#ff2840' : 'rgba(255,255,255,0.2)' }}>{recording ? '⏹ Arrêter l\'enregistrement' : '🔴 Enregistrer une vidéo'}</button>
-          <div style={{ display: 'flex', gap: 8 }}><button onClick={exportPng} style={{ ...selStyle, flex: 1 }}>📸 PNG</button><button onClick={() => { exportRef.current = 'glb' }} style={{ ...selStyle, flex: 1 }}>🏺 .glb</button><button onClick={() => { exportRef.current = 'stl' }} style={{ ...selStyle, flex: 1 }} title="Vase étanche pour impression 3D">🖨️ .stl</button></div>
           <p style={{ color: '#7a6a58', fontSize: 10, marginTop: 10, marginBottom: 0, lineHeight: 1.4 }}>Souris : glisser = orbiter (azimut + inclinaison) · molette = zoom. Incliner la vue change l'impact des doigts sur l'argile.</p>
         </div>
       )}
