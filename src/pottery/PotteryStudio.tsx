@@ -33,16 +33,16 @@ const FINGER_CHAINS = [[0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [0, 9, 10, 11, 12], [0,
 const clamp = (a: number, b: number, v: number) => Math.max(a, Math.min(b, v))
 
 // ── Clay profile discretisation ──────────────────────────────────────────────
-const NR = 140          // height rings
+export const NR = 140          // height rings
 const NS = 80           // angular segments
 const Y0 = -0.9         // wheel plate height (world Y of the base)
 const HMAX = 1.7        // max clay height (world units)
-const DY = HMAX / (NR - 1)
+export const DY = HMAX / (NR - 1)
 const MAXR = 1.15       // max radius
 const MINWALL = 0.03    // min wall thickness (clay can't tear to zero)
 const FLOOR_RINGS = 4   // bottom rings kept solid (closed floor)
 const EPS = 0.006
-const VOL_K = 0.245     // world-volume per "kg" of clay (mass 1 → a ~0.5-radius lump)
+export const VOL_K = 0.245     // world-volume per "kg" of clay (mass 1 → a ~0.5-radius lump)
 
 type Tool = 'pull' | 'open' | 'widen' | 'collar' | 'rib' | 'trim'
 const TOOLS: { kind: Tool; label: string; hint: string }[] = [
@@ -55,17 +55,20 @@ const TOOLS: { kind: Tool; label: string; hint: string }[] = [
 ]
 
 /** Surface-of-revolution mesh from the outer/inner radial profiles. Outer wall + inner
- *  wall (bore) + base disc + bore-bottom cap + rim (annulus or apex). Double-sided. */
-function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: number): THREE.BufferGeometry {
+ *  wall (bore) + base disc + bore-bottom cap + rim (annulus or apex). Double-sided.
+ *  `flutes`/`depth` add n vertical flutes/godrons (angular cosine modulation of the wall). */
+export function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: number, flutes = 0, depth = 0): THREE.BufferGeometry {
   const pos: number[] = [], idx: number[] = []
+  const fl = flutes >= 2 && depth > 0.001
+  const mod = (a: number) => (fl ? 1 + depth * Math.cos(flutes * a) : 1)   // ripple factor
   const outerBase: number[] = [], innerBase: number[] = [], hasInner: boolean[] = []
   for (let i = 0; i <= top; i++) {
     const y = Y0 + i * DY
     outerBase[i] = pos.length / 3
-    for (let j = 0; j < NS; j++) { const a = (j / NS) * Math.PI * 2; pos.push(Math.cos(a) * rOut[i], y, Math.sin(a) * rOut[i]) }
+    for (let j = 0; j < NS; j++) { const a = (j / NS) * Math.PI * 2, r = rOut[i] * mod(a); pos.push(Math.cos(a) * r, y, Math.sin(a) * r) }
     const inner = rIn[i] > EPS
     hasInner[i] = inner
-    if (inner) { innerBase[i] = pos.length / 3; for (let j = 0; j < NS; j++) { const a = (j / NS) * Math.PI * 2; pos.push(Math.cos(a) * rIn[i], y, Math.sin(a) * rIn[i]) } }
+    if (inner) { innerBase[i] = pos.length / 3; for (let j = 0; j < NS; j++) { const a = (j / NS) * Math.PI * 2, r = rIn[i] * mod(a); pos.push(Math.cos(a) * r, y, Math.sin(a) * r) } }
     else innerBase[i] = -1
   }
   // outer wall
@@ -88,6 +91,42 @@ function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: number): T
   return g
 }
 
+export type StartShape = 'motte' | 'cylindre' | 'bol' | 'assiette' | 'vase' | 'bouteille'
+export const START_SHAPES: { kind: StartShape; label: string }[] = [
+  { kind: 'motte', label: '🟤 Motte' }, { kind: 'cylindre', label: '⬛ Cylindre' }, { kind: 'bol', label: '🥣 Bol' },
+  { kind: 'assiette', label: '🍽 Assiette' }, { kind: 'vase', label: '⚱️ Vase' }, { kind: 'bouteille', label: '🍾 Bouteille' },
+]
+/** Write a starting profile into rOut/rIn (length NR) and return `top`. Hollow shapes get a
+ *  wall + solid floor. All are volume-normalised to VOL_K·mass so the conservation loop
+ *  keeps them intact instead of extruding/shaving the rim. */
+export function startProfile(kind: StartShape, mass: number, rOut: Float32Array, rIn: Float32Array): number {
+  const V0 = VOL_K * mass
+  rOut.fill(0); rIn.fill(0)
+  const scale = clamp(0.7, 1.4, Math.cbrt(mass))
+  if (kind === 'motte') {
+    const R = Math.min(0.72, Math.cbrt(V0 / (0.625 * Math.PI))), domeH = R * 1.25
+    const top = clamp(6, NR - 2, Math.round(domeH / DY))
+    for (let i = 0; i <= top; i++) { const h = i * DY; rOut[i] = Math.max(0.02, R * Math.sqrt(clamp(0, 1, 1 - h / domeH))); rIn[i] = 0 }
+    return top
+  }
+  let H: number, fOut: (t: number) => number, wall = 0.06 * scale
+  if (kind === 'cylindre') { H = 1.15 * scale; fOut = () => 0.5 * scale }
+  else if (kind === 'bol') { H = 0.62 * scale; fOut = (t) => (0.34 + 0.55 * Math.sqrt(t)) * scale }
+  else if (kind === 'assiette') { H = 0.3 * scale; fOut = (t) => (0.32 + 0.78 * t) * scale; wall = 0.05 * scale }
+  else if (kind === 'vase') { H = 1.42 * scale; fOut = (t) => (0.26 + 0.44 * Math.sin(Math.PI * clamp(0, 1, t * 0.92 + 0.06))) * scale }
+  else { H = 1.5 * scale; fOut = (t) => (t < 0.7 ? 0.3 + 0.3 * Math.sin(Math.PI * (t / 0.7)) : 0.12) * scale }   // bouteille
+  const top = clamp(6, NR - 2, Math.round(Math.min(HMAX * 0.98, H) / DY))
+  for (let i = 0; i <= top; i++) {
+    const ro = clamp(0.05, MAXR, fOut(i / top))
+    rOut[i] = ro
+    rIn[i] = i < FLOOR_RINGS ? 0 : Math.max(0, ro - Math.max(MINWALL, wall))
+  }
+  // Normalise to the target volume by scaling radii (area ∝ r²), keeping the silhouette.
+  let v = 0; for (let i = 0; i <= top; i++) v += Math.PI * Math.max(0, rOut[i] * rOut[i] - rIn[i] * rIn[i]) * DY
+  if (v > 1e-6) { const s = clamp(0.5, 1.8, Math.sqrt(V0 / v)); for (let i = 0; i <= top; i++) { rOut[i] = clamp(0.02, MAXR, rOut[i] * s); rIn[i] = i < FLOOR_RINGS ? 0 : clamp(0, rOut[i] - MINWALL, rIn[i] * s) } }
+  return top
+}
+
 export function PotteryStudio() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -100,19 +139,24 @@ export function PotteryStudio() {
   const [tool, setTool] = useState<Tool>('pull')
   const [strength, setStrength] = useState(0.6)
   const [firmness, setFirmness] = useState(0.5)
+  const [flutes, setFlutes] = useState(0)          // n vertical flutes / godrons (0 = off)
+  const [fluteDepth, setFluteDepth] = useState(0.06)
   const [clayColor, setClayColor] = useState('#b5651d')
   const [wireframe, setWireframe] = useState(false)
   const [showGuides, setShowGuides] = useState(true)
   const [showSkeleton, setShowSkeleton] = useState(true)
+  const [showMeasure, setShowMeasure] = useState(true)
   const [bgMode, setBgMode] = useState<'webcam' | 'black'>('webcam')
   const [panelOpen, setPanelOpen] = useState(true)
   const [recording, setRecording] = useState(false)
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, clayColor, wireframe, showGuides, showSkeleton, bgMode })
-  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, clayColor, wireframe, showGuides, showSkeleton, bgMode }
+  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, flutes, fluteDepth, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode })
+  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, flutes, fluteDepth, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode }
   const resetRef = useRef(false)         // reset to a fresh lump
+  const startRef = useRef<StartShape | null>(null)   // apply a starting shape
+  const trueRef = useRef(false)          // "régulariser" : strongly true-up the profile
   const undoRef = useRef(false), redoRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
   const recCtl = useRef<{ start: () => void; stop: () => void } | null>(null)
@@ -146,17 +190,8 @@ export function PotteryStudio() {
     let top = 10, V0 = 0.245, wheelAngle = 0
 
     const volume = () => { let v = 0; for (let i = 0; i <= top; i++) v += Math.PI * Math.max(0, rOut[i] * rOut[i] - rIn[i] * rIn[i]) * DY; return v }
-    const resetClay = (mass: number) => {
-      V0 = VOL_K * mass
-      const R = Math.min(0.72, Math.cbrt(V0 / (0.625 * Math.PI)))   // mound of volume V0
-      const domeH = R * 1.25
-      top = clamp(6, NR - 2, Math.round(domeH / DY))
-      for (let i = 0; i < NR; i++) {
-        if (i <= top) { const h = i * DY; rOut[i] = Math.max(0.02, R * Math.sqrt(clamp(0, 1, 1 - h / domeH))); rIn[i] = 0 }
-        else { rOut[i] = 0; rIn[i] = 0 }
-      }
-      V0 = volume()
-    }
+    const applyStart = (kind: StartShape, mass: number) => { top = startProfile(kind, mass, rOut, rIn); V0 = volume() }
+    const resetClay = (mass: number) => applyStart('motte', mass)
     resetClay(clayMass)
 
     // Full 3D orbit around the pot. The shaping plane follows the camera azimuth, so
@@ -242,23 +277,28 @@ export function PotteryStudio() {
     const applyTool = (contacts: Contact[], p: typeof paramsRef.current, dt: number) => {
       const eng = contacts.filter((c) => c.press > 0.15)
       if (!eng.length) return
-      const rate = clamp(0, 0.95, p.strength * Math.min(1, dt * 12))   // more responsive
+      const rate = clamp(0, 0.9, p.strength * Math.min(1, dt * 12))   // responsive
+      // STABILITY : cap how far any ring can move per frame (framerate-independent). Before,
+      // a slow frame (large dt) or a jumpy fingertip could snap the wall → jittery. Now the
+      // wall eases toward the target smoothly whatever the frame time.
+      const cap = (0.22 + p.strength * 1.1) * dt
+      const stepTo = (arr: Float32Array, k: number, target: number, w: number) => { const d = (target - arr[k]) * w; arr[k] += d < -cap ? -cap : d > cap ? cap : d }
       const sigma = 4   // tighter band → finger-level precision
       if (p.tool === 'pull') {
         if (eng.length >= 2) {
           const s = [...eng].sort((a, b) => a.rad - b.rad); const inn = s[0], out = s[s.length - 1]
           const center = Math.round((inn.ring + out.ring) / 2), press = Math.min(inn.press, out.press), yf = (yF(inn) + yF(out)) * 0.5
-          for (let k = FLOOR_RINGS; k <= top; k++) { const w = bandW(k, center, sigma) * rate * press * yf; if (w < 1e-3) continue; rOut[k] += (clamp(0.02, MAXR, out.rad) - rOut[k]) * w; rIn[k] += (clamp(0, MAXR, inn.rad) - rIn[k]) * w }
+          for (let k = FLOOR_RINGS; k <= top; k++) { const w = bandW(k, center, sigma) * rate * press * yf; if (w < 1e-3) continue; stepTo(rOut, k, clamp(0.02, MAXR, out.rad), w); stepTo(rIn, k, clamp(0, MAXR, inn.rad), w) }
         } else {
           const c = eng[0], mid = (rOut[c.ring] + rIn[c.ring]) * 0.5, inner = c.rad < mid, yf = yF(c)
-          for (let k = FLOOR_RINGS; k <= top; k++) { const w = bandW(k, c.ring, sigma) * rate * c.press * yf; if (w < 1e-3) continue; if (inner) rIn[k] += (clamp(0, MAXR, c.rad) - rIn[k]) * w; else rOut[k] += (clamp(0.02, MAXR, c.rad) - rOut[k]) * w }
+          for (let k = FLOOR_RINGS; k <= top; k++) { const w = bandW(k, c.ring, sigma) * rate * c.press * yf; if (w < 1e-3) continue; if (inner) stepTo(rIn, k, clamp(0, MAXR, c.rad), w); else stepTo(rOut, k, clamp(0.02, MAXR, c.rad), w) }
         }
       } else if (p.tool === 'open') {
         const c = eng.reduce((a, b) => (a.rad < b.rad ? a : b)), yf = yF(c)    // hand nearest the axis
-        for (let k = Math.max(FLOOR_RINGS, c.ring); k <= top; k++) { const w = rate * c.press * yf * (k >= c.ring ? 1 : 0.4); const tgt = clamp(0, rOut[k] - MINWALL, c.rad); rIn[k] += (tgt - rIn[k]) * w }
+        for (let k = Math.max(FLOOR_RINGS, c.ring); k <= top; k++) { const w = rate * c.press * yf * (k >= c.ring ? 1 : 0.4); const tgt = clamp(0, rOut[k] - MINWALL, c.rad); stepTo(rIn, k, tgt, w) }
       } else if (p.tool === 'widen' || p.tool === 'collar') {
         const dir = p.tool === 'widen' ? 1 : -1
-        for (const c of eng) { const yf = yF(c); for (let k = FLOOR_RINGS; k <= top; k++) { const w = bandW(k, c.ring, sigma) * rate * c.press * yf; if (w < 1e-3) continue; const d = dir * 0.06 * w; rOut[k] = clamp(0.02, MAXR, rOut[k] + d); if (rIn[k] > EPS) rIn[k] = clamp(0, rOut[k] - MINWALL, rIn[k] + d) } }
+        for (const c of eng) { const yf = yF(c); for (let k = FLOOR_RINGS; k <= top; k++) { const w = bandW(k, c.ring, sigma) * rate * c.press * yf; if (w < 1e-3) continue; const d = clamp(-cap, cap, dir * 0.06 * w); rOut[k] = clamp(0.02, MAXR, rOut[k] + d); if (rIn[k] > EPS) rIn[k] = clamp(0, rOut[k] - MINWALL, rIn[k] + d) } }
       } else if (p.tool === 'rib') {
         for (const c of eng) for (let k = FLOOR_RINGS + 1; k < top; k++) { const w = bandW(k, c.ring, sigma) * rate * c.press; if (w < 1e-3) continue; rOut[k] += ((rOut[k - 1] + rOut[k + 1]) * 0.5 - rOut[k]) * w; rIn[k] += ((rIn[k - 1] + rIn[k + 1]) * 0.5 - rIn[k]) * w }
       } else if (p.tool === 'trim') {
@@ -282,20 +322,19 @@ export function PotteryStudio() {
         if (i < FLOOR_RINGS) rIn[i] = 0
         else rIn[i] = clamp(0, Math.max(0, rOut[i] - MINWALL), rIn[i])
       }
-      // Volume conservation : hold V≈V0 by extruding the rim upward (thinning → taller)
-      // or shaving it (widening → shorter). A few rings/frame → smooth & stable.
+      // Volume conservation : hold V≈V0 by extruding the rim upward (thinning → taller) or
+      // shaving it (widening → shorter). STABILITY : at most ONE ring/frame with a ±1 %
+      // dead-band (was 4 rings/frame at ±0.3 % → the rim flickered up/down visibly).
       if (p.conserve) {
-        for (let guard = 0; guard < 4; guard++) {
-          const v = volume()
-          if (v < V0 * 0.997 && top < NR - 2) { top++; rOut[top] = Math.max(0.02, rOut[top - 1] * 0.985); rIn[top] = clamp(0, rOut[top] - MINWALL, rIn[top - 1] * 0.985) }
-          else if (v > V0 * 1.003 && top > FLOOR_RINGS + 3) { rOut[top] = 0; rIn[top] = 0; top-- }
-          else break
-        }
+        const v = volume()
+        if (v < V0 * 0.99 && top < NR - 2) { top++; rOut[top] = Math.max(0.02, rOut[top - 1] * 0.98); rIn[top] = clamp(0, rOut[top] - MINWALL, rIn[top - 1] * 0.98) }
+        else if (v > V0 * 1.01 && top > FLOOR_RINGS + 3) { rOut[top] = 0; rIn[top] = 0; top-- }
       }
     }
 
     const doExport = (fmt: 'stl' | 'glb') => {
-      const geo = buildPotGeometry(rOut, rIn, top)
+      const pp = paramsRef.current
+      const geo = buildPotGeometry(rOut, rIn, top, Math.round(pp.flutes), pp.fluteDepth)
       if (fmt === 'stl') {
         const stl = new STLExporter().parse(new THREE.Mesh(geo, new THREE.MeshStandardMaterial()), { binary: false })
         downloadBlob(new Blob([stl], { type: 'model/stl' }), `poterie-${Date.now()}.stl`); setStatus('Export STL (vase étanche imprimable).')
@@ -328,6 +367,8 @@ export function PotteryStudio() {
       const p = paramsRef.current
       const nowT = performance.now(), dt = clamp(0.001, 0.05, (nowT - lastT) / 1000); lastT = nowT
       if (resetRef.current) { pushHistory(); resetClay(p.clayMass); resetRef.current = false; setStatus('Remise à zéro — nouvelle motte centrée.') }
+      if (startRef.current) { pushHistory(); const k = startRef.current; startRef.current = null; applyStart(k, p.clayMass); setStatus(`Forme de départ : ${START_SHAPES.find((s) => s.kind === k)?.label ?? k}.`) }
+      if (trueRef.current) { trueRef.current = false; pushHistory(); for (let pass = 0; pass < 6; pass++) { const oO = rOut.slice(0, top + 1), oI = rIn.slice(0, top + 1); for (let i = 1; i < top; i++) { rOut[i] = oO[i] * 0.4 + (oO[i - 1] + oO[i + 1]) * 0.3; rIn[i] = oI[i] * 0.4 + (oI[i - 1] + oI[i + 1]) * 0.3 } } setStatus('Régularisé — paroi lissée et centrée.') }
       if (undoRef.current) { undoRef.current = false; if (past.length) { future.push(snapOf()); applySnap(past.pop()!); setStatus('↶ Annulé.') } else setStatus('Rien à annuler.') }
       if (redoRef.current) { redoRef.current = false; if (future.length) { past.push(snapOf()); applySnap(future.pop()!); setStatus('↷ Refait.') } else setStatus('Rien à refaire.') }
       if (exportRef.current) { doExport(exportRef.current); exportRef.current = null }
@@ -378,8 +419,8 @@ export function PotteryStudio() {
 
       relaxAndConstrain(p, dt)
 
-      // Rebuild the clay mesh from the profiles.
-      const geo = buildPotGeometry(rOut, rIn, top); clayMesh.geometry.dispose(); clayMesh.geometry = geo
+      // Rebuild the clay mesh from the profiles (+ live flutes / godrons).
+      const geo = buildPotGeometry(rOut, rIn, top, Math.round(p.flutes), p.fluteDepth); clayMesh.geometry.dispose(); clayMesh.geometry = geo
 
       wheelAngle += p.wheelSpeed * dt * 2.2; spin.rotation.y = wheelAngle
       applyCam(); renderer.render(scene, camera)
@@ -414,6 +455,20 @@ export function PotteryStudio() {
         octx.globalAlpha = 0.9; octx.fill(); octx.globalAlpha = 1
         octx.lineWidth = 3; octx.strokeStyle = c.inner ? '#ffb400' : '#00e0c0'; octx.stroke()
         if (on) { octx.fillStyle = '#fff'; octx.font = 'bold 11px system-ui'; octx.textAlign = 'center'; octx.fillText(`${c.inner ? 'INT.' : 'EXT.'} · ${Math.round(c.resist * 100)}%`, c.sx, c.sy - 24) }
+      }
+      // ── Measurements HUD (bottom-right) : height / diameter / wall / capacity ──
+      if (p.showMeasure) {
+        const SCALE = 18   // 1 world unit ≈ 18 cm
+        let maxOut = 0, minWall = 1e9
+        for (let i = 0; i <= top; i++) { if (rOut[i] > maxOut) maxOut = rOut[i]; if (rIn[i] > EPS) { const w = rOut[i] - rIn[i]; if (w < minWall) minWall = w } }
+        const wall = minWall < 1e9 ? minWall : Math.max(0, rOut[0])
+        const litres = volume() * 0.18 * 0.18 * 0.18 * 1000
+        const lines = [`H ${(top * DY * SCALE).toFixed(0)} cm`, `Ø ${(2 * maxOut * SCALE).toFixed(0)} cm`, `paroi ${(wall * SCALE * 10).toFixed(0)} mm`, `≈ ${litres.toFixed(2)} L`]
+        octx.textAlign = 'right'; octx.font = '12px system-ui'
+        const bx = overlay.width - 14; let by = overlay.height - 14 - (lines.length - 1) * 17
+        octx.fillStyle = 'rgba(10,8,6,0.5)'; octx.fillRect(bx - 92, by - 15, 100, lines.length * 17 + 7)
+        octx.fillStyle = 'rgba(255,222,186,0.95)'
+        for (const ln of lines) { octx.fillText(ln, bx, by); by += 17 }
       }
       if (recActive && recCtx && recCanvas) {
         const w = recCanvas.width, h = recCanvas.height
@@ -472,6 +527,14 @@ export function PotteryStudio() {
           <div style={{ color: error ? '#ff6b6b' : '#9a8a78', fontSize: 11, marginBottom: 10, lineHeight: 1.3 }}>{error ?? status}</div>
           <div style={{ fontSize: 10, color: '#ffcf9a', marginBottom: 12, lineHeight: 1.35, background: 'rgba(255,180,0,0.08)', padding: 7, borderRadius: 6 }}>☝️ Le <b>bout de l'index</b> est l'outil. Pince pouce+index pour <b>presser</b> l'argile (ouvre la main pour repositionner). Deux mains = paroi <b>int.</b> (proche de l'axe) + <b>ext.</b><br />🖱️/👆 <b>Sans caméra</b> : 1 doigt / clic gauche = <b>façonner</b> · clic droit ou 2 doigts = <b>tourner + zoom</b> · molette = zoom.</div>
 
+          <Field label="Forme de départ">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+              {START_SHAPES.map((s) => (
+                <button key={s.kind} onClick={() => { startRef.current = s.kind }} style={{ ...selStyle, fontSize: 11, padding: 6 }} title="Partir d'une forme prête (volume conservé)">{s.label}</button>
+              ))}
+            </div>
+          </Field>
+
           <Field label="Outil de tournage">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
               {TOOLS.map((t) => (
@@ -488,6 +551,7 @@ export function PotteryStudio() {
             <button onClick={() => { redoRef.current = true }} style={{ ...selStyle, flex: 1, fontSize: 12 }}>↷ Refaire</button>
             <button onClick={() => { resetRef.current = true }} style={{ ...selStyle, flex: 1, fontSize: 12, background: 'rgba(255,80,80,0.2)', borderColor: 'rgba(255,80,80,0.45)' }}>⟲ Zéro</button>
           </div>
+          <button onClick={() => { trueRef.current = true }} style={{ ...selStyle, marginBottom: 6, fontSize: 12, background: 'rgba(120,200,255,0.16)', borderColor: 'rgba(120,200,255,0.4)' }} title="Lisse et recentre toute la paroi (rattrape une pièce voilée)">✨ Régulariser (centrer & lisser)</button>
 
           <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Le tour & l'argile</div>
           <Field label={`Vitesse du tour — ${wheelSpeed.toFixed(1)}`}><input type="range" min={0} max={3} step={0.1} value={wheelSpeed} onChange={(e) => setWheelSpeed(+e.target.value)} style={rngStyle} /></Field>
@@ -495,11 +559,16 @@ export function PotteryStudio() {
           <Field label={`Lissage (eau) — ${Math.round(smoothing * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={smoothing} onChange={(e) => setSmoothing(+e.target.value)} style={rngStyle} /></Field>
           <label style={chkRow} title="L'argile est incompressible : affiner la paroi la fait monter (comme au tournage réel)."><input type="checkbox" checked={conserve} onChange={(e) => setConserve(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> 🧱 Conservation du volume (monte les parois)</label>
 
+          <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Décoration — cannelures / godrons</div>
+          <Field label={`Cannelures — ${flutes === 0 ? 'aucune' : flutes + ' plis'}`}><input type="range" min={0} max={24} step={1} value={flutes} onChange={(e) => setFlutes(+e.target.value)} style={rngStyle} /></Field>
+          {flutes >= 2 && <Field label={`Profondeur — ${Math.round(fluteDepth * 100)}%`}><input type="range" min={0.01} max={0.2} step={0.01} value={fluteDepth} onChange={(e) => setFluteDepth(+e.target.value)} style={rngStyle} /></Field>}
+
           <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Rendu</div>
           <Field label="Couleur de l'argile"><div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="color" value={clayColor} onChange={(e) => setClayColor(e.target.value)} style={{ width: 40, height: 30, border: 'none', background: 'none', cursor: 'pointer' }} /><div style={{ display: 'flex', gap: 5 }}>{['#b5651d', '#c8794a', '#8a5a3c', '#d9c7a3', '#3a3f4a', '#e8e2d6'].map((h) => <button key={h} onClick={() => setClayColor(h)} style={{ width: 22, height: 22, borderRadius: 5, background: h, border: '1px solid rgba(255,255,255,0.25)', cursor: 'pointer' }} />)}</div></div></Field>
           <label style={chkRow}><input type="checkbox" checked={wireframe} onChange={(e) => setWireframe(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> 🕸️ Fil de fer (maillage)</label>
           <label style={chkRow}><input type="checkbox" checked={showGuides} onChange={(e) => setShowGuides(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> 📐 Repères (axe)</label>
           <label style={chkRow}><input type="checkbox" checked={showSkeleton} onChange={(e) => setShowSkeleton(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> ✋ Squelette des mains</label>
+          <label style={chkRow}><input type="checkbox" checked={showMeasure} onChange={(e) => setShowMeasure(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> 📏 Cotes (hauteur / Ø / paroi / volume)</label>
           <Field label="Fond"><select value={bgMode} onChange={(e) => setBgMode(e.target.value as 'webcam' | 'black')} style={selStyle}><option value="webcam">📷 Webcam</option><option value="black">⬛ Atelier sombre</option></select></Field>
 
           <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Export</div>
