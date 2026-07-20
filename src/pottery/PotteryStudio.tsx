@@ -112,7 +112,9 @@ export interface Relief { depth: number; seed: number; o: GlazeOpts; color: stri
 export function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: number, deco: Deco = DECO0, relief?: Relief, ns = NS): THREE.BufferGeometry {
   const pos: number[] = [], idx: number[] = []
   const outerBase: number[] = [], innerBase: number[] = [], hasInner: boolean[] = []
-  const crackAt = (a: number, i: number) => { if (!relief) return 0; const t = (Y0 + i * DY - Y0) / HMAX; const s = rakuSample(Math.cos(a), t * 1.7, Math.sin(a), relief.seed); return relief.depth * Math.max(s.crack, s.micro * 0.7) }
+  // Only the MAIN crack lines make a shallow groove ; cubed → thin & crisp, so the surface
+  // between cracks stays SMOOTH (real raku crazing, not an eroded/bark surface).
+  const crackAt = (a: number, i: number) => { if (!relief) return 0; const t = (Y0 + i * DY - Y0) / HMAX; const s = rakuSample(Math.cos(a), t * 1.7, Math.sin(a), relief.seed); const cr = clamp(0, 1, s.crack); return relief.depth * cr * cr * cr }
   for (let i = 0; i <= top; i++) {
     const y = Y0 + i * DY
     outerBase[i] = pos.length / 3
@@ -141,8 +143,8 @@ export function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: num
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx)
   if (relief) {
     // Per-vertex Raku colour sampled at the SAME field point as the groove → they align.
-    const base = new THREE.Color(relief.color), cream = new THREE.Color(0xeae3d2)
-    const bR = lerp(cream.r, base.r, 0.28), bG = lerp(cream.g, base.g, 0.28), bB = lerp(cream.b, base.b, 0.28)
+    const base = new THREE.Color(relief.color), cream = new THREE.Color(0xefe9dc)
+    const bR = lerp(cream.r, base.r, 0.16), bG = lerp(cream.g, base.g, 0.16), bB = lerp(cream.b, base.b, 0.16)
     const col = new Float32Array(nv * 3)
     for (let vi = 0; vi < nv; vi++) { const x = pos[vi * 3], y = pos[vi * 3 + 1], z = pos[vi * 3 + 2], rr = Math.hypot(x, z) || 1e-6, t = (y - Y0) / HMAX; const c = rakuColor(x / rr, t, z / rr, relief.o, relief.seed, bR, bG, bB); col[vi * 3] = c[0]; col[vi * 3 + 1] = c[1]; col[vi * 3 + 2] = c[2] }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3))
@@ -209,28 +211,30 @@ function cellEdge(x: number, y: number, z: number) { const xi = Math.floor(x), y
  *  varying density → non-uniform cells. Adds fine micro-veins and carbon speckles. */
 export function rakuSample(cx: number, cy: number, cz: number, seed: number) {
   const S = (seed % 500) * 0.137 + 1.7
-  const warp = fbm3(cx * 2.4 + S, cy * 2.4 + S, cz * 2.4 + S) * 0.55           // stronger warp → wandering cracks
-  const dens = 0.6 + 0.75 * fbm3(cx * 0.7 + S * 1.3, cy * 0.7 + S * 1.3, cz * 0.7 + S * 1.3)  // some zones densely cracked
-  const scales: [number, number, number][] = [[2.6, 0.055, 1.0], [5.4, 0.033, 0.85], [10.5, 0.021, 0.62], [19, 0.013, 0.42]]
+  const warp = fbm3(cx * 2.2 + S, cy * 2.2 + S, cz * 2.2 + S) * 0.32          // gentle warp → irregular but clean
+  const dens = 0.85 + 0.35 * fbm3(cx * 0.6 + S * 1.3, cy * 0.6 + S * 1.3, cz * 0.6 + S * 1.3)  // mild density variation
+  // Thin CRISP crack lines (small thresholds) on an otherwise smooth glaze → craquelé, not erosion.
+  const scales: [number, number, number][] = [[4.0, 0.018, 1.0], [7.5, 0.013, 0.8], [13, 0.009, 0.55]]
   let crack = 0
   for (const [sc, th, amt] of scales) { const e = cellEdge(cx * sc * dens + warp + S, cy * sc * dens + warp + S, cz * sc * dens + warp + S); crack = Math.max(crack, (1 - smooth01(0, th, e)) * amt) }
-  const em = cellEdge(cx * 34 * dens + warp * 1.7 + S * 2, cy * 34 * dens + warp * 1.7 + S * 2, cz * 34 * dens + warp * 1.7 + S * 2)
-  const micro = (1 - smooth01(0, 0.009, em)) * 0.6                            // fine hairline micro-veins
-  const carbon = smooth01(0.5, 0.85, fbm3(cx * 1.6 + S * 3, cy * 1.6 + S * 3, cz * 1.6 + S * 3))
-  const cu = smooth01(0.58, 0.9, fbm3(cx * 2.6 + S * 4, cy * 2.6 + S * 4, cz * 2.6 + S * 4))
-  const sp = 46, speck = hi(Math.floor(cx * sp + S), Math.floor(cy * sp + S), Math.floor(cz * sp + S)) > 0.977 ? 1 : 0  // carbon pinholes / pointillé
+  const em = cellEdge(cx * 26 * dens + warp * 1.4 + S * 2, cy * 26 * dens + warp * 1.4 + S * 2, cz * 26 * dens + warp * 1.4 + S * 2)
+  const micro = (1 - smooth01(0, 0.006, em)) * 0.5                            // fine hairline micro-veins (colour only)
+  const carbon = smooth01(0.55, 0.88, fbm3(cx * 1.5 + S * 3, cy * 1.5 + S * 3, cz * 1.5 + S * 3))
+  const cu = smooth01(0.6, 0.92, fbm3(cx * 2.4 + S * 4, cy * 2.4 + S * 4, cz * 2.4 + S * 4))
+  const sp = 42, speck = hi(Math.floor(cx * sp + S), Math.floor(cy * sp + S), Math.floor(cz * sp + S)) > 0.99 ? 1 : 0  // sparse carbon pinholes (colour only)
   return { crack, micro, carbon, cu, speck }
 }
 /** RGB colour for a Raku sample at a unit-radial direction + height fraction t. */
 function rakuColor(nx: number, t: number, nz: number, o: GlazeOpts, seed: number, bR: number, bG: number, bB: number): [number, number, number] {
   const s = rakuSample(nx, t * 1.7, nz, seed)
-  const mott = fbm3(nx * 4 + seed, t * 4 + seed, nz * 4 + seed) * 0.05
+  const mott = fbm3(nx * 3 + seed, t * 3 + seed, nz * 3 + seed) * 0.03      // very subtle glaze mottling
   let R = bR - mott, G = bG - mott, B = bB - mott * 1.1
-  const ck = clamp(0, 1, Math.max(s.crack, s.micro * 0.8)) * o.crackle
-  R = lerp(R, 0.09, ck); G = lerp(G, 0.06, ck); B = lerp(B, 0.05, ck)
-  const carbon = s.carbon * o.carbon; R = lerp(R, 0.045, carbon); G = lerp(G, 0.045, carbon); B = lerp(B, 0.052, carbon)
-  const cu = s.cu * o.lustre; R = lerp(R, 0.74, cu * 0.55); G = lerp(G, 0.42, cu * 0.55); B = lerp(B, 0.30, cu * 0.55)
-  if (s.speck) { R = lerp(R, 0.05, 0.85); G = lerp(G, 0.05, 0.85); B = lerp(B, 0.06, 0.85) }
+  // Crack lines = thin dark craze ; sharpen so the surface between stays clean/pale.
+  const ck = clamp(0, 1, Math.max(s.crack * s.crack, s.micro * 0.6)) * o.crackle
+  R = lerp(R, 0.12, ck); G = lerp(G, 0.09, ck); B = lerp(B, 0.08, ck)
+  const carbon = s.carbon * o.carbon; R = lerp(R, 0.07, carbon); G = lerp(G, 0.07, carbon); B = lerp(B, 0.075, carbon)
+  const cu = s.cu * o.lustre; R = lerp(R, 0.7, cu * 0.4); G = lerp(G, 0.42, cu * 0.4); B = lerp(B, 0.32, cu * 0.4)
+  if (s.speck) { R = lerp(R, 0.08, 0.8); G = lerp(G, 0.08, 0.8); B = lerp(B, 0.09, 0.8) }
   return [R, G, B]
 }
 
@@ -282,8 +286,9 @@ export function makeGlaze(kind: Glaze, color: string, o: GlazeOpts, seed: number
 
 /** Material for a FIRED Raku mesh : reads the baked per-vertex colours, adds iridescent lustre. */
 export function makeRakuFired(o: GlazeOpts): THREE.Material {
-  const m = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.44, metalness: 0.2 + 0.4 * o.lustre, clearcoat: 0.5, clearcoatRoughness: 0.3, envMapIntensity: 1.15, side: THREE.DoubleSide })
-  m.iridescence = clamp(0, 1, o.lustre * 0.6); m.iridescenceIOR = 1.3; m.iridescenceThicknessRange = [120, 400]
+  // Satin glaze, not chrome : low metalness, a touch of clearcoat + subtle iridescence.
+  const m = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.04 + 0.28 * o.lustre, clearcoat: 0.45, clearcoatRoughness: 0.35, envMapIntensity: 1.0, side: THREE.DoubleSide })
+  m.iridescence = clamp(0, 1, o.lustre * 0.35); m.iridescenceIOR = 1.28; m.iridescenceThicknessRange = [140, 380]
   m.userData.rakuFired = true
   return m
 }
@@ -518,7 +523,7 @@ export function PotteryStudio() {
       // Raku exports the RELIEF mesh at high tessellation : cracks are real geometry (visible
       // in STL too) + baked vertex colours (GLB). Other glazes export the plain solid.
       const geo = rakuOn
-        ? buildPotGeometry(rOut, rIn, top, decoFrom(pp), { depth: 0.03, seed: pp.rakuSeed, o: { crackle: pp.crackle, carbon: pp.carbon, lustre: pp.lustre }, color: pp.clayColor }, 320)
+        ? buildPotGeometry(rOut, rIn, top, decoFrom(pp), { depth: 0.009, seed: pp.rakuSeed, o: { crackle: pp.crackle, carbon: pp.carbon, lustre: pp.lustre }, color: pp.clayColor }, 320)
         : buildPotGeometry(rOut, rIn, top, decoFrom(pp))
       if (fmt === 'stl') {
         const stl = new STLExporter().parse(new THREE.Mesh(geo, new THREE.MeshStandardMaterial()), { binary: false })
@@ -617,7 +622,7 @@ export function PotteryStudio() {
       // Mesh : fired raku → cached RELIEF mesh (cracks carved in geometry + vertex colours) ;
       // otherwise the smooth live clay, rebuilt each frame from the profiles.
       if (p.glaze === 'raku' && fired) {
-        if (reliefDirty || !reliefGeo) { reliefGeo?.dispose(); reliefGeo = buildPotGeometry(rOut, rIn, top, decoFrom(p), { depth: 0.03, seed: p.rakuSeed, o: { crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, color: p.clayColor }, 200); reliefDirty = false }
+        if (reliefDirty || !reliefGeo) { reliefGeo?.dispose(); reliefGeo = buildPotGeometry(rOut, rIn, top, decoFrom(p), { depth: 0.009, seed: p.rakuSeed, o: { crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, color: p.clayColor }, 200); reliefDirty = false }
         if (clayMesh.geometry !== reliefGeo) { const old = clayMesh.geometry; clayMesh.geometry = reliefGeo; if (old !== reliefGeo) old.dispose() }
       } else {
         const geo = buildPotGeometry(rOut, rIn, top, decoFrom(p)); const old = clayMesh.geometry; clayMesh.geometry = geo; if (old !== reliefGeo) old.dispose()

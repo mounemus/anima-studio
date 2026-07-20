@@ -92,10 +92,15 @@ describe('pottery firing & glaze', () => {
     expect(rad(relief).mn, 'no grooves carved').toBeLessThan(rad(smooth).mn + 1e-4)
     expect(relief.getAttribute('position').count, 'relief not finer than smooth').toBeGreaterThan(smooth.getAttribute('position').count)
   })
-  it('rakuSample varies spatially (not monotone) + has micro/speck fields', () => {
-    const a = rakuSample(0.5, 0.3, 0.8, 7), b = rakuSample(-0.4, 1.1, 0.2, 7)
+  it('rakuSample forms a crack network (varied, not flat) + has micro/speck fields', () => {
+    const a = rakuSample(0.5, 0.3, 0.8, 7)
     expect(a).toHaveProperty('micro'); expect(a).toHaveProperty('speck')
-    const vals = [a.crack, b.crack, rakuSample(0.1, 0.9, -0.6, 7).crack, rakuSample(-0.9, 0.2, 0.1, 7).crack]
-    expect(Math.max(...vals) - Math.min(...vals), 'crack field is flat/monotone').toBeGreaterThan(0.1)
+    // Sample a grid on the cylinder ; a real crack network has mostly-low values with a
+    // fraction of high (on-crack) values → both a high max and a low mean.
+    let hi = 0, sum = 0, n = 0, mx = 0
+    for (let i = 0; i < 40; i++) for (let k = 0; k < 20; k++) { const ang = (i / 40) * Math.PI * 2, t = k / 20; const c = rakuSample(Math.cos(ang), t * 1.7, Math.sin(ang), 7).crack; sum += c; n++; if (c > mx) mx = c; if (c > 0.4) hi++ }
+    expect(mx, 'no strong cracks anywhere').toBeGreaterThan(0.6)
+    expect(hi / n, 'cracks cover almost nothing').toBeGreaterThan(0.02)
+    expect(sum / n, 'surface is mostly cracked (not a clean glaze)').toBeLessThan(0.5)
   })
 })
