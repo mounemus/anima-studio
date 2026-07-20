@@ -2,7 +2,7 @@
  *  spout / handles) are pure math — verify they produce valid, NaN-free meshes off the browser. */
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { startProfile, buildPotGeometry, makeGlaze, bakeRakuTexture, START_SHAPES, DECORS, GLAZES, DECO0, NR, DY, VOL_K, type Deco } from './PotteryStudio'
+import { startProfile, buildPotGeometry, makeGlaze, makeRakuFired, bakeRakuTexture, rakuSample, START_SHAPES, DECORS, GLAZES, DECO0, NR, DY, VOL_K, type Deco } from './PotteryStudio'
 
 const volumeOf = (rOut: Float32Array, rIn: Float32Array, top: number) => {
   let v = 0; for (let i = 0; i <= top; i++) v += Math.PI * Math.max(0, rOut[i] * rOut[i] - rIn[i] * rIn[i]) * DY; return v
@@ -67,21 +67,35 @@ describe('pottery firing & glaze', () => {
       expect(m.side).toBeDefined()
     })
   }
-  it('raku is a physical material with iridescence + raku flag; bake never throws', () => {
-    const m = makeGlaze('raku', '#c8794a', { crackle: 0.7, carbon: 0.6, lustre: 0.8 }, 7) as THREE.MeshPhysicalMaterial
-    expect(m).toBeInstanceOf(THREE.MeshPhysicalMaterial)
-    expect(m.userData.raku).toBe(true)
-    expect(m.iridescence).toBeGreaterThan(0)
-    // texture bake is null under jsdom (no 2D canvas), but must never throw
+  it('raku raw preview material + fired vertex-colour material', () => {
+    const raw = makeGlaze('raku', '#c8794a', { crackle: 0.7, carbon: 0.6, lustre: 0.8 }, 7) as THREE.MeshPhysicalMaterial
+    expect(raw.userData.raku).toBe(true)
+    const fired = makeRakuFired({ crackle: 0.7, carbon: 0.6, lustre: 0.8 }) as THREE.MeshPhysicalMaterial
+    expect(fired.vertexColors).toBe(true)
+    expect(fired.iridescence).toBeGreaterThan(0)
     expect(() => bakeRakuTexture('#c8794a', { crackle: 0.7, carbon: 0.6, lustre: 0.8 }, 7)).not.toThrow()
   })
-  it('geometry carries UVs (glaze texture mapping + GLB export)', () => {
+  it('geometry carries UVs; relief carves cracks INTO the mesh + bakes vertex colours', () => {
     const { rOut, rIn, top } = profile('vase')
-    const g = buildPotGeometry(rOut, rIn, top, { ...DECO0, handles: 2 })
-    const uv = g.getAttribute('uv')
-    expect(uv, 'no uv attribute').toBeTruthy()
-    expect(uv.count).toBe(g.getAttribute('position').count)
-    let nan = 0; const a = uv.array as ArrayLike<number>; for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) nan++
-    expect(nan, 'uv NaN').toBe(0)
+    const smooth = buildPotGeometry(rOut, rIn, top, { ...DECO0, handles: 2 })
+    expect(smooth.getAttribute('uv').count).toBe(smooth.getAttribute('position').count)
+    expect(smooth.getAttribute('color'), 'smooth mesh should have no vertex colours').toBeFalsy()
+    // fired relief mesh : finer tessellation, has colour, some outer verts pushed inward (grooves)
+    const relief = buildPotGeometry(rOut, rIn, top, DECO0, { depth: 0.03, seed: 7, o: { crackle: 1, carbon: 0.6, lustre: 0.8 }, color: '#c8794a' }, 200)
+    const col = relief.getAttribute('color')
+    expect(col, 'relief has no colour attribute').toBeTruthy()
+    expect(col.count).toBe(relief.getAttribute('position').count)
+    let cnan = 0; const ca = col.array as ArrayLike<number>; for (let i = 0; i < ca.length; i++) if (!Number.isFinite(ca[i])) cnan++
+    expect(cnan, 'colour NaN').toBe(0)
+    // grooves : the relief outer-wall radii should dip below the smooth radii somewhere
+    const rad = (g: THREE.BufferGeometry) => { const p = g.getAttribute('position').array as ArrayLike<number>; let mn = 9, mx = 0; for (let i = 0; i < p.length; i += 3) { const r = Math.hypot(p[i], p[i + 2]); if (r > 0.05) { mn = Math.min(mn, r); mx = Math.max(mx, r) } } return { mn, mx } }
+    expect(rad(relief).mn, 'no grooves carved').toBeLessThan(rad(smooth).mn + 1e-4)
+    expect(relief.getAttribute('position').count, 'relief not finer than smooth').toBeGreaterThan(smooth.getAttribute('position').count)
+  })
+  it('rakuSample varies spatially (not monotone) + has micro/speck fields', () => {
+    const a = rakuSample(0.5, 0.3, 0.8, 7), b = rakuSample(-0.4, 1.1, 0.2, 7)
+    expect(a).toHaveProperty('micro'); expect(a).toHaveProperty('speck')
+    const vals = [a.crack, b.crack, rakuSample(0.1, 0.9, -0.6, 7).crack, rakuSample(-0.9, 0.2, 0.1, 7).crack]
+    expect(Math.max(...vals) - Math.min(...vals), 'crack field is flat/monotone').toBeGreaterThan(0.1)
   })
 })

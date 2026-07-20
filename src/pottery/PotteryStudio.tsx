@@ -103,41 +103,51 @@ function appendHandles(pos: number[], idx: number[], rOut: Float32Array, top: nu
   }
 }
 
-/** Surface-of-revolution mesh from the outer/inner radial profiles + décor (texture,
- *  foot, spout, handles). Outer wall + inner wall + base + rim. Double-sided. */
-export function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: number, deco: Deco = DECO0): THREE.BufferGeometry {
+export interface Relief { depth: number; seed: number; o: GlazeOpts; color: string }
+
+/** Surface-of-revolution mesh from the outer/inner radial profiles + décor (texture, foot,
+ *  spout, handles). With `relief` (fired Raku) the crackle is CARVED into the geometry
+ *  (grooves along the outer wall) at a finer tessellation `ns`, and per-vertex colours are
+ *  baked in — so the crackle is real geometry (visible in Shaded, exported to STL/GLB). */
+export function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: number, deco: Deco = DECO0, relief?: Relief, ns = NS): THREE.BufferGeometry {
   const pos: number[] = [], idx: number[] = []
   const outerBase: number[] = [], innerBase: number[] = [], hasInner: boolean[] = []
+  const crackAt = (a: number, i: number) => { if (!relief) return 0; const t = (Y0 + i * DY - Y0) / HMAX; const s = rakuSample(Math.cos(a), t * 1.7, Math.sin(a), relief.seed); return relief.depth * Math.max(s.crack, s.micro * 0.7) }
   for (let i = 0; i <= top; i++) {
     const y = Y0 + i * DY
     outerBase[i] = pos.length / 3
-    for (let j = 0; j < NS; j++) { const a = (j / NS) * Math.PI * 2, r = rOut[i] * wallFactor(a, i, top, deco); pos.push(Math.cos(a) * r, y + rimLift(a, i, top, deco), Math.sin(a) * r) }
+    for (let j = 0; j < ns; j++) { const a = (j / ns) * Math.PI * 2, r = Math.max(0.01, rOut[i] * wallFactor(a, i, top, deco) - crackAt(a, i)); pos.push(Math.cos(a) * r, y + rimLift(a, i, top, deco), Math.sin(a) * r) }
     const inner = rIn[i] > EPS
     hasInner[i] = inner
-    if (inner) { innerBase[i] = pos.length / 3; for (let j = 0; j < NS; j++) { const a = (j / NS) * Math.PI * 2, r = rIn[i] * wallFactor(a, i, top, deco); pos.push(Math.cos(a) * r, y + rimLift(a, i, top, deco), Math.sin(a) * r) } }
+    if (inner) { innerBase[i] = pos.length / 3; for (let j = 0; j < ns; j++) { const a = (j / ns) * Math.PI * 2, r = rIn[i] * wallFactor(a, i, top, deco); pos.push(Math.cos(a) * r, y + rimLift(a, i, top, deco), Math.sin(a) * r) } }
     else innerBase[i] = -1
   }
-  // outer wall
-  for (let i = 0; i < top; i++) for (let j = 0; j < NS; j++) { const jn = (j + 1) % NS; const a = outerBase[i] + j, b = outerBase[i] + jn, c = outerBase[i + 1] + j, d = outerBase[i + 1] + jn; idx.push(a, c, b, b, c, d) }
-  // inner wall (bore) where both consecutive rings are open
-  for (let i = 0; i < top; i++) if (hasInner[i] && hasInner[i + 1]) for (let j = 0; j < NS; j++) { const jn = (j + 1) % NS; const a = innerBase[i] + j, b = innerBase[i] + jn, c = innerBase[i + 1] + j, d = innerBase[i + 1] + jn; idx.push(a, b, c, b, d, c) }
-  // base disc (solid floor)
-  { const cy = pos.length / 3; pos.push(0, Y0, 0); for (let j = 0; j < NS; j++) { const jn = (j + 1) % NS; idx.push(cy, outerBase[0] + jn, outerBase[0] + j) } }
+  for (let i = 0; i < top; i++) for (let j = 0; j < ns; j++) { const jn = (j + 1) % ns; const a = outerBase[i] + j, b = outerBase[i] + jn, c = outerBase[i + 1] + j, d = outerBase[i + 1] + jn; idx.push(a, c, b, b, c, d) }
+  for (let i = 0; i < top; i++) if (hasInner[i] && hasInner[i + 1]) for (let j = 0; j < ns; j++) { const jn = (j + 1) % ns; const a = innerBase[i] + j, b = innerBase[i] + jn, c = innerBase[i + 1] + j, d = innerBase[i + 1] + jn; idx.push(a, b, c, b, d, c) }
+  { const cy = pos.length / 3; pos.push(0, Y0, 0); for (let j = 0; j < ns; j++) { const jn = (j + 1) % ns; idx.push(cy, outerBase[0] + jn, outerBase[0] + j) } }
   let boreBottom = -1
   for (let i = 0; i <= top; i++) if (hasInner[i]) { boreBottom = i; break }
   if (boreBottom >= 0) {
-    // cap the bottom of the bore
     const y = Y0 + boreBottom * DY, cy = pos.length / 3; pos.push(0, y, 0)
-    for (let j = 0; j < NS; j++) { const jn = (j + 1) % NS; idx.push(cy, innerBase[boreBottom] + j, innerBase[boreBottom] + jn) }
-    if (hasInner[top]) { for (let j = 0; j < NS; j++) { const jn = (j + 1) % NS; const o = outerBase[top] + j, on = outerBase[top] + jn, ii = innerBase[top] + j, in2 = innerBase[top] + jn; idx.push(o, ii, on, on, ii, in2) } }
-    else { const cy2 = pos.length / 3; pos.push(0, Y0 + top * DY, 0); for (let j = 0; j < NS; j++) { const jn = (j + 1) % NS; idx.push(cy2, outerBase[top] + j, outerBase[top] + jn) } }
-  } else { const cy2 = pos.length / 3; pos.push(0, Y0 + top * DY, 0); for (let j = 0; j < NS; j++) { const jn = (j + 1) % NS; idx.push(cy2, outerBase[top] + jn, outerBase[top] + j) } }
+    for (let j = 0; j < ns; j++) { const jn = (j + 1) % ns; idx.push(cy, innerBase[boreBottom] + j, innerBase[boreBottom] + jn) }
+    if (hasInner[top]) { for (let j = 0; j < ns; j++) { const jn = (j + 1) % ns; const o = outerBase[top] + j, on = outerBase[top] + jn, ii = innerBase[top] + j, in2 = innerBase[top] + jn; idx.push(o, ii, on, on, ii, in2) } }
+    else { const cy2 = pos.length / 3; pos.push(0, Y0 + top * DY, 0); for (let j = 0; j < ns; j++) { const jn = (j + 1) % ns; idx.push(cy2, outerBase[top] + j, outerBase[top] + jn) } }
+  } else { const cy2 = pos.length / 3; pos.push(0, Y0 + top * DY, 0); for (let j = 0; j < ns; j++) { const jn = (j + 1) % ns; idx.push(cy2, outerBase[top] + jn, outerBase[top] + j) } }
   appendHandles(pos, idx, rOut, top, deco)
-  // UVs (u = angle around, v = height) so glaze/Raku textures map & export in the GLB.
+  const nv = pos.length / 3
   const uv: number[] = []
-  for (let vi = 0; vi < pos.length / 3; vi++) { const x = pos[vi * 3], y = pos[vi * 3 + 1], z = pos[vi * 3 + 2]; uv.push(Math.atan2(z, x) / (Math.PI * 2) + 0.5, (y - Y0) / HMAX) }
+  for (let vi = 0; vi < nv; vi++) { const x = pos[vi * 3], y = pos[vi * 3 + 1], z = pos[vi * 3 + 2]; uv.push(Math.atan2(z, x) / (Math.PI * 2) + 0.5, (y - Y0) / HMAX) }
   const g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx)
+  if (relief) {
+    // Per-vertex Raku colour sampled at the SAME field point as the groove → they align.
+    const base = new THREE.Color(relief.color), cream = new THREE.Color(0xeae3d2)
+    const bR = lerp(cream.r, base.r, 0.28), bG = lerp(cream.g, base.g, 0.28), bB = lerp(cream.b, base.b, 0.28)
+    const col = new Float32Array(nv * 3)
+    for (let vi = 0; vi < nv; vi++) { const x = pos[vi * 3], y = pos[vi * 3 + 1], z = pos[vi * 3 + 2], rr = Math.hypot(x, z) || 1e-6, t = (y - Y0) / HMAX; const c = rakuColor(x / rr, t, z / rr, relief.o, relief.seed, bR, bG, bB); col[vi * 3] = c[0]; col[vi * 3 + 1] = c[1]; col[vi * 3 + 2] = c[2] }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3))
+  }
+  g.computeVertexNormals()
   return g
 }
 
@@ -194,6 +204,36 @@ function vnoise(x: number, y: number, z: number) { const xi = Math.floor(x), yi 
 function fbm3(x: number, y: number, z: number) { let a = 0.5, s = 0; for (let i = 0; i < 5; i++) { s += a * vnoise(x, y, z); x *= 2.03; y *= 2.03; z *= 2.03; a *= 0.5 } return s }
 function cellEdge(x: number, y: number, z: number) { const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z); let f1 = 9, f2 = 9; for (let dx = -1; dx <= 1; dx++)for (let dy = -1; dy <= 1; dy++)for (let dz = -1; dz <= 1; dz++) { const gx = xi + dx, gy = yi + dy, gz = zi + dz, ox = hi(gx, gy, gz), oy = hi(gy, gz, gx), oz = hi(gz, gx, gy), ex = gx + ox - x, ey = gy + oy - y, ez = gz + oz - z, d = ex * ex + ey * ey + ez * ez; if (d < f1) { f2 = f1; f1 = d } else if (d < f2) f2 = d } return Math.sqrt(f2) - Math.sqrt(f1) }
 
+/** Single Raku sample at a point (used by BOTH the mesh relief and the colour) so the
+ *  carved grooves and the dark crack lines line up. Irregular: domain-warp + spatially
+ *  varying density → non-uniform cells. Adds fine micro-veins and carbon speckles. */
+export function rakuSample(cx: number, cy: number, cz: number, seed: number) {
+  const S = (seed % 500) * 0.137 + 1.7
+  const warp = fbm3(cx * 2.4 + S, cy * 2.4 + S, cz * 2.4 + S) * 0.55           // stronger warp → wandering cracks
+  const dens = 0.6 + 0.75 * fbm3(cx * 0.7 + S * 1.3, cy * 0.7 + S * 1.3, cz * 0.7 + S * 1.3)  // some zones densely cracked
+  const scales: [number, number, number][] = [[2.6, 0.055, 1.0], [5.4, 0.033, 0.85], [10.5, 0.021, 0.62], [19, 0.013, 0.42]]
+  let crack = 0
+  for (const [sc, th, amt] of scales) { const e = cellEdge(cx * sc * dens + warp + S, cy * sc * dens + warp + S, cz * sc * dens + warp + S); crack = Math.max(crack, (1 - smooth01(0, th, e)) * amt) }
+  const em = cellEdge(cx * 34 * dens + warp * 1.7 + S * 2, cy * 34 * dens + warp * 1.7 + S * 2, cz * 34 * dens + warp * 1.7 + S * 2)
+  const micro = (1 - smooth01(0, 0.009, em)) * 0.6                            // fine hairline micro-veins
+  const carbon = smooth01(0.5, 0.85, fbm3(cx * 1.6 + S * 3, cy * 1.6 + S * 3, cz * 1.6 + S * 3))
+  const cu = smooth01(0.58, 0.9, fbm3(cx * 2.6 + S * 4, cy * 2.6 + S * 4, cz * 2.6 + S * 4))
+  const sp = 46, speck = hi(Math.floor(cx * sp + S), Math.floor(cy * sp + S), Math.floor(cz * sp + S)) > 0.977 ? 1 : 0  // carbon pinholes / pointillé
+  return { crack, micro, carbon, cu, speck }
+}
+/** RGB colour for a Raku sample at a unit-radial direction + height fraction t. */
+function rakuColor(nx: number, t: number, nz: number, o: GlazeOpts, seed: number, bR: number, bG: number, bB: number): [number, number, number] {
+  const s = rakuSample(nx, t * 1.7, nz, seed)
+  const mott = fbm3(nx * 4 + seed, t * 4 + seed, nz * 4 + seed) * 0.05
+  let R = bR - mott, G = bG - mott, B = bB - mott * 1.1
+  const ck = clamp(0, 1, Math.max(s.crack, s.micro * 0.8)) * o.crackle
+  R = lerp(R, 0.09, ck); G = lerp(G, 0.06, ck); B = lerp(B, 0.05, ck)
+  const carbon = s.carbon * o.carbon; R = lerp(R, 0.045, carbon); G = lerp(G, 0.045, carbon); B = lerp(B, 0.052, carbon)
+  const cu = s.cu * o.lustre; R = lerp(R, 0.74, cu * 0.55); G = lerp(G, 0.42, cu * 0.55); B = lerp(B, 0.30, cu * 0.55)
+  if (s.speck) { R = lerp(R, 0.05, 0.85); G = lerp(G, 0.05, 0.85); B = lerp(B, 0.06, 0.85) }
+  return [R, G, B]
+}
+
 /** Bake a realistic Raku glaze into a seamless texture (cylinder-sampled) — multi-scale
  *  crackle (big + fine cracks), carbon smoke zones, copper lustre patches. Exportable. */
 export function bakeRakuTexture(color: string, o: GlazeOpts, seed: number, res = 512): THREE.Texture | null {
@@ -231,11 +271,20 @@ export function makeGlaze(kind: Glaze, color: string, o: GlazeOpts, seed: number
   if (kind === 'brillant') return new THREE.MeshPhysicalMaterial({ color: c, roughness: 0.12, metalness: 0.0, clearcoat: 0.9, clearcoatRoughness: 0.08, envMapIntensity: 1.1, side: THREE.DoubleSide })
   if (kind === 'celadon') return new THREE.MeshPhysicalMaterial({ color: new THREE.Color(0x9fd8c8).lerp(c, 0.35), roughness: 0.14, metalness: 0, transmission: 0.34, thickness: 0.6, ior: 1.5, clearcoat: 0.85, clearcoatRoughness: 0.1, envMapIntensity: 1.1, transparent: true, side: THREE.FrontSide })
   if (kind === 'metal') return new THREE.MeshStandardMaterial({ color: c, roughness: 0.28, metalness: 0.95, envMapIntensity: 1.3, side: THREE.DoubleSide })
-  // ── Raku ── baked into a texture → realistic multi-scale crackle AND exportable (GLB).
-  const tex = bakeRakuTexture(color, o, seed, rakuRes)
-  const m = new THREE.MeshPhysicalMaterial({ color: tex ? new THREE.Color(0xffffff) : c, map: tex, roughness: 0.42, metalness: 0.22 + 0.4 * o.lustre, clearcoat: 0.5, clearcoatRoughness: 0.28, envMapIntensity: 1.15, side: THREE.DoubleSide })
-  m.iridescence = clamp(0, 1, o.lustre * 0.6); m.iridescenceIOR = 1.3; m.iridescenceThicknessRange = [120, 400]
+  // ── Raku, RAW (avant cuisson) ── smooth cream glaze preview. The fired crackle is real
+  //    geometry + vertex colours (see makeRakuFired + buildPotGeometry relief), so it exports.
+  void rakuRes
+  const cream = new THREE.Color(0xeae3d2).lerp(c, 0.28)
+  const m = new THREE.MeshPhysicalMaterial({ color: cream, roughness: 0.34, metalness: 0.05, clearcoat: 0.55, clearcoatRoughness: 0.16, envMapIntensity: 1.1, side: THREE.DoubleSide })
   m.userData.raku = true
+  return m
+}
+
+/** Material for a FIRED Raku mesh : reads the baked per-vertex colours, adds iridescent lustre. */
+export function makeRakuFired(o: GlazeOpts): THREE.Material {
+  const m = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.44, metalness: 0.2 + 0.4 * o.lustre, clearcoat: 0.5, clearcoatRoughness: 0.3, envMapIntensity: 1.15, side: THREE.DoubleSide })
+  m.iridescence = clamp(0, 1, o.lustre * 0.6); m.iridescenceIOR = 1.3; m.iridescenceThicknessRange = [120, 400]
+  m.userData.rakuFired = true
   return m
 }
 
@@ -279,6 +328,7 @@ export function PotteryStudio() {
   const resetRef = useRef(false)         // reset to a fresh lump
   const startRef = useRef<StartShape | null>(null)   // apply a starting shape
   const trueRef = useRef(false)          // "régulariser" : strongly true-up the profile
+  const fireRef = useRef(false)          // "Enfourner" : bake the raku relief mesh
   const undoRef = useRef(false), redoRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
   const recCtl = useRef<{ start: () => void; stop: () => void } | null>(null)
@@ -310,6 +360,9 @@ export function PotteryStudio() {
     notch.position.set(0.78, Y0 - 0.03, 0); spin.add(notch)
     const clayMesh = new THREE.Mesh(new THREE.BufferGeometry(), makeGlaze('terre', clayColor, { crackle, carbon, lustre }, 1)); clayMesh.frustumCulled = false; spin.add(clayMesh)
     let lastGlazeSig = ''
+    // Firing : raku « cuit » builds a RELIEF mesh (cracks carved in geometry + vertex colours),
+    // cached until re-fired ; sculpting reverts to smooth wet clay.
+    let fired = false, reliefGeo: THREE.BufferGeometry | null = null, reliefDirty = true
 
     // ── Clay state (radial profiles) ──
     const rOut = new Float32Array(NR), rIn = new Float32Array(NR)
@@ -461,16 +514,20 @@ export function PotteryStudio() {
     const decoFrom = (p: typeof paramsRef.current): Deco => ({ type: p.decorType, count: Math.round(p.flutes), depth: p.fluteDepth, foot: p.foot, spout: p.spout, handles: Math.round(p.handles), handleSize: p.handleSize })
     const doExport = (fmt: 'stl' | 'glb') => {
       const pp = paramsRef.current
-      const geo = buildPotGeometry(rOut, rIn, top, decoFrom(pp))
+      const rakuOn = pp.glaze === 'raku'
+      // Raku exports the RELIEF mesh at high tessellation : cracks are real geometry (visible
+      // in STL too) + baked vertex colours (GLB). Other glazes export the plain solid.
+      const geo = rakuOn
+        ? buildPotGeometry(rOut, rIn, top, decoFrom(pp), { depth: 0.03, seed: pp.rakuSeed, o: { crackle: pp.crackle, carbon: pp.carbon, lustre: pp.lustre }, color: pp.clayColor }, 320)
+        : buildPotGeometry(rOut, rIn, top, decoFrom(pp))
       if (fmt === 'stl') {
         const stl = new STLExporter().parse(new THREE.Mesh(geo, new THREE.MeshStandardMaterial()), { binary: false })
-        downloadBlob(new Blob([stl], { type: 'model/stl' }), `poterie-${Date.now()}.stl`); setStatus('Export STL (vase étanche imprimable).')
+        downloadBlob(new Blob([stl], { type: 'model/stl' }), `poterie-${Date.now()}.stl`); setStatus(rakuOn ? 'Export STL (craquelé gravé dans le maillage).' : 'Export STL (vase étanche imprimable).')
       } else {
-        // GLB carries the FIRED look : the glaze material (incl. a crisp high-res baked Raku texture) is embedded.
-        const mat = makeGlaze(pp.glaze, pp.clayColor, { crackle: pp.crackle, carbon: pp.carbon, lustre: pp.lustre }, pp.rakuSeed, 512)
+        const mat = rakuOn ? makeRakuFired({ crackle: pp.crackle, carbon: pp.carbon, lustre: pp.lustre }) : makeGlaze(pp.glaze, pp.clayColor, { crackle: pp.crackle, carbon: pp.carbon, lustre: pp.lustre }, pp.rakuSeed)
         const g = new THREE.Group(); g.add(new THREE.Mesh(geo, mat))
         new GLTFExporter().parse(g, (res) => { downloadBlob(new Blob([res as ArrayBuffer], { type: 'model/gltf-binary' }), `poterie-${Date.now()}.glb`); geo.dispose() }, () => setStatus('Échec export GLB.'), { binary: true })
-        setStatus(pp.glaze === 'raku' ? 'Export GLB (Raku cuit dans la texture).' : 'Export GLB (émail conservé).')
+        setStatus(rakuOn ? 'Export GLB (Raku : relief + couleurs cuites).' : 'Export GLB (émail conservé).')
       }
     }
 
@@ -501,14 +558,16 @@ export function PotteryStudio() {
       if (undoRef.current) { undoRef.current = false; if (past.length) { future.push(snapOf()); applySnap(past.pop()!); setStatus('↶ Annulé.') } else setStatus('Rien à annuler.') }
       if (redoRef.current) { redoRef.current = false; if (future.length) { past.push(snapOf()); applySnap(future.pop()!); setStatus('↷ Refait.') } else setStatus('Rien à refaire.') }
       if (exportRef.current) { doExport(exportRef.current); exportRef.current = null }
+      if (fireRef.current) { fireRef.current = false; fired = true; reliefDirty = true }   // « Enfourner »
       V0 = VOL_K * p.clayMass    // live target : changing mass adds/removes clay
 
-      // Glaze / firing : rebuild the material only on glaze / colour / seed change — NOT on
-      // the raku sliders (baking the crackle texture is heavy → re-baking every slider tick
-      // would freeze). Craquelure/enfumage/lustre are read at bake time and applied on the
-      // next « Enfourner » (new seed), which is also truer to real raku : set up, then fire.
-      const gsig = `${p.glaze}|${p.clayColor}|${p.rakuSeed}`
-      if (gsig !== lastGlazeSig) { lastGlazeSig = gsig; clayMesh.material.dispose(); clayMesh.material = makeGlaze(p.glaze, p.clayColor, { crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, p.rakuSeed, 256) }
+      // Glaze / firing material. When a raku pot is FIRED we use the vertex-colour material on
+      // the relief mesh ; otherwise the flat glaze material (rebuilt only on glaze/colour/seed).
+      const gsig = `${p.glaze}|${p.clayColor}|${p.rakuSeed}|${fired}`
+      if (gsig !== lastGlazeSig) {
+        lastGlazeSig = gsig; reliefDirty = true; clayMesh.material.dispose()
+        clayMesh.material = (p.glaze === 'raku' && fired) ? makeRakuFired({ crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }) : makeGlaze(p.glaze, p.clayColor, { crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, p.rakuSeed, 256)
+      }
       ;(clayMesh.material as THREE.Material & { wireframe: boolean }).wireframe = p.wireframe
 
       // Axis guide endpoints (projected — the line can slant when the view is inclined).
@@ -548,14 +607,21 @@ export function PotteryStudio() {
         if (sculptingNow && !wasSculpting) pushHistory()   // snapshot the pre-stroke state → undo restores it
         wasSculpting = sculptingNow
         applyTool(contacts, p, dt)
+        if (sculptingNow) fired = false                // shaping wet clay again → leave the fired state
       }
       if (contacts.length) hud = { contacts, toolLabel: TOOLS.find((t) => t.kind === p.tool)?.label ?? '' }
       else if (newFrame) hud = { contacts: [], toolLabel: hud.toolLabel }
 
       relaxAndConstrain(p, dt)
 
-      // Rebuild the clay mesh from the profiles (+ live décor : texture, foot, spout, handles).
-      const geo = buildPotGeometry(rOut, rIn, top, decoFrom(p)); clayMesh.geometry.dispose(); clayMesh.geometry = geo
+      // Mesh : fired raku → cached RELIEF mesh (cracks carved in geometry + vertex colours) ;
+      // otherwise the smooth live clay, rebuilt each frame from the profiles.
+      if (p.glaze === 'raku' && fired) {
+        if (reliefDirty || !reliefGeo) { reliefGeo?.dispose(); reliefGeo = buildPotGeometry(rOut, rIn, top, decoFrom(p), { depth: 0.03, seed: p.rakuSeed, o: { crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, color: p.clayColor }, 200); reliefDirty = false }
+        if (clayMesh.geometry !== reliefGeo) { const old = clayMesh.geometry; clayMesh.geometry = reliefGeo; if (old !== reliefGeo) old.dispose() }
+      } else {
+        const geo = buildPotGeometry(rOut, rIn, top, decoFrom(p)); const old = clayMesh.geometry; clayMesh.geometry = geo; if (old !== reliefGeo) old.dispose()
+      }
 
       wheelAngle += p.wheelSpeed * dt * 2.2; spin.rotation.y = wheelAngle
       applyCam(); renderer.render(scene, camera)
@@ -711,9 +777,9 @@ export function PotteryStudio() {
             <Field label={`Craquelure — ${Math.round(crackle * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={crackle} onChange={(e) => setCrackle(+e.target.value)} style={rngStyle} /></Field>
             <Field label={`Enfumage (carbone) — ${Math.round(carbon * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={carbon} onChange={(e) => setCarbon(+e.target.value)} style={rngStyle} /></Field>
             <Field label={`Lustre métallique irisé — ${Math.round(lustre * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={lustre} onChange={(e) => setLustre(+e.target.value)} style={rngStyle} /></Field>
-            <button onClick={() => setRakuSeed(Math.floor(Math.random() * 99999) + 1)} style={{ ...selStyle, marginBottom: 8, background: 'rgba(255,120,40,0.22)', borderColor: 'rgba(255,120,40,0.55)' }} title="Chaque cuisson Raku donne un craquelage et un enfumage uniques">🔥 Enfourner — nouveau tirage Raku</button>
+            <button onClick={() => { fireRef.current = true; setRakuSeed(Math.floor(Math.random() * 99999) + 1) }} style={{ ...selStyle, marginBottom: 8, background: 'rgba(255,120,40,0.22)', borderColor: 'rgba(255,120,40,0.55)' }} title="Cuit le raku : grave le craquelé dans le maillage (relief réel, exporté). Chaque cuisson est unique.">🔥 Enfourner — cuire le Raku (relief)</button>
           </>}
-          <p style={{ color: '#9a8a78', fontSize: 10, margin: '0 0 4px', lineHeight: 1.35 }}>Raku procédural : craquelure fractale multi-échelle + enfumage + lustre, cuit dans une texture (exporté dans le .glb). Règle les curseurs puis clique <b>Enfourner</b> → chaque cuisson est unique.</p>
+          <p style={{ color: '#9a8a78', fontSize: 10, margin: '0 0 4px', lineHeight: 1.35 }}>Raku procédural : craquelure fractale irrégulière + micro-veines + piqûres carbone + lustre. <b>Enfourner</b> grave le craquelé <b>dans le maillage</b> (relief réel, exporté en STL/GLB). Re-façonner revient à l'argile crue.</p>
 
           <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Rendu</div>
           <Field label="Couleur de l'argile"><div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="color" value={clayColor} onChange={(e) => setClayColor(e.target.value)} style={{ width: 40, height: 30, border: 'none', background: 'none', cursor: 'pointer' }} /><div style={{ display: 'flex', gap: 5 }}>{['#b5651d', '#c8794a', '#8a5a3c', '#d9c7a3', '#3a3f4a', '#e8e2d6'].map((h) => <button key={h} onClick={() => setClayColor(h)} style={{ width: 22, height: 22, borderRadius: 5, background: h, border: '1px solid rgba(255,255,255,0.25)', cursor: 'pointer' }} />)}</div></div></Field>
