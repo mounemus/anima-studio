@@ -54,21 +54,66 @@ const TOOLS: { kind: Tool; label: string; hint: string }[] = [
   { kind: 'trim', label: '🔪 Trancher', hint: 'Coupe l\'argile au-dessus de la main (araser le bord).' },
 ]
 
-/** Surface-of-revolution mesh from the outer/inner radial profiles. Outer wall + inner
- *  wall (bore) + base disc + bore-bottom cap + rim (annulus or apex). Double-sided.
- *  `flutes`/`depth` add n vertical flutes/godrons (angular cosine modulation of the wall). */
-export function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: number, flutes = 0, depth = 0): THREE.BufferGeometry {
+export type DecorType = 'none' | 'flutes' | 'facets' | 'martele' | 'strie'
+export const DECORS: { type: DecorType; label: string }[] = [
+  { type: 'none', label: 'Lisse' }, { type: 'flutes', label: 'Cannelures' }, { type: 'facets', label: 'Facettes' },
+  { type: 'martele', label: 'Martelé' }, { type: 'strie', label: 'Strié' },
+]
+export interface Deco { type: DecorType; count: number; depth: number; foot: number; spout: number; handles: number; handleSize: number }
+export const DECO0: Deco = { type: 'none', count: 8, depth: 0.06, foot: 0, spout: 0, handles: 0, handleSize: 0.5 }
+const hash2 = (a: number, b: number) => { let h = (a * 374761393 + b * 668265263) >>> 0; h = ((h ^ (h >> 13)) * 1274126177) >>> 0; return (h >>> 0) / 4294967296 }
+
+/** Radius factor at (angle a, ring i) from the surface décor + foot + spout. */
+function wallFactor(a: number, i: number, top: number, d: Deco): number {
+  let f = 1
+  const t = top > 0 ? i / top : 0
+  if (d.depth > 0.001 && d.count >= 2) {
+    if (d.type === 'flutes') f *= 1 + d.depth * Math.cos(d.count * a)
+    else if (d.type === 'facets') { const seg = (Math.PI * 2) / d.count, aa = (((a % seg) + seg) % seg) - seg / 2; f *= 1 - d.depth + d.depth * (Math.cos(Math.PI / d.count) / Math.cos(aa)) }
+    else if (d.type === 'strie') f *= 1 + d.depth * 0.6 * Math.sin(t * d.count * Math.PI * 2)
+    else if (d.type === 'martele') f *= 1 + d.depth * (hash2(Math.floor((a / (Math.PI * 2)) * d.count * 2), Math.floor(t * d.count * 2)) - 0.5) * 1.4
+  }
+  if (d.foot > 0.001 && t < 0.14) f *= 1 - d.foot * 0.45 * Math.sin((t / 0.14) * Math.PI)   // recess above base → foot ring
+  if (d.spout > 0.001 && t > 0.78) f *= 1 + d.spout * 0.55 * Math.pow(Math.max(0, Math.cos(a)), 6) * ((t - 0.78) / 0.22)   // pour lip sector
+  return f
+}
+const rimLift = (a: number, i: number, top: number, d: Deco): number => (d.spout > 0.001 && top > 0 && i / top > 0.9 ? d.spout * 0.16 * Math.pow(Math.max(0, Math.cos(a)), 6) * ((i / top - 0.9) / 0.1) : 0)
+
+/** Curved tube handles (anses) bowing out from the outer wall, `n` evenly around. */
+function appendHandles(pos: number[], idx: number[], rOut: Float32Array, top: number, d: Deco) {
+  const n = Math.round(d.handles); if (n < 1 || top < 8) return
+  const TUBE = 8, ARC = 16, tubeR = 0.028 + d.handleSize * 0.045, bow = 0.26 + d.handleSize * 0.4
+  const iUp = Math.round(top * 0.72), iLo = Math.round(top * 0.4)
+  const yUp = Y0 + iUp * DY, yLo = Y0 + iLo * DY
+  for (let h = 0; h < n; h++) {
+    const ang = (h / n) * Math.PI * 2, ca = Math.cos(ang), sa = Math.sin(ang)
+    const p0 = new THREE.Vector3(ca * rOut[iUp], yUp, sa * rOut[iUp]), p3 = new THREE.Vector3(ca * rOut[iLo], yLo, sa * rOut[iLo])
+    const rMid = Math.max(rOut[iUp], rOut[iLo]) + bow, mid = new THREE.Vector3(ca * rMid, (yUp + yLo) / 2, sa * rMid)
+    const centers: THREE.Vector3[] = []
+    for (let s = 0; s <= ARC; s++) { const u = s / ARC; centers.push(p0.clone().lerp(mid, u).lerp(mid.clone().lerp(p3, u), u)) }
+    const base = pos.length / 3
+    for (let s = 0; s <= ARC; s++) {
+      const c = centers[s], tan = centers[Math.min(ARC, s + 1)].clone().sub(centers[Math.max(0, s - 1)]).normalize()
+      const up = Math.abs(tan.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)
+      const nrm = new THREE.Vector3().crossVectors(tan, up).normalize(), bnm = new THREE.Vector3().crossVectors(tan, nrm).normalize()
+      for (let k = 0; k < TUBE; k++) { const th = (k / TUBE) * Math.PI * 2, ox = nrm.x * Math.cos(th) * tubeR + bnm.x * Math.sin(th) * tubeR, oy = nrm.y * Math.cos(th) * tubeR + bnm.y * Math.sin(th) * tubeR, oz = nrm.z * Math.cos(th) * tubeR + bnm.z * Math.sin(th) * tubeR; pos.push(c.x + ox, c.y + oy, c.z + oz) }
+    }
+    for (let s = 0; s < ARC; s++) for (let k = 0; k < TUBE; k++) { const kn = (k + 1) % TUBE, a0 = base + s * TUBE + k, b0 = base + s * TUBE + kn, c0 = base + (s + 1) * TUBE + k, d0 = base + (s + 1) * TUBE + kn; idx.push(a0, c0, b0, b0, c0, d0) }
+  }
+}
+
+/** Surface-of-revolution mesh from the outer/inner radial profiles + décor (texture,
+ *  foot, spout, handles). Outer wall + inner wall + base + rim. Double-sided. */
+export function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: number, deco: Deco = DECO0): THREE.BufferGeometry {
   const pos: number[] = [], idx: number[] = []
-  const fl = flutes >= 2 && depth > 0.001
-  const mod = (a: number) => (fl ? 1 + depth * Math.cos(flutes * a) : 1)   // ripple factor
   const outerBase: number[] = [], innerBase: number[] = [], hasInner: boolean[] = []
   for (let i = 0; i <= top; i++) {
     const y = Y0 + i * DY
     outerBase[i] = pos.length / 3
-    for (let j = 0; j < NS; j++) { const a = (j / NS) * Math.PI * 2, r = rOut[i] * mod(a); pos.push(Math.cos(a) * r, y, Math.sin(a) * r) }
+    for (let j = 0; j < NS; j++) { const a = (j / NS) * Math.PI * 2, r = rOut[i] * wallFactor(a, i, top, deco); pos.push(Math.cos(a) * r, y + rimLift(a, i, top, deco), Math.sin(a) * r) }
     const inner = rIn[i] > EPS
     hasInner[i] = inner
-    if (inner) { innerBase[i] = pos.length / 3; for (let j = 0; j < NS; j++) { const a = (j / NS) * Math.PI * 2, r = rIn[i] * mod(a); pos.push(Math.cos(a) * r, y, Math.sin(a) * r) } }
+    if (inner) { innerBase[i] = pos.length / 3; for (let j = 0; j < NS; j++) { const a = (j / NS) * Math.PI * 2, r = rIn[i] * wallFactor(a, i, top, deco); pos.push(Math.cos(a) * r, y + rimLift(a, i, top, deco), Math.sin(a) * r) } }
     else innerBase[i] = -1
   }
   // outer wall
@@ -86,6 +131,7 @@ export function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: num
     if (hasInner[top]) { for (let j = 0; j < NS; j++) { const jn = (j + 1) % NS; const o = outerBase[top] + j, on = outerBase[top] + jn, ii = innerBase[top] + j, in2 = innerBase[top] + jn; idx.push(o, ii, on, on, ii, in2) } }
     else { const cy2 = pos.length / 3; pos.push(0, Y0 + top * DY, 0); for (let j = 0; j < NS; j++) { const jn = (j + 1) % NS; idx.push(cy2, outerBase[top] + j, outerBase[top] + jn) } }
   } else { const cy2 = pos.length / 3; pos.push(0, Y0 + top * DY, 0); for (let j = 0; j < NS; j++) { const jn = (j + 1) % NS; idx.push(cy2, outerBase[top] + jn, outerBase[top] + j) } }
+  appendHandles(pos, idx, rOut, top, deco)
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals()
   return g
@@ -139,8 +185,13 @@ export function PotteryStudio() {
   const [tool, setTool] = useState<Tool>('pull')
   const [strength, setStrength] = useState(0.6)
   const [firmness, setFirmness] = useState(0.5)
-  const [flutes, setFlutes] = useState(0)          // n vertical flutes / godrons (0 = off)
+  const [decorType, setDecorType] = useState<DecorType>('none')   // surface texture
+  const [flutes, setFlutes] = useState(8)          // décor count (flutes / facets / density)
   const [fluteDepth, setFluteDepth] = useState(0.06)
+  const [foot, setFoot] = useState(0)              // pied tourné (0 = off)
+  const [spout, setSpout] = useState(0)            // bec verseur (0 = off)
+  const [handles, setHandles] = useState(0)        // anses (0-3)
+  const [handleSize, setHandleSize] = useState(0.5)
   const [clayColor, setClayColor] = useState('#b5651d')
   const [wireframe, setWireframe] = useState(false)
   const [showGuides, setShowGuides] = useState(true)
@@ -152,8 +203,8 @@ export function PotteryStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, flutes, fluteDepth, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode })
-  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, flutes, fluteDepth, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode }
+  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode })
+  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode }
   const resetRef = useRef(false)         // reset to a fresh lump
   const startRef = useRef<StartShape | null>(null)   // apply a starting shape
   const trueRef = useRef(false)          // "régulariser" : strongly true-up the profile
@@ -332,9 +383,10 @@ export function PotteryStudio() {
       }
     }
 
+    const decoFrom = (p: typeof paramsRef.current): Deco => ({ type: p.decorType, count: Math.round(p.flutes), depth: p.fluteDepth, foot: p.foot, spout: p.spout, handles: Math.round(p.handles), handleSize: p.handleSize })
     const doExport = (fmt: 'stl' | 'glb') => {
       const pp = paramsRef.current
-      const geo = buildPotGeometry(rOut, rIn, top, Math.round(pp.flutes), pp.fluteDepth)
+      const geo = buildPotGeometry(rOut, rIn, top, decoFrom(pp))
       if (fmt === 'stl') {
         const stl = new STLExporter().parse(new THREE.Mesh(geo, new THREE.MeshStandardMaterial()), { binary: false })
         downloadBlob(new Blob([stl], { type: 'model/stl' }), `poterie-${Date.now()}.stl`); setStatus('Export STL (vase étanche imprimable).')
@@ -419,8 +471,8 @@ export function PotteryStudio() {
 
       relaxAndConstrain(p, dt)
 
-      // Rebuild the clay mesh from the profiles (+ live flutes / godrons).
-      const geo = buildPotGeometry(rOut, rIn, top, Math.round(p.flutes), p.fluteDepth); clayMesh.geometry.dispose(); clayMesh.geometry = geo
+      // Rebuild the clay mesh from the profiles (+ live décor : texture, foot, spout, handles).
+      const geo = buildPotGeometry(rOut, rIn, top, decoFrom(p)); clayMesh.geometry.dispose(); clayMesh.geometry = geo
 
       wheelAngle += p.wheelSpeed * dt * 2.2; spin.rotation.y = wheelAngle
       applyCam(); renderer.render(scene, camera)
@@ -559,9 +611,16 @@ export function PotteryStudio() {
           <Field label={`Lissage (eau) — ${Math.round(smoothing * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={smoothing} onChange={(e) => setSmoothing(+e.target.value)} style={rngStyle} /></Field>
           <label style={chkRow} title="L'argile est incompressible : affiner la paroi la fait monter (comme au tournage réel)."><input type="checkbox" checked={conserve} onChange={(e) => setConserve(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> 🧱 Conservation du volume (monte les parois)</label>
 
-          <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Décoration — cannelures / godrons</div>
-          <Field label={`Cannelures — ${flutes === 0 ? 'aucune' : flutes + ' plis'}`}><input type="range" min={0} max={24} step={1} value={flutes} onChange={(e) => setFlutes(+e.target.value)} style={rngStyle} /></Field>
-          {flutes >= 2 && <Field label={`Profondeur — ${Math.round(fluteDepth * 100)}%`}><input type="range" min={0.01} max={0.2} step={0.01} value={fluteDepth} onChange={(e) => setFluteDepth(+e.target.value)} style={rngStyle} /></Field>}
+          <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Décor & forme</div>
+          <Field label="Texture de surface"><select value={decorType} onChange={(e) => setDecorType(e.target.value as DecorType)} style={selStyle}>{DECORS.map((d) => <option key={d.type} value={d.type}>{d.label}</option>)}</select></Field>
+          {decorType !== 'none' && <>
+            <Field label={`Motifs — ${flutes}`}><input type="range" min={2} max={24} step={1} value={flutes} onChange={(e) => setFlutes(+e.target.value)} style={rngStyle} /></Field>
+            <Field label={`Profondeur — ${Math.round(fluteDepth * 100)}%`}><input type="range" min={0.01} max={0.2} step={0.01} value={fluteDepth} onChange={(e) => setFluteDepth(+e.target.value)} style={rngStyle} /></Field>
+          </>}
+          <Field label={`🦶 Pied tourné — ${foot === 0 ? 'aucun' : Math.round(foot * 100) + '%'}`}><input type="range" min={0} max={1} step={0.05} value={foot} onChange={(e) => setFoot(+e.target.value)} style={rngStyle} /></Field>
+          <Field label={`🫗 Bec verseur — ${spout === 0 ? 'aucun' : Math.round(spout * 100) + '%'}`}><input type="range" min={0} max={1} step={0.05} value={spout} onChange={(e) => setSpout(+e.target.value)} style={rngStyle} /></Field>
+          <Field label={`🫧 Anses — ${handles === 0 ? 'aucune' : handles}`}><input type="range" min={0} max={3} step={1} value={handles} onChange={(e) => setHandles(+e.target.value)} style={rngStyle} /></Field>
+          {handles >= 1 && <Field label={`Taille des anses — ${Math.round(handleSize * 100)}%`}><input type="range" min={0.2} max={1} step={0.05} value={handleSize} onChange={(e) => setHandleSize(+e.target.value)} style={rngStyle} /></Field>}
 
           <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Rendu</div>
           <Field label="Couleur de l'argile"><div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="color" value={clayColor} onChange={(e) => setClayColor(e.target.value)} style={{ width: 40, height: 30, border: 'none', background: 'none', cursor: 'pointer' }} /><div style={{ display: 'flex', gap: 5 }}>{['#b5651d', '#c8794a', '#8a5a3c', '#d9c7a3', '#3a3f4a', '#e8e2d6'].map((h) => <button key={h} onClick={() => setClayColor(h)} style={{ width: 22, height: 22, borderRadius: 5, background: h, border: '1px solid rgba(255,255,255,0.25)', cursor: 'pointer' }} />)}</div></div></Field>
