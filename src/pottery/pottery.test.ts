@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { fillHoles } from '../morpho/mesh'
-import { startProfile, buildPotGeometry, makeGlaze, makeRakuFired, bakeRakuTexture, rakuSample, START_SHAPES, DECORS, GLAZES, DECO0, NR, DY, VOL_K, type Deco } from './PotteryStudio'
+import { startProfile, buildPotGeometry, makeGlaze, makeRakuFired, bakeRakuTexture, rakuSample, crackSamplerFromLum, START_SHAPES, DECORS, GLAZES, DECO0, NR, DY, VOL_K, type Deco } from './PotteryStudio'
 
 const volumeOf = (rOut: Float32Array, rIn: Float32Array, top: number) => {
   let v = 0; for (let i = 0; i <= top; i++) v += Math.PI * Math.max(0, rOut[i] * rOut[i] - rIn[i] * rIn[i]) * DY; return v
@@ -113,6 +113,24 @@ describe('pottery firing & glaze', () => {
     expect(dark.getAttribute('uv').count).toBe(dark.getAttribute('position').count)
     expect(meanRad(dark), 'grooves not carved').toBeLessThan(meanRad(none) - 0.005)
     expect(dark.getAttribute('position').count, 'relief not finer than smooth').toBeGreaterThan(smooth.getAttribute('position').count)
+  })
+  it('crackSamplerFromLum grooves the FISSURE LINES only — on light AND dark glazes', () => {
+    const N = 64
+    for (const base of [0.82, 0.18]) {   // light craze (dark lines) and dark craze (light lines)
+      const L = new Float32Array(N * N).fill(base)
+      for (let y = 0; y < N; y++) L[y * N + 32] = base > 0.5 ? 0.12 : 0.9   // one thin vertical fissure at x=32
+      const crack = crackSamplerFromLum(L, N)
+      const onLine = crack(32 / (N - 1), 0.5), offLine = crack(8 / (N - 1), 0.5)
+      expect(onLine, `base ${base}: fissure not detected`).toBeGreaterThan(0.35)
+      expect(offLine, `base ${base}: flat cell falsely grooved`).toBeLessThan(0.15)
+    }
+  })
+  it('a crack sampler carves porous grooves into the mesh (crack=1 deep, crack=0 smooth)', () => {
+    const rOut = new Float32Array(NR), rIn = new Float32Array(NR); const top = startProfile('vase', 1, rOut, rIn)
+    const maxRad = (g: THREE.BufferGeometry) => { const p = g.getAttribute('position').array as ArrayLike<number>; let m = 0; for (let i = 0; i < p.length; i += 3) { const r = Math.hypot(p[i], p[i + 2]); if (r > m) m = r } return m }
+    const grooved = buildPotGeometry(rOut, rIn, top, DECO0, { depth: 0.03, crack: () => 1 }, 200)   // whole outer wall recessed by depth
+    const smooth = buildPotGeometry(rOut, rIn, top, DECO0, { depth: 0.03, crack: () => 0 }, 200)
+    expect(maxRad(grooved), 'crack=1 did not carve the outer wall').toBeLessThan(maxRad(smooth) - 0.02)
   })
   it('rakuSample forms a crack network (varied, not flat) + has micro/speck fields', () => {
     const a = rakuSample(0.5, 0.3, 0.8, 7)

@@ -105,7 +105,21 @@ function appendHandles(pos: number[], idx: number[], rOut: Float32Array, top: nu
   }
 }
 
-export interface Relief { depth: number; lum?: (u: number, v: number) => number }
+export interface Relief { depth: number; lum?: (u: number, v: number) => number; crack?: (u: number, v: number) => number }
+
+/** From an N×N luminance map, detect the CRACK LINES by local contrast (a texel that stands
+ *  out — darker OR lighter — from its blurred neighborhood is a thin fissure, not a cell face).
+ *  Returns a UV sampler in [0,1] : ~1 on a crack, 0 on a smooth cell. Works on light glazes
+ *  (dark craze) and dark glazes (light craze) alike, so grooves fall only on the fissures. */
+export function crackSamplerFromLum(L: Float32Array, N: number, radius = 3, floor = 0.03, range = 0.11): (u: number, v: number) => number {
+  const tmp = new Float32Array(N * N), blur = new Float32Array(N * N)
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { let s = 0, n = 0; for (let dx = -radius; dx <= radius; dx++) { const xx = x + dx; if (xx < 0 || xx >= N) continue; s += L[y * N + xx]; n++ } tmp[y * N + x] = s / n }
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { let s = 0, n = 0; for (let dy = -radius; dy <= radius; dy++) { const yy = y + dy; if (yy < 0 || yy >= N) continue; s += tmp[yy * N + x]; n++ } blur[y * N + x] = s / n }
+  const C = new Float32Array(N * N)
+  for (let i = 0; i < N * N; i++) C[i] = clamp01((Math.abs(blur[i] - L[i]) - floor) / range)   // sharp local deviation = fissure
+  return (u: number, v: number) => { const px = Math.min(N - 1, Math.max(0, Math.floor(((u % 1 + 1) % 1) * (N - 1)))), py = Math.min(N - 1, Math.max(0, Math.floor(clamp01(1 - v) * (N - 1)))); return C[py * N + px] }
+}
+const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x)
 
 /** Surface-of-revolution mesh from the outer/inner radial profiles + décor (texture, foot,
  *  spout, handles). With `relief` (fired Raku) the crackle is CARVED into the geometry
@@ -116,7 +130,13 @@ export function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: num
   const outerBase: number[] = [], innerBase: number[] = [], hasInner: boolean[] = []
   // Carve a shallow groove where the AI crackle texture is DARK (the crack lines), sampled at
   // the vertex's UV → the relief lines up exactly with the visible craquelé. Smooth elsewhere.
-  const crackAt = (a: number, i: number) => { if (!relief || !relief.lum) return 0; const uu = Math.atan2(Math.sin(a), Math.cos(a)) / (Math.PI * 2) + 0.5; const vv = (Y0 + i * DY - Y0) / HMAX; const cr = clamp(0, 1, (0.5 - relief.lum(uu, vv)) / 0.34); return relief.depth * cr }
+  const crackAt = (a: number, i: number) => {
+    if (!relief) return 0
+    const uu = Math.atan2(Math.sin(a), Math.cos(a)) / (Math.PI * 2) + 0.5, vv = (Y0 + i * DY - Y0) / HMAX
+    if (relief.crack) return relief.depth * clamp(0, 1, relief.crack(uu, vv))   // crack-line map : grooves ONLY on the fissures (porous)
+    if (relief.lum) return relief.depth * clamp(0, 1, (0.5 - relief.lum(uu, vv)) / 0.34)   // fallback : darkness-proportional
+    return 0
+  }
   for (let i = 0; i <= top; i++) {
     const y = Y0 + i * DY
     outerBase[i] = pos.length / 3
@@ -313,6 +333,7 @@ export function PotteryStudio() {
   const [lustre, setLustre] = useState(0.7)        // raku : lustre métallique irisé
   const [rakuVariant, setRakuVariant] = useState(-1)   // -1 = aléatoire, sinon index de RAKU_VARIANTS
   const [crackRelief, setCrackRelief] = useState(false)   // graver le craquelé en relief (OFF = maillage lisse & fidèle)
+  const [reliefDepth, setReliefDepth] = useState(0.022)   // profondeur des pores/fissures gravées (unités monde ; ~1u = 10 cm)
   const [rakuSeed, setRakuSeed] = useState(1)      // re-roll on each "cuire" → aléatoire
   const [clayColor, setClayColor] = useState('#b5651d')
   const [wireframe, setWireframe] = useState(false)
@@ -326,8 +347,8 @@ export function PotteryStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, crackRelief, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode, paused })
-  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, crackRelief, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode, paused }
+  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, crackRelief, reliefDepth, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode, paused })
+  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuVariant, crackRelief, reliefDepth, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode, paused }
   const resetRef = useRef(false)         // reset to a fresh lump
   const startRef = useRef<StartShape | null>(null)   // apply a starting shape
   const trueRef = useRef(false)          // "régulariser" : strongly true-up the profile
@@ -370,7 +391,8 @@ export function PotteryStudio() {
     const texLoader = new THREE.TextureLoader()
     const rakuTex = RAKU_URLS.map((u) => { const t = texLoader.load(u); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.anisotropy = 8; return t })
     const rakuLum: (((u: number, v: number) => number) | null)[] = RAKU_URLS.map(() => null)
-    RAKU_URLS.forEach((u, k) => { const im = new Image(); im.onload = () => { const cc = document.createElement('canvas'); cc.width = 256; cc.height = 256; const cx = cc.getContext('2d'); if (!cx) return; cx.drawImage(im, 0, 0, 256, 256); const dd = cx.getImageData(0, 0, 256, 256).data; rakuLum[k] = (uu, vv) => { const px = Math.floor(((uu % 1 + 1) % 1) * 255), py = Math.floor(clamp(0, 1, 1 - vv) * 255), i = (py * 256 + px) * 4; return (dd[i] + dd[i + 1] + dd[i + 2]) / 765 }; reliefDirty = true }; im.src = u })
+    const rakuCrack: (((u: number, v: number) => number) | null)[] = RAKU_URLS.map(() => null)
+    RAKU_URLS.forEach((u, k) => { const im = new Image(); im.onload = () => { const N = 256; const cc = document.createElement('canvas'); cc.width = N; cc.height = N; const cx = cc.getContext('2d'); if (!cx) return; cx.drawImage(im, 0, 0, N, N); const dd = cx.getImageData(0, 0, N, N).data; rakuLum[k] = (uu, vv) => { const px = Math.floor(((uu % 1 + 1) % 1) * 255), py = Math.floor(clamp(0, 1, 1 - vv) * 255), i = (py * 256 + px) * 4; return (dd[i] + dd[i + 1] + dd[i + 2]) / 765 }; const L = new Float32Array(N * N); for (let i = 0; i < N * N; i++) L[i] = (dd[i * 4] + dd[i * 4 + 1] + dd[i * 4 + 2]) / 765; rakuCrack[k] = crackSamplerFromLum(L, N); reliefDirty = true }; im.src = u })
     const rakuPick = (seed: number) => { const v = paramsRef.current.rakuVariant; return v >= 0 && v < rakuTex.length ? v : Math.abs(Math.round(seed)) % rakuTex.length }
 
     // ── Clay state (radial profiles) ──
@@ -537,7 +559,8 @@ export function PotteryStudio() {
     const doExport = (fmt: 'stl' | 'glb') => {
       const pp = paramsRef.current
       const rakuOn = pp.glaze === 'raku'
-      const relief = rakuOn && pp.crackRelief ? { depth: 0.008, lum: rakuLum[rakuPick(pp.rakuSeed)] ?? undefined } : undefined
+      const epk = rakuPick(pp.rakuSeed)
+      const relief = rakuOn && pp.crackRelief ? { depth: pp.reliefDepth, crack: rakuCrack[epk] ?? undefined, lum: rakuLum[epk] ?? undefined } : undefined
       const raw = buildPotGeometry(rOut, rIn, top, decoFrom(pp), relief, relief ? 340 : NS)
       if (fmt === 'stl') {
         const geo = finalize(raw, false)
@@ -588,7 +611,7 @@ export function PotteryStudio() {
 
       // Glaze / firing material. When a raku pot is FIRED we use the vertex-colour material on
       // the relief mesh ; otherwise the flat glaze material (rebuilt only on glaze/colour/seed).
-      const gsig = `${p.glaze}|${p.clayColor}|${p.rakuSeed}|${p.rakuVariant}|${p.crackRelief}|${fired}`
+      const gsig = `${p.glaze}|${p.clayColor}|${p.rakuSeed}|${p.rakuVariant}|${p.crackRelief}|${p.reliefDepth}|${fired}`
       if (gsig !== lastGlazeSig) {
         lastGlazeSig = gsig; reliefDirty = true; clayMesh.material.dispose()
         clayMesh.material = (p.glaze === 'raku' && fired) ? makeRakuFired({ crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, rakuTex[rakuPick(p.rakuSeed)]) : makeGlaze(p.glaze, p.clayColor, { crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, p.rakuSeed, 256)
@@ -643,7 +666,7 @@ export function PotteryStudio() {
       // Mesh : fired raku → cached RELIEF mesh (cracks carved in geometry + vertex colours) ;
       // otherwise the smooth live clay, rebuilt each frame from the profiles.
       if (p.glaze === 'raku' && fired && p.crackRelief) {
-        if (reliefDirty || !reliefGeo) { reliefGeo?.dispose(); reliefGeo = buildPotGeometry(rOut, rIn, top, decoFrom(p), { depth: 0.008, lum: rakuLum[rakuPick(p.rakuSeed)] ?? undefined }, 260); reliefDirty = false }
+        if (reliefDirty || !reliefGeo) { reliefGeo?.dispose(); const pk = rakuPick(p.rakuSeed); reliefGeo = buildPotGeometry(rOut, rIn, top, decoFrom(p), { depth: p.reliefDepth, crack: rakuCrack[pk] ?? undefined, lum: rakuLum[pk] ?? undefined }, 300); reliefDirty = false }
         if (clayMesh.geometry !== reliefGeo) { const old = clayMesh.geometry; clayMesh.geometry = reliefGeo; if (old !== reliefGeo) old.dispose() }
       } else {
         const geo = buildPotGeometry(rOut, rIn, top, decoFrom(p)); const old = clayMesh.geometry; clayMesh.geometry = geo; if (old !== reliefGeo) old.dispose()
@@ -805,7 +828,8 @@ export function PotteryStudio() {
           {glaze === 'raku' && <>
             <Field label="Variante de craquelé"><select value={rakuVariant} onChange={(e) => { setRakuVariant(+e.target.value); fireRef.current = true }} style={selStyle}><option value={-1}>🎲 Aléatoire (change à chaque cuisson)</option>{RAKU_VARIANTS.map((v, i) => <option key={v.id} value={i}>{v.label}</option>)}</select></Field>
             <Field label={`Lustre métallique irisé — ${Math.round(lustre * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={lustre} onChange={(e) => setLustre(+e.target.value)} style={rngStyle} /></Field>
-            <label style={chkRow} title="Grave de fines rainures de craquelé dans la géométrie. Désactivé = maillage lisse et fidèle à la forme (recommandé pour l'impression)."><input type="checkbox" checked={crackRelief} onChange={(e) => { setCrackRelief(e.target.checked); fireRef.current = true }} style={{ accentColor: '#ffb47a' }} /> ⛰ Graver le craquelé en relief (sinon lisse)</label>
+            <label style={chkRow} title="Grave les LIGNES de fissure dans la géométrie (craquelé poreux dans le mesh, exporté STL/GLB). Désactivé = maillage lisse et fidèle à la forme."><input type="checkbox" checked={crackRelief} onChange={(e) => { setCrackRelief(e.target.checked); fireRef.current = true }} style={{ accentColor: '#ffb47a' }} /> ⛰ Graver le craquelé poreux dans le mesh</label>
+            {crackRelief && <Field label={`Profondeur des pores/fissures — ${(reliefDepth * 106).toFixed(1)} mm`}><input type="range" min={0.004} max={0.05} step={0.002} value={reliefDepth} onChange={(e) => { setReliefDepth(+e.target.value); fireRef.current = true }} style={rngStyle} /></Field>}
             <button onClick={() => { fireRef.current = true; setRakuSeed(Math.floor(Math.random() * 99999) + 1) }} style={{ ...selStyle, marginTop: 6, marginBottom: 8, background: 'rgba(255,120,40,0.22)', borderColor: 'rgba(255,120,40,0.55)' }} title="Cuit le raku : applique la texture choisie (et le relief si activé).">🔥 Enfourner — cuire le Raku</button>
           </>}
           <p style={{ color: '#9a8a78', fontSize: 10, margin: '0 0 4px', lineHeight: 1.35 }}>Raku : véritable <b>texture de craquelé photoréaliste</b> (générée par IA). <b>Enfourner</b> applique la texture <b>et</b> grave les fissures dans le maillage (relief aligné, exporté STL/GLB) ; chaque cuisson pioche une variante. Le curseur <b>Lustre</b> règle l'irisation.</p>
