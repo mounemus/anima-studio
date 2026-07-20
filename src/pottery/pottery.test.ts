@@ -67,26 +67,26 @@ describe('pottery firing & glaze', () => {
       expect(m.side).toBeDefined()
     })
   }
-  it('raku raw preview material + fired textured material', () => {
+  it('raku raw preview material + fired AI-texture material', () => {
     const raw = makeGlaze('raku', '#c8794a', { crackle: 0.7, carbon: 0.6, lustre: 0.8 }, 7) as THREE.MeshPhysicalMaterial
     expect(raw.userData.raku).toBe(true)
-    const fired = makeRakuFired({ crackle: 0.7, carbon: 0.6, lustre: 0.8 }, '#c8794a', 7, 256) as THREE.MeshPhysicalMaterial
+    const fired = makeRakuFired({ crackle: 0.7, carbon: 0.6, lustre: 0.8 }, null) as THREE.MeshPhysicalMaterial
     expect(fired).toBeInstanceOf(THREE.MeshPhysicalMaterial)
     expect(fired.userData.rakuFired).toBe(true)
     expect(fired.iridescence).toBeGreaterThan(0)
     expect(() => bakeRakuTexture('#c8794a', { crackle: 0.7, carbon: 0.6, lustre: 0.8 }, 7)).not.toThrow()
   })
-  it('geometry carries UVs; relief carves crack grooves INTO the mesh (finer, no vertex colours)', () => {
+  it('geometry carries UVs; relief carves crack grooves where the texture is dark (aligned)', () => {
     const { rOut, rIn, top } = profile('vase')
     const smooth = buildPotGeometry(rOut, rIn, top, { ...DECO0, handles: 2 })
     expect(smooth.getAttribute('uv').count).toBe(smooth.getAttribute('position').count)
-    const relief = buildPotGeometry(rOut, rIn, top, DECO0, { depth: 0.03, seed: 7, o: { crackle: 1, carbon: 0.6, lustre: 0.8 }, color: '#c8794a' }, 200)
-    expect(relief.getAttribute('color'), 'colour comes from the texture, not vertices').toBeFalsy()
-    expect(relief.getAttribute('uv').count).toBe(relief.getAttribute('position').count)
-    // grooves : the relief outer-wall radii should dip below the smooth radii somewhere
-    const rad = (g: THREE.BufferGeometry) => { const p = g.getAttribute('position').array as ArrayLike<number>; let mn = 9; for (let i = 0; i < p.length; i += 3) { const r = Math.hypot(p[i], p[i + 2]); if (r > 0.05) mn = Math.min(mn, r) } return mn }
-    expect(rad(relief), 'no grooves carved').toBeLessThan(rad(smooth) + 1e-4)
-    expect(relief.getAttribute('position').count, 'relief not finer than smooth').toBeGreaterThan(smooth.getAttribute('position').count)
+    const meanRad = (g: THREE.BufferGeometry) => { const p = g.getAttribute('position').array as ArrayLike<number>; let s = 0, n = 0; for (let i = 0; i < p.length; i += 3) { const r = Math.hypot(p[i], p[i + 2]); if (r > 0.05) { s += r; n++ } } return s / n }
+    // all-dark sampler → grooves carved on the whole outer wall → mean radius drops
+    const dark = buildPotGeometry(rOut, rIn, top, DECO0, { depth: 0.03, lum: () => 0 }, 200)
+    const none = buildPotGeometry(rOut, rIn, top, DECO0, { depth: 0.03 }, 200)   // no sampler → no grooves
+    expect(dark.getAttribute('uv').count).toBe(dark.getAttribute('position').count)
+    expect(meanRad(dark), 'grooves not carved').toBeLessThan(meanRad(none) - 0.005)
+    expect(dark.getAttribute('position').count, 'relief not finer than smooth').toBeGreaterThan(smooth.getAttribute('position').count)
   })
   it('rakuSample forms a crack network (varied, not flat) + has micro/speck fields', () => {
     const a = rakuSample(0.5, 0.3, 0.8, 7)
