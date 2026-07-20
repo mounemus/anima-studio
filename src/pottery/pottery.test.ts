@@ -2,7 +2,7 @@
  *  spout / handles) are pure math — verify they produce valid, NaN-free meshes off the browser. */
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { startProfile, buildPotGeometry, makeGlaze, START_SHAPES, DECORS, GLAZES, DECO0, NR, DY, VOL_K, type Deco } from './PotteryStudio'
+import { startProfile, buildPotGeometry, makeGlaze, bakeRakuTexture, START_SHAPES, DECORS, GLAZES, DECO0, NR, DY, VOL_K, type Deco } from './PotteryStudio'
 
 const volumeOf = (rOut: Float32Array, rIn: Float32Array, top: number) => {
   let v = 0; for (let i = 0; i <= top; i++) v += Math.PI * Math.max(0, rOut[i] * rOut[i] - rIn[i] * rIn[i]) * DY; return v
@@ -67,13 +67,21 @@ describe('pottery firing & glaze', () => {
       expect(m.side).toBeDefined()
     })
   }
-  it('raku wires the procedural shader + iridescence, seeds are honoured', () => {
+  it('raku is a physical material with iridescence + raku flag; bake never throws', () => {
     const m = makeGlaze('raku', '#c8794a', { crackle: 0.7, carbon: 0.6, lustre: 0.8 }, 7) as THREE.MeshPhysicalMaterial
+    expect(m).toBeInstanceOf(THREE.MeshPhysicalMaterial)
     expect(m.userData.raku).toBe(true)
-    expect(typeof m.onBeforeCompile).toBe('function')
     expect(m.iridescence).toBeGreaterThan(0)
-    // different seeds → different injected uniform (exercise onBeforeCompile without a GL context)
-    const capture = (seed: number) => { const mm = makeGlaze('raku', '#c8794a', { crackle: 0.7, carbon: 0.6, lustre: 0.8 }, seed) as THREE.MeshPhysicalMaterial; const sh: any = { uniforms: {}, vertexShader: '#include <common>\n#include <begin_vertex>', fragmentShader: '#include <common>\n#include <color_fragment>' }; mm.onBeforeCompile!(sh, null as any); return sh.uniforms.uSeed.value }
-    expect(capture(7)).not.toBe(capture(8))
+    // texture bake is null under jsdom (no 2D canvas), but must never throw
+    expect(() => bakeRakuTexture('#c8794a', { crackle: 0.7, carbon: 0.6, lustre: 0.8 }, 7)).not.toThrow()
+  })
+  it('geometry carries UVs (glaze texture mapping + GLB export)', () => {
+    const { rOut, rIn, top } = profile('vase')
+    const g = buildPotGeometry(rOut, rIn, top, { ...DECO0, handles: 2 })
+    const uv = g.getAttribute('uv')
+    expect(uv, 'no uv attribute').toBeTruthy()
+    expect(uv.count).toBe(g.getAttribute('position').count)
+    let nan = 0; const a = uv.array as ArrayLike<number>; for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) nan++
+    expect(nan, 'uv NaN').toBe(0)
   })
 })
