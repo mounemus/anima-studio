@@ -114,7 +114,7 @@ export function buildPotGeometry(rOut: Float32Array, rIn: Float32Array, top: num
   const outerBase: number[] = [], innerBase: number[] = [], hasInner: boolean[] = []
   // Only the MAIN crack lines make a shallow groove ; cubed → thin & crisp, so the surface
   // between cracks stays SMOOTH (real raku crazing, not an eroded/bark surface).
-  const crackAt = (a: number, i: number) => { if (!relief) return 0; const t = (Y0 + i * DY - Y0) / HMAX; const s = rakuSample(Math.cos(a), t * 1.7, Math.sin(a), relief.seed); const cr = clamp(0, 1, s.crack); return relief.depth * cr * cr * cr }
+  const crackAt = (a: number, i: number) => { if (!relief) return 0; const t = (Y0 + i * DY - Y0) / HMAX; const s = rakuSample(Math.cos(a), t * 1.7, Math.sin(a), relief.seed); const cr = clamp(0, 1, s.crack); return relief.depth * cr * cr }
   for (let i = 0; i <= top; i++) {
     const y = Y0 + i * DY
     outerBase[i] = pos.length / 3
@@ -211,30 +211,34 @@ function cellEdge(x: number, y: number, z: number) { const xi = Math.floor(x), y
  *  varying density → non-uniform cells. Adds fine micro-veins and carbon speckles. */
 export function rakuSample(cx: number, cy: number, cz: number, seed: number) {
   const S = (seed % 500) * 0.137 + 1.7
-  const warp = fbm3(cx * 2.2 + S, cy * 2.2 + S, cz * 2.2 + S) * 0.32          // gentle warp → irregular but clean
-  const dens = 0.85 + 0.35 * fbm3(cx * 0.6 + S * 1.3, cy * 0.6 + S * 1.3, cz * 0.6 + S * 1.3)  // mild density variation
-  // Thin CRISP crack lines (small thresholds) on an otherwise smooth glaze → craquelé, not erosion.
-  const scales: [number, number, number][] = [[4.0, 0.018, 1.0], [7.5, 0.013, 0.8], [13, 0.009, 0.55]]
-  let crack = 0
-  for (const [sc, th, amt] of scales) { const e = cellEdge(cx * sc * dens + warp + S, cy * sc * dens + warp + S, cz * sc * dens + warp + S); crack = Math.max(crack, (1 - smooth01(0, th, e)) * amt) }
-  const em = cellEdge(cx * 26 * dens + warp * 1.4 + S * 2, cy * 26 * dens + warp * 1.4 + S * 2, cz * 26 * dens + warp * 1.4 + S * 2)
-  const micro = (1 - smooth01(0, 0.006, em)) * 0.5                            // fine hairline micro-veins (colour only)
-  const carbon = smooth01(0.55, 0.88, fbm3(cx * 1.5 + S * 3, cy * 1.5 + S * 3, cz * 1.5 + S * 3))
-  const cu = smooth01(0.6, 0.92, fbm3(cx * 2.4 + S * 4, cy * 2.4 + S * 4, cz * 2.4 + S * 4))
-  const sp = 42, speck = hi(Math.floor(cx * sp + S), Math.floor(cy * sp + S), Math.floor(cz * sp + S)) > 0.99 ? 1 : 0  // sparse carbon pinholes (colour only)
-  return { crack, micro, carbon, cu, speck }
+  const warp = fbm3(cx * 2.0 + S, cy * 2.0 + S, cz * 2.0 + S) * 0.28          // gentle warp → irregular cells, connected
+  const dens = 0.9 + 0.25 * fbm3(cx * 0.6 + S * 1.3, cy * 0.6 + S * 1.3, cz * 0.6 + S * 1.3)
+  // A real Raku craze = a CONNECTED Voronoï network : a primary web of visible continuous
+  // lines dividing the glaze into cells, + a finer secondary web subdividing them.
+  const e1 = cellEdge(cx * 4.6 * dens + warp + S, cy * 4.6 * dens + warp + S, cz * 4.6 * dens + warp + S)
+  const main = 1 - smooth01(0, 0.07, e1)                                      // wider band → continuous unbroken lines
+  const e2 = cellEdge(cx * 9.8 * dens + warp * 1.2 + S * 2, cy * 9.8 * dens + warp * 1.2 + S * 2, cz * 9.8 * dens + warp * 1.2 + S * 2)
+  const micro = (1 - smooth01(0, 0.045, e2)) * 0.75                           // secondary finer web (also continuous)
+  const crack = Math.max(main, micro)
+  const carbon = smooth01(0.6, 0.92, fbm3(cx * 1.4 + S * 3, cy * 1.4 + S * 3, cz * 1.4 + S * 3))
+  const cu = smooth01(0.64, 0.95, fbm3(cx * 2.2 + S * 4, cy * 2.2 + S * 4, cz * 2.2 + S * 4))
+  const sp = 40, speck = hi(Math.floor(cx * sp + S), Math.floor(cy * sp + S), Math.floor(cz * sp + S)) > 0.996 ? 1 : 0  // very rare iron speck
+  return { crack, main, micro, carbon, cu, speck }
 }
 /** RGB colour for a Raku sample at a unit-radial direction + height fraction t. */
 function rakuColor(nx: number, t: number, nz: number, o: GlazeOpts, seed: number, bR: number, bG: number, bB: number): [number, number, number] {
   const s = rakuSample(nx, t * 1.7, nz, seed)
   const mott = fbm3(nx * 3 + seed, t * 3 + seed, nz * 3 + seed) * 0.03      // very subtle glaze mottling
   let R = bR - mott, G = bG - mott, B = bB - mott * 1.1
-  // Crack lines = thin dark craze ; sharpen so the surface between stays clean/pale.
-  const ck = clamp(0, 1, Math.max(s.crack * s.crack, s.micro * 0.6)) * o.crackle
-  R = lerp(R, 0.12, ck); G = lerp(G, 0.09, ck); B = lerp(B, 0.08, ck)
-  const carbon = s.carbon * o.carbon; R = lerp(R, 0.07, carbon); G = lerp(G, 0.07, carbon); B = lerp(B, 0.075, carbon)
-  const cu = s.cu * o.lustre; R = lerp(R, 0.7, cu * 0.4); G = lerp(G, 0.42, cu * 0.4); B = lerp(B, 0.32, cu * 0.4)
-  if (s.speck) { R = lerp(R, 0.08, 0.8); G = lerp(G, 0.08, 0.8); B = lerp(B, 0.09, 0.8) }
+  // Continuous dark craze lines (dark grey), darker still inside the smoked/carbon zones —
+  // exactly the connected network of real raku, on an otherwise clean pale glaze.
+  const carbon = s.carbon * o.carbon
+  const lineCol = lerp(0.22, 0.04, carbon)                                   // grey lines → black over smoke
+  const ck = clamp(0, 1, s.crack) * o.crackle
+  R = lerp(R, lineCol, ck); G = lerp(G, lineCol, ck); B = lerp(B, lineCol + 0.01, ck)
+  R = lerp(R, 0.16, carbon * 0.5); G = lerp(G, 0.16, carbon * 0.5); B = lerp(B, 0.17, carbon * 0.5)  // soft smoke haze in cells
+  const cu = s.cu * o.lustre; R = lerp(R, 0.68, cu * 0.35); G = lerp(G, 0.42, cu * 0.35); B = lerp(B, 0.33, cu * 0.35)
+  if (s.speck) { R = lerp(R, 0.06, 0.85); G = lerp(G, 0.06, 0.85); B = lerp(B, 0.07, 0.85) }
   return [R, G, B]
 }
 
