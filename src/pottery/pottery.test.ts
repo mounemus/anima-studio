@@ -1,7 +1,8 @@
 /** Pottery : the radial-profile geometry, starting shapes and décor (texture / foot /
  *  spout / handles) are pure math — verify they produce valid, NaN-free meshes off the browser. */
 import { describe, it, expect } from 'vitest'
-import { startProfile, buildPotGeometry, START_SHAPES, DECORS, DECO0, NR, DY, VOL_K, type Deco } from './PotteryStudio'
+import * as THREE from 'three'
+import { startProfile, buildPotGeometry, makeGlaze, START_SHAPES, DECORS, GLAZES, DECO0, NR, DY, VOL_K, type Deco } from './PotteryStudio'
 
 const volumeOf = (rOut: Float32Array, rIn: Float32Array, top: number) => {
   let v = 0; for (let i = 0; i <= top; i++) v += Math.PI * Math.max(0, rOut[i] * rOut[i] - rIn[i] * rIn[i]) * DY; return v
@@ -55,5 +56,24 @@ describe('pottery décor', () => {
     const g = buildPotGeometry(rOut, rIn, top, { ...DECO0, foot: 0.6, spout: 0.6 })
     expect(geomNaN(g)).toBe(0)
     expect(tris(g)).toBeGreaterThan(200)
+  })
+})
+
+describe('pottery firing & glaze', () => {
+  for (const g of GLAZES) {
+    it(`glaze "${g.kind}" builds a material`, () => {
+      const m = makeGlaze(g.kind, '#b5651d', { crackle: 0.6, carbon: 0.5, lustre: 0.7 }, 42)
+      expect(m).toBeInstanceOf(THREE.Material)
+      expect(m.side).toBeDefined()
+    })
+  }
+  it('raku wires the procedural shader + iridescence, seeds are honoured', () => {
+    const m = makeGlaze('raku', '#c8794a', { crackle: 0.7, carbon: 0.6, lustre: 0.8 }, 7) as THREE.MeshPhysicalMaterial
+    expect(m.userData.raku).toBe(true)
+    expect(typeof m.onBeforeCompile).toBe('function')
+    expect(m.iridescence).toBeGreaterThan(0)
+    // different seeds → different injected uniform (exercise onBeforeCompile without a GL context)
+    const capture = (seed: number) => { const mm = makeGlaze('raku', '#c8794a', { crackle: 0.7, carbon: 0.6, lustre: 0.8 }, seed) as THREE.MeshPhysicalMaterial; const sh: any = { uniforms: {}, vertexShader: '#include <common>\n#include <begin_vertex>', fragmentShader: '#include <common>\n#include <color_fragment>' }; mm.onBeforeCompile!(sh, null as any); return sh.uniforms.uSeed.value }
+    expect(capture(7)).not.toBe(capture(8))
   })
 })

@@ -24,6 +24,7 @@ import * as THREE from 'three'
 import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 const GESTURE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
@@ -173,6 +174,61 @@ export function startProfile(kind: StartShape, mass: number, rOut: Float32Array,
   return top
 }
 
+// ── Cuisson & émaillage ────────────────────────────────────────────────────────
+export type Glaze = 'terre' | 'brillant' | 'mat' | 'celadon' | 'metal' | 'raku'
+export const GLAZES: { kind: Glaze; label: string }[] = [
+  { kind: 'terre', label: '🟫 Terre crue' }, { kind: 'brillant', label: '✨ Émail brillant' }, { kind: 'mat', label: '🥚 Émail mat' },
+  { kind: 'celadon', label: '🫧 Céladon' }, { kind: 'metal', label: '🪙 Métallique' }, { kind: 'raku', label: '🔥 Raku' },
+]
+export interface GlazeOpts { crackle: number; carbon: number; lustre: number }
+
+// Procedural Raku : 3D value-noise (fBm) + Worley (F2−F1) crack network, injected into the
+// standard material so the finish is fractal, seed-random and needs no external texture.
+const RAKU_GLSL = `
+vec3 rHash3(vec3 p){ p=vec3(dot(p,vec3(127.1,311.7,74.7)),dot(p,vec3(269.5,183.3,246.1)),dot(p,vec3(113.5,271.9,124.6))); return fract(sin(p)*43758.5453123); }
+float rHash1(vec3 p){ return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453123); }
+float rVN(vec3 x){ vec3 i=floor(x),f=fract(x); f=f*f*(3.0-2.0*f);
+  return mix(mix(mix(rHash1(i+vec3(0,0,0)),rHash1(i+vec3(1,0,0)),f.x),mix(rHash1(i+vec3(0,1,0)),rHash1(i+vec3(1,1,0)),f.x),f.y),
+             mix(mix(rHash1(i+vec3(0,0,1)),rHash1(i+vec3(1,0,1)),f.x),mix(rHash1(i+vec3(0,1,1)),rHash1(i+vec3(1,1,1)),f.x),f.y),f.z); }
+float rFBM(vec3 p){ float a=0.5,s=0.0; for(int i=0;i<5;i++){ s+=a*rVN(p); p*=2.03; a*=0.5; } return s; }
+float rCrack(vec3 p){ vec3 ip=floor(p),fp=fract(p); float f1=9.0,f2=9.0;
+  for(int i=-1;i<=1;i++)for(int j=-1;j<=1;j++)for(int k=-1;k<=1;k++){ vec3 g=vec3(float(i),float(j),float(k)); vec3 o=rHash3(ip+g); vec3 d=g+o-fp; float dd=dot(d,d); if(dd<f1){f2=f1;f1=dd;} else if(dd<f2){f2=dd;} }
+  return sqrt(f2)-sqrt(f1); }
+`
+
+export function makeGlaze(kind: Glaze, color: string, o: GlazeOpts, seed: number): THREE.Material {
+  const c = new THREE.Color(color)
+  if (kind === 'terre') return new THREE.MeshStandardMaterial({ color: c, roughness: 0.9, metalness: 0.02, side: THREE.DoubleSide })
+  if (kind === 'mat') return new THREE.MeshStandardMaterial({ color: c, roughness: 0.96, metalness: 0.0, side: THREE.DoubleSide })
+  if (kind === 'brillant') return new THREE.MeshPhysicalMaterial({ color: c, roughness: 0.12, metalness: 0.0, clearcoat: 0.9, clearcoatRoughness: 0.08, envMapIntensity: 1.1, side: THREE.DoubleSide })
+  if (kind === 'celadon') return new THREE.MeshPhysicalMaterial({ color: new THREE.Color(0x9fd8c8).lerp(c, 0.35), roughness: 0.14, metalness: 0, transmission: 0.34, thickness: 0.6, ior: 1.5, clearcoat: 0.85, clearcoatRoughness: 0.1, envMapIntensity: 1.1, transparent: true, side: THREE.FrontSide })
+  if (kind === 'metal') return new THREE.MeshStandardMaterial({ color: c, roughness: 0.28, metalness: 0.95, envMapIntensity: 1.3, side: THREE.DoubleSide })
+  // ── Raku ──
+  const m = new THREE.MeshPhysicalMaterial({ color: c, roughness: 0.24, metalness: 0.5 + 0.45 * o.lustre, clearcoat: 0.7, clearcoatRoughness: 0.22, envMapIntensity: 1.25, side: THREE.DoubleSide })
+  m.iridescence = clamp(0, 1, o.lustre); m.iridescenceIOR = 1.35; m.iridescenceThicknessRange = [130, 430]
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uSeed = { value: seed % 1000 }; sh.uniforms.uCrack = { value: o.crackle }; sh.uniforms.uCarbon = { value: o.carbon }
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vRakuP;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRakuP = position;')
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vRakuP;\nuniform float uSeed;uniform float uCrack;uniform float uCarbon;\n' + RAKU_GLSL)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          vec3 sp = vRakuP * 6.0 + uSeed;
+          float edge = rCrack(sp * 1.4);
+          float crackLine = (1.0 - smoothstep(0.0, 0.05, edge)) * uCrack;
+          float halo = smoothstep(0.28, 0.0, edge) * 0.35 * uCrack;
+          float carbon = smoothstep(0.5, 0.82, rFBM(vRakuP * 2.2 + uSeed * 1.7)) * uCarbon;
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 0.56, 0.24), halo);   // copper lustre along cracks
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.015), crackLine);          // dark crackle lines
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.02, 0.02, 0.024), carbon); // carbonised smoke patches
+        }`)
+  }
+  m.userData.raku = true
+  return m
+}
+
 export function PotteryStudio() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -192,6 +248,11 @@ export function PotteryStudio() {
   const [spout, setSpout] = useState(0)            // bec verseur (0 = off)
   const [handles, setHandles] = useState(0)        // anses (0-3)
   const [handleSize, setHandleSize] = useState(0.5)
+  const [glaze, setGlaze] = useState<Glaze>('terre')   // cuisson & émaillage
+  const [crackle, setCrackle] = useState(0.6)      // raku : craquelure
+  const [carbon, setCarbon] = useState(0.5)        // raku : enfumage
+  const [lustre, setLustre] = useState(0.7)        // raku : lustre métallique irisé
+  const [rakuSeed, setRakuSeed] = useState(1)      // re-roll on each "cuire" → aléatoire
   const [clayColor, setClayColor] = useState('#b5651d')
   const [wireframe, setWireframe] = useState(false)
   const [showGuides, setShowGuides] = useState(true)
@@ -203,8 +264,8 @@ export function PotteryStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode })
-  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode }
+  const paramsRef = useRef({ wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode })
+  paramsRef.current = { wheelSpeed, clayMass, smoothing, conserve, tool, strength, firmness, decorType, flutes, fluteDepth, foot, spout, handles, handleSize, glaze, crackle, carbon, lustre, rakuSeed, clayColor, wireframe, showGuides, showSkeleton, showMeasure, bgMode }
   const resetRef = useRef(false)         // reset to a fresh lump
   const startRef = useRef<StartShape | null>(null)   // apply a starting shape
   const trueRef = useRef(false)          // "régulariser" : strongly true-up the profile
@@ -226,6 +287,10 @@ export function PotteryStudio() {
     scene.add(new THREE.AmbientLight(0xffffff, 0.6))
     const key = new THREE.DirectionalLight(0xfff2e0, 1.0); key.position.set(1.5, 2.5, 2.2); scene.add(key)
     const fill = new THREE.DirectionalLight(0x88bbff, 0.35); fill.position.set(-2, 0.5, -1); scene.add(fill)
+    // IBL environment — makes émail/métallique/Raku reflections & iridescence read properly.
+    const pmrem = new THREE.PMREMGenerator(renderer); pmrem.compileEquirectangularShader()
+    let envTex: THREE.Texture | null = null
+    try { envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; scene.environment = envTex } catch { /* noop */ }
 
     // Spinning wheel : plate + a notch marker + the clay mesh, all rotating about Y.
     const spin = new THREE.Group(); scene.add(spin)
@@ -233,8 +298,8 @@ export function PotteryStudio() {
     plate.position.y = Y0 - 0.055; spin.add(plate)
     const notch = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, 0.14), new THREE.MeshStandardMaterial({ color: 0x00e0c0, roughness: 0.4 }))
     notch.position.set(0.78, Y0 - 0.03, 0); spin.add(notch)
-    const clayMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(clayColor), roughness: 0.85, metalness: 0.02, side: THREE.DoubleSide })
-    const clayMesh = new THREE.Mesh(new THREE.BufferGeometry(), clayMat); clayMesh.frustumCulled = false; spin.add(clayMesh)
+    const clayMesh = new THREE.Mesh(new THREE.BufferGeometry(), makeGlaze('terre', clayColor, { crackle, carbon, lustre }, 1)); clayMesh.frustumCulled = false; spin.add(clayMesh)
+    let lastGlazeSig = ''
 
     // ── Clay state (radial profiles) ──
     const rOut = new Float32Array(NR), rIn = new Float32Array(NR)
@@ -426,7 +491,11 @@ export function PotteryStudio() {
       if (exportRef.current) { doExport(exportRef.current); exportRef.current = null }
       V0 = VOL_K * p.clayMass    // live target : changing mass adds/removes clay
 
-      clayMat.color.set(p.clayColor); clayMat.wireframe = p.wireframe
+      // Glaze / firing : rebuild the material only when its signature changes (glaze type,
+      // colour, raku params, seed). Each « Cuire » re-rolls the seed → a new random result.
+      const gsig = `${p.glaze}|${p.clayColor}|${p.crackle}|${p.carbon}|${p.lustre}|${p.rakuSeed}`
+      if (gsig !== lastGlazeSig) { lastGlazeSig = gsig; clayMesh.material.dispose(); clayMesh.material = makeGlaze(p.glaze, p.clayColor, { crackle: p.crackle, carbon: p.carbon, lustre: p.lustre }, p.rakuSeed) }
+      ;(clayMesh.material as THREE.Material & { wireframe: boolean }).wireframe = p.wireframe
 
       // Axis guide endpoints (projected — the line can slant when the view is inclined).
       const sBase = proj(0, Y0, 0), sTop = proj(0, Y0 + HMAX, 0)
@@ -551,7 +620,7 @@ export function PotteryStudio() {
       try { landmarker?.close() } catch { /* noop */ }
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
       try { if (recActive && recorder) recorder.stop() } catch { /* noop */ }
-      clayMesh.geometry.dispose(); renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
+      clayMesh.geometry.dispose(); envTex?.dispose(); pmrem.dispose(); renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
     }
   }, [])
 
@@ -621,6 +690,16 @@ export function PotteryStudio() {
           <Field label={`🫗 Bec verseur — ${spout === 0 ? 'aucun' : Math.round(spout * 100) + '%'}`}><input type="range" min={0} max={1} step={0.05} value={spout} onChange={(e) => setSpout(+e.target.value)} style={rngStyle} /></Field>
           <Field label={`🫧 Anses — ${handles === 0 ? 'aucune' : handles}`}><input type="range" min={0} max={3} step={1} value={handles} onChange={(e) => setHandles(+e.target.value)} style={rngStyle} /></Field>
           {handles >= 1 && <Field label={`Taille des anses — ${Math.round(handleSize * 100)}%`}><input type="range" min={0.2} max={1} step={0.05} value={handleSize} onChange={(e) => setHandleSize(+e.target.value)} style={rngStyle} /></Field>}
+
+          <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Cuisson & émaillage</div>
+          <Field label="Émail / finition"><select value={glaze} onChange={(e) => setGlaze(e.target.value as Glaze)} style={selStyle}>{GLAZES.map((g) => <option key={g.kind} value={g.kind}>{g.label}</option>)}</select></Field>
+          {glaze === 'raku' && <>
+            <Field label={`Craquelure — ${Math.round(crackle * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={crackle} onChange={(e) => setCrackle(+e.target.value)} style={rngStyle} /></Field>
+            <Field label={`Enfumage (carbone) — ${Math.round(carbon * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={carbon} onChange={(e) => setCarbon(+e.target.value)} style={rngStyle} /></Field>
+            <Field label={`Lustre métallique irisé — ${Math.round(lustre * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={lustre} onChange={(e) => setLustre(+e.target.value)} style={rngStyle} /></Field>
+            <button onClick={() => setRakuSeed(Math.floor(Math.random() * 99999) + 1)} style={{ ...selStyle, marginBottom: 8, background: 'rgba(255,120,40,0.22)', borderColor: 'rgba(255,120,40,0.55)' }} title="Chaque cuisson Raku donne un craquelage et un enfumage uniques">🔥 Enfourner — nouveau tirage Raku</button>
+          </>}
+          <p style={{ color: '#9a8a78', fontSize: 10, margin: '0 0 4px', lineHeight: 1.35 }}>Le Raku est simulé procéduralement (craquelure Worley fractale + enfumage fBm + lustre irisé) — chaque cuisson est unique.</p>
 
           <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Rendu</div>
           <Field label="Couleur de l'argile"><div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="color" value={clayColor} onChange={(e) => setClayColor(e.target.value)} style={{ width: 40, height: 30, border: 'none', background: 'none', cursor: 'pointer' }} /><div style={{ display: 'flex', gap: 5 }}>{['#b5651d', '#c8794a', '#8a5a3c', '#d9c7a3', '#3a3f4a', '#e8e2d6'].map((h) => <button key={h} onClick={() => setClayColor(h)} style={{ width: 22, height: 22, borderRadius: 5, background: h, border: '1px solid rgba(255,255,255,0.25)', cursor: 'pointer' }} />)}</div></div></Field>
