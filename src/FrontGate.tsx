@@ -33,7 +33,7 @@ export function FrontGate({ children }: { children: React.ReactNode }) {
   useEffect(() => { check() }, [check])
 
   if (state === 'loading') {
-    return <div className="admin-shell"><div className="admin-card"><div className="admin-title">Anima Studio</div><p>Chargement…</p></div></div>
+    return <div className="admin-shell"><div className="admin-card"><div className="admin-title">DigiArt</div><p>Chargement…</p></div></div>
   }
   if (state === 'setup') return <AdminSetup onDone={check} />
   if (state === 'login') return <FrontLogin onDone={check} />
@@ -64,7 +64,7 @@ function FrontLogin({ onDone }: { onDone: () => void }) {
   return (
     <div className="admin-shell">
       <form className="admin-card" onSubmit={submit}>
-        <div className="admin-title"><Lock size={18} style={{ color: 'var(--accent)' }} /> Anima Studio · Accès</div>
+        <div className="admin-title"><Lock size={18} style={{ color: 'var(--accent)' }} /> DigiArt · Accès</div>
         <p style={{ color: 'var(--text-dim)', fontSize: 12, marginBottom: 14 }}>
           Accès réservé. Connecte-toi avec ton compte pour ouvrir le studio.
         </p>

@@ -386,7 +386,7 @@ function OscPanel() {
       <h3 style={{ marginTop: 0 }}>🛰️ OSC — Resolume / TouchDesigner</h3>
       <p style={{ fontSize: 11, color: 'var(--text-mute)', lineHeight: 1.5 }}>
         Via un pont local WebSocket↔UDP (<code>bridge/osc-bridge.js</code>, voir README). IN : les adresses reçues
-        deviennent des sources bindables (<code>osc:/adresse</code>). OUT : envoie <code>/anima/audio/*</code>, <code>/anima/agents</code>.
+        deviennent des sources bindables (<code>osc:/adresse</code>). OUT : envoie <code>/digiart/audio/*</code>, <code>/digiart/agents</code>.
       </p>
       <div style={{ display: 'flex', gap: 4 }}>
         <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="ws://localhost:8080"
@@ -2634,7 +2634,7 @@ function OrganismValues({ kind, v, patchValues }: { kind: OrganismKind; v: Recor
                 <Slider label="Sensibilité vélocité" value={v.velScale} min={2} max={20} step={0.5} onChange={(x) => patchValues({ velScale: x })} format={(x) => x.toFixed(1)} />
                 <label style={{ display: 'flex', gap: 6, fontSize: 12, cursor: 'pointer', marginTop: 6 }}>
                   <input type="checkbox" checked={!!(v as any).osc} onChange={(e) => patchValues({ osc: e.target.checked ? 1 : 0 } as any)} />
-                  🛰️ Émettre les notes en OSC (<code>/anima/note</code> → Ableton)
+                  🛰️ Émettre les notes en OSC (<code>/digiart/note</code> → Ableton)
                 </label>
                 <InstrumentMixer />
               </>

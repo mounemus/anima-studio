@@ -1,4 +1,4 @@
-# Anima Studio
+# DigiArt
 
 > Outil web personnel pour installations d'art interactif et projection mapping — des organismes virtuels vivants, intelligents, évolutifs et génératifs qui réagissent au geste, au son et à la lumière.
 
@@ -26,7 +26,7 @@ Ouvre `http://localhost:5173`. Active la caméra et le micro dans la barre du ha
 
 ## Configuration (Vercel KV + clés API)
 
-Anima Studio embarque une page **`/admin`** qui te permet de gérer toutes tes clés API (Anthropic, fal.ai, OpenAI, Replicate, ElevenLabs, Stability) **sans redéployer**. Les clés sont chiffrées AES-256-GCM avant d'être stockées dans Vercel KV (Upstash Redis).
+DigiArt embarque une page **`/admin`** qui te permet de gérer toutes tes clés API (Anthropic, fal.ai, OpenAI, Replicate, ElevenLabs, Stability) **sans redéployer**. Les clés sont chiffrées AES-256-GCM avant d'être stockées dans Vercel KV (Upstash Redis).
 
 ### Étapes (une seule fois)
 

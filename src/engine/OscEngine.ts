@@ -4,13 +4,13 @@
  * A browser can't speak UDP, so this connects to a local WS↔UDP bridge (see
  * bridge/osc-bridge.js) which relays to/from Resolume, TouchDesigner, etc.
  *
- *   Anima (browser) ──WebSocket(binary OSC)──> bridge ──UDP/OSC──> Resolume/TD
+ *   DigiArt (browser) ──WebSocket(binary OSC)──> bridge ──UDP/OSC──> Resolume/TD
  *
  * IN  : incoming OSC messages → senseBus.osc.values[address] (bindable as
  *       source `osc:/address`, like MIDI CC). Discovered addresses are tracked
  *       for the bindings UI.
  * OUT : tickOut() streams audio levels + agent count + obstacle hit counters at
- *       ~30 Hz to /anima/* addresses.
+ *       ~30 Hz to /digiart/* addresses.
  */
 import { decodePacket, encodeMessage, firstNumber, type OscArg } from './osc'
 import { senseBus } from '../senses/SenseBus'
@@ -124,12 +124,12 @@ class OscEngine {
     if (!this.config.enabledOut || this.status !== 'connected') return
     if (now - this.lastOut < 33) return
     this.lastOut = now
-    this.send('/anima/audio/level', [audio.level ?? 0])
-    this.send('/anima/audio/bass', [audio.bass ?? 0])
-    this.send('/anima/audio/mid', [audio.mid ?? 0])
-    this.send('/anima/audio/high', [audio.high ?? 0])
-    this.send('/anima/agents', [agents])
-    if (obstacles) for (const [id, n] of obstacles) this.send('/anima/obstacle/' + id.replace(/[^a-zA-Z0-9_-]/g, ''), [n])
+    this.send('/digiart/audio/level', [audio.level ?? 0])
+    this.send('/digiart/audio/bass', [audio.bass ?? 0])
+    this.send('/digiart/audio/mid', [audio.mid ?? 0])
+    this.send('/digiart/audio/high', [audio.high ?? 0])
+    this.send('/digiart/agents', [agents])
+    if (obstacles) for (const [id, n] of obstacles) this.send('/digiart/obstacle/' + id.replace(/[^a-zA-Z0-9_-]/g, ''), [n])
   }
 
   /** Auto-connect on boot only if the user has used OSC before (persisted config)

@@ -11,9 +11,9 @@ describe('OSC codec — encode/decode roundtrip', () => {
   })
 
   it('roundtrips mixed args (floats + string)', () => {
-    const buf = encodeMessage('/anima/audio', [0.1, 0.9, 'hi'])
+    const buf = encodeMessage('/digiart/audio', [0.1, 0.9, 'hi'])
     const [m] = decodePacket(buf)
-    expect(m.address).toBe('/anima/audio')
+    expect(m.address).toBe('/digiart/audio')
     expect(m.args[0] as number).toBeCloseTo(0.1, 5)
     expect(m.args[1] as number).toBeCloseTo(0.9, 5)
     expect(m.args[2]).toBe('hi')

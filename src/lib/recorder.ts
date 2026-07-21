@@ -38,7 +38,7 @@ export function startRecording(canvas: HTMLCanvasElement, opts: RecordOptions = 
   recorder.start(1000)
 }
 
-export function stopRecording(filename = `anima-${Date.now()}.webm`) {
+export function stopRecording(filename = `digiart-${Date.now()}.webm`) {
   return new Promise<void>((resolve) => {
     if (!recorder) return resolve()
     recorder.onstop = () => {
@@ -59,7 +59,7 @@ export function stopRecording(filename = `anima-${Date.now()}.webm`) {
 
 /** Capture the current canvas as a PNG. Returns the pixel dimensions captured
  *  so the UI can report the resolution (already 2× on hi-DPI displays). */
-export function screenshot(canvas: HTMLCanvasElement, filename = `anima-${Date.now()}.png`): { w: number; h: number } {
+export function screenshot(canvas: HTMLCanvasElement, filename = `digiart-${Date.now()}.png`): { w: number; h: number } {
   canvas.toBlob((blob) => {
     if (!blob) return
     const url = URL.createObjectURL(blob)

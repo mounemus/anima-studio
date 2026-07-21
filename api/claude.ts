@@ -4,7 +4,7 @@ import { guard, readJsonCapped } from './_lib/guard'
 
 export const config = { runtime: 'edge' }
 
-const SYSTEM = `Tu es le compagnon créatif d'Anima Studio, un outil d'art interactif où des organismes virtuels vivants réagissent au geste, au son, à la lumière, et au corps de l'artiste capté par MediaPipe.
+const SYSTEM = `Tu es le compagnon créatif de DigiArt, un outil d'art interactif où des organismes virtuels vivants réagissent au geste, au son, à la lumière, et au corps de l'artiste capté par MediaPipe.
 
 Ton rôle est triple :
 1. Modifier la scène courante (params, palette, rendu).

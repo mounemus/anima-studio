@@ -4,7 +4,7 @@
  * K cordes lumineuses verticales, chacune = une note d'une gamme. Les bouts de
  * doigts (landmarks MediaPipe 4/8/12/16/20) traversent l'écran → chaque
  * traversée d'une corde la PINCE : la corde vibre (onde sinus amortie) et joue
- * sa note via le polysynth interne, + émet une note OSC (/anima/note) pour
+ * sa note via le polysynth interne, + émet une note OSC (/digiart/note) pour
  * piloter Ableton / un vrai mixeur pro via le pont.
  *
  * Rendu : nuage de points lumineux (M points par corde) déplacés horizontalement
@@ -24,7 +24,7 @@ export interface InstrumentParams {
   decay: number         // amortissement de la vibration (0.85..0.995)
   size: number          // taille des points
   velScale: number      // sensibilité de vélocité au geste
-  osc: number           // 0|1 — émettre les notes en OSC (/anima/note)
+  osc: number           // 0|1 — émettre les notes en OSC (/digiart/note)
 }
 
 export const INSTRUMENT_SCALES: Record<string, number[]> = {
@@ -235,7 +235,7 @@ export class InstrumentOrganism {
     const note = this.notes[i]
     const v = vel * this.params.velScale > 0 ? vel : 0.7
     try { soundEngine.pluckNote(note, v, 110) } catch { /* audio not ready */ }
-    if (this.params.osc) { try { oscEngine.send('/anima/note', [note, v]) } catch { /* noop */ } }
+    if (this.params.osc) { try { oscEngine.send('/digiart/note', [note, v]) } catch { /* noop */ } }
   }
 
   dispose() { this.geo.dispose(); this.mat.dispose() }

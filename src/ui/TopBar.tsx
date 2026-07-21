@@ -274,7 +274,7 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
             <circle cx="42" cy="34" r="6" fill="#fff" opacity=".6" />
             <circle cx="32" cy="44" r="3" fill="#fff" opacity=".8" />
           </svg>
-          ANIMA STUDIO
+          DIGIART
         </div>
 
         <div className="topbar-group">

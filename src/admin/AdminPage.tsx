@@ -25,7 +25,7 @@ export function AdminPage() {
     fetch('/api/admin/me').then((r) => r.json()).then(setMe).catch(() => setMe({ authenticated: false }))
   }, [refreshTick])
 
-  if (!status || !me) return <div className="admin-shell"><div className="admin-card"><div className="admin-title">Anima · Admin</div><p>Chargement...</p></div></div>
+  if (!status || !me) return <div className="admin-shell"><div className="admin-card"><div className="admin-title">DigiArt · Admin</div><p>Chargement...</p></div></div>
 
   const allReady = status.kv && status.encryptKey && status.jwtSecret
   if (!allReady) return (

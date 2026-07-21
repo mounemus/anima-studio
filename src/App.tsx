@@ -242,7 +242,7 @@ export function App() {
           </>
         ) : (
           <div className="welcome">
-            <h1>Anima Studio</h1>
+            <h1>DigiArt</h1>
             <p>Initialisation...</p>
           </div>
         )}
