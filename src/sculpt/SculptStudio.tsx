@@ -23,6 +23,7 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { ORG_DEFAULTS, ORG_FORMS, ORG_PORES, ORG_PRESETS, type OrganicParams, type OrgForm, type OrgPore } from './organic'
 import { textToOrganic, sanitiseOrganic } from './organicAI'
+import { importFile, geomToData, type MeshData } from '../morpho/imports'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 const GESTURE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
@@ -124,6 +125,24 @@ export function SculptStudio() {
   const [aiBusy, setAiBusy] = useState(false)
   const [aiNote, setAiNote] = useState('')
   const adoptRef = useRef(false)                          // « Sculpter cette forme » : adopte le maillage généré
+  // Corps source pour le mode « Ma forme » : maillage sculpté capturé ou fichier importé.
+  const orgSourceRef = useRef<MeshData | null>(null)
+  const captureRef = useRef(false)                        // capture la pâte courante comme corps source
+  const [orgSourceName, setOrgSourceName] = useState('')
+  const [orgSourceVer, setOrgSourceVer] = useState(0)     // change ⇒ régénère
+
+  const onImport = async (f: File | null) => {
+    if (!f) return
+    setStatus(`Import de ${f.name}…`)
+    try {
+      const { data, name, tris } = await importFile(f)
+      orgSourceRef.current = data
+      setOrgSourceName(`${name} · ${tris.toLocaleString('fr-FR')} tri`)
+      setOrgSourceVer((v) => v + 1)
+      setOrg((o) => ({ ...o, form: 'mesh' })); setMode('organic')
+      setStatus(`${name} importé — traité en organique paramétrique.`)
+    } catch (e) { setStatus(`Import impossible : ${(e as Error).message}`) }
+  }
   const setOrgP = <K extends keyof OrganicParams>(k: K, v: OrganicParams[K]) => setOrg((o) => ({ ...o, [k]: v }))
 
   /** Décrire → paramètres. Tente le vrai modèle, retombe sur l'interprète local (toujours
@@ -220,9 +239,9 @@ export function SculptStudio() {
     const w = orgWorkerRef.current
     if (!w) { setStatus('Worker indisponible — génération organique impossible.'); return }
     setOrgBusy(true); setOrgProgress(0)
-    const t = setTimeout(() => { const id = ++orgJobRef.current; w.postMessage({ id, params: org, smooth: orgSmooth }) }, 200)
+    const t = setTimeout(() => { const id = ++orgJobRef.current; w.postMessage({ id, params: org, smooth: orgSmooth, source: org.form === 'mesh' ? orgSourceRef.current : null }) }, 200)
     return () => clearTimeout(t)
-  }, [org, orgSmooth, mode])
+  }, [org, orgSmooth, mode, orgSourceVer])
 
   useEffect(() => {
     const video = videoRef.current!, mount = mountRef.current!, overlay = overlayRef.current!
@@ -519,6 +538,14 @@ export function SculptStudio() {
         orgDirtyRef.current = false
         const old = orgMesh.geometry; orgMesh.geometry = orgGeoRef.current; old.dispose()
       }
+      // « Utiliser ma forme sculptée » : snapshot the current clay as the organic body.
+      if (captureRef.current) {
+        captureRef.current = false
+        orgSourceRef.current = geomToData(geo)
+        setOrgSourceName(`forme sculptée · ${V.toLocaleString('fr-FR')} sommets`)
+        setOrgSourceVer((v) => v + 1)
+        setStatus('Forme sculptée capturée — elle sert maintenant de corps organique.')
+      }
       // « Sculpter cette forme » : the generated mesh becomes the sculptable blob. Topology
       // changes completely, so the undo history (indexed by vertex) has to be dropped.
       if (adoptRef.current) {
@@ -760,6 +787,20 @@ export function SculptStudio() {
             </Field>
 
             <Field label="Corps"><select value={org.form} onChange={(e) => setOrgP('form', e.target.value as OrgForm)} style={selStyle}>{ORG_FORMS.map((f) => <option key={f.kind} value={f.kind}>{f.label}</option>)}</select></Field>
+
+            {org.form === 'mesh' && <Field label="Forme source">
+              <div style={{ display: 'grid', gap: 5 }}>
+                <button onClick={() => { captureRef.current = true }} style={{ ...selStyle, fontSize: 11, padding: 7 }} title="Prend la pâte actuellement sculptée comme corps : elle sera évidée, perforée et déformée par les réglages ci-dessous.">🖐️ Utiliser ma forme sculptée</button>
+                <label style={{ ...selStyle, fontSize: 11, padding: 7, display: 'block', textAlign: 'center' }} title="STL, OBJ ou SVG. Le modèle est recentré, mis à l'échelle, puis converti en champ de distance signée.">
+                  📥 Importer un objet (STL / OBJ / SVG)
+                  <input type="file" accept=".stl,.obj,.svg" onChange={(e) => { onImport(e.target.files?.[0] ?? null); e.currentTarget.value = '' }} style={{ display: 'none' }} />
+                </label>
+              </div>
+              <p style={{ color: orgSourceName ? '#a8f0e0' : '#ffcf9a', fontSize: 10, margin: '6px 0 0', lineHeight: 1.35 }}>
+                {orgSourceName ? `✓ Source : ${orgSourceName}` : '⚠ Aucune source — capture ta pâte ou importe un fichier.'}
+              </p>
+              <p style={{ color: '#7a6a58', fontSize: 10, margin: '4px 0 0', lineHeight: 1.35 }}>Le maillage est cuit en champ de distance signée (grille 56³), puis traité comme les formes intégrées : coque, perforations, torsion.</p>
+            </Field>}
             <Field label="Perforation"><select value={org.pore} onChange={(e) => setOrgP('pore', e.target.value as OrgPore)} style={selStyle}>{ORG_PORES.map((f) => <option key={f.kind} value={f.kind}>{f.label}</option>)}</select></Field>
 
             {(org.pore === 'pores' || org.pore === 'boucles') && <>

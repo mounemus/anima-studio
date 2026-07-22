@@ -24,10 +24,11 @@ import {
 
 export const ORG_BOUND = 1.15
 
-export type OrgForm = 'ovoide' | 'colonne' | 'lyre' | 'tore' | 'ruban'
+export type OrgForm = 'ovoide' | 'colonne' | 'lyre' | 'tore' | 'ruban' | 'mesh'
 export type OrgPore = 'aucun' | 'pores' | 'boucles' | 'lattice' | 'cellules'
 
 export const ORG_FORMS: { kind: OrgForm; label: string }[] = [
+  { kind: 'mesh', label: '📥 Ma forme (sculptée / importée)' },
   { kind: 'lyre', label: '🏺 Lyre (bulbe · taille · bulbe)' },
   { kind: 'ovoide', label: '🥚 Ovoïde' },
   { kind: 'colonne', label: '🗼 Colonne' },
@@ -116,9 +117,11 @@ export function poreField(p: OrganicParams): Field | null {
   return p.pore === 'boucles' ? opStretch(balls, 1, 2.1, 1) : balls
 }
 
-/** Compose the full field: body → shell → perforate → mirror → warp → noise. */
-export function organicField(p: OrganicParams): Field {
-  let f = formField(p.form)
+/** Compose the full field: body → shell → perforate → mirror → warp → noise.
+ *  `bodyField` overrides the primitive body — that is how a SCULPTED or IMPORTED mesh
+ *  (baked to an SDF by meshToField) goes through the exact same treatment. */
+export function organicField(p: OrganicParams, bodyField?: Field | null): Field {
+  let f = p.form === 'mesh' ? (bodyField ?? formField('ovoide')) : formField(p.form)
   if (p.shell > 0.001) f = fShell(f, p.shell)
   const holes = poreField(p)
   if (holes) f = fSubtract(f, holes, Math.max(0, p.blend))
@@ -131,8 +134,8 @@ export function organicField(p: OrganicParams): Field {
 }
 
 /** Field → real, exportable geometry. `onProgress(0→1)` reports meshing progress. */
-export function buildOrganic(p: OrganicParams, onProgress?: (t: number) => void): THREE.BufferGeometry {
-  return marchingCubes(organicField(p), clamp(24, 160, Math.round(p.res)), ORG_BOUND, 0, onProgress)
+export function buildOrganic(p: OrganicParams, onProgress?: (t: number) => void, bodyField?: Field | null): THREE.BufferGeometry {
+  return marchingCubes(organicField(p, bodyField), clamp(24, 160, Math.round(p.res)), ORG_BOUND, 0, onProgress)
 }
 
 /** Ready-made looks matching the reference imagery. */
