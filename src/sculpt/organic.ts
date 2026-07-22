@@ -25,7 +25,7 @@ import {
 export const ORG_BOUND = 1.15
 
 export type OrgForm = 'ovoide' | 'colonne' | 'lyre' | 'tore' | 'ruban' | 'mesh'
-export type OrgPore = 'aucun' | 'pores' | 'boucles' | 'lattice' | 'cellules'
+export type OrgPore = 'aucun' | 'pores' | 'boucles' | 'lattice' | 'cellules' | 'grille'
 
 export const ORG_FORMS: { kind: OrgForm; label: string }[] = [
   { kind: 'mesh', label: '📥 Ma forme (sculptée / importée)' },
@@ -36,6 +36,7 @@ export const ORG_FORMS: { kind: OrgForm; label: string }[] = [
   { kind: 'ruban', label: '🎗 Ruban (plat, à torsader)' },
 ]
 export const ORG_PORES: { kind: OrgPore; label: string }[] = [
+  { kind: 'grille', label: '🔷 Grille paramétrique (design)' },
   { kind: 'boucles', label: '🔗 Boucles (fentes allongées)' },
   { kind: 'pores', label: '🕳 Pores (perforations rondes)' },
   { kind: 'lattice', label: '🧬 Lattice gyroïde' },
@@ -93,9 +94,60 @@ export function formField(form: OrgForm): Field {
   }
 }
 
+/**
+ * GRILLE — the clean "parametric design" perforation: holes on a regular quincunx lattice
+ * laid out in SURFACE coordinates (angle × height) rather than in space, so they follow the
+ * body evenly instead of clustering. Their radius follows a smooth gradient over the height,
+ * which is what reads as designed rather than randomly drilled.
+ *
+ * The field is independent of the distance to the axis, so subtracting it punches each hole
+ * straight through the wall — no grazing cuts, which is also why this style produces far
+ * less debris than the voronoï/gyroid ones.
+ */
+export function gridPores(cols: number, rows: number, radius: number, gradient: number): Field {
+  const C = Math.max(2, Math.round(cols)), R = Math.max(1, Math.round(rows))
+  const H = 1.75, rowH = H / R          // hauteur couverte / pas vertical
+  const TAU = Math.PI * 2
+  // Un trou plus large que son pas fusionne avec ses voisins et DÉCOUPE la coque en
+  // fragments (mesuré : 214 composants). On borne donc le rayon à une fraction du pas :
+  // les ligaments survivent par construction, quels que soient les curseurs.
+  const arcStep = (TAU * 0.4) / C       // pas angulaire, à un rayon de référence
+  const rMax = Math.min(radius, 0.45 * Math.min(arcStep, rowH))
+  return (x, y, z) => {
+    const rad = Math.hypot(x, z)
+    const u = Math.atan2(z, x)
+    const j = Math.round(y / rowH)
+    const off = (((j % 2) + 2) % 2) * 0.5          // quinconce : une ligne sur deux décalée
+    const colF = (u / TAU) * C - off
+    let best = 1e9
+    // Les deux colonnes voisines suffisent (la maille est convexe).
+    for (let dj = -1; dj <= 1; dj++) {
+      const jj = j + dj
+      const o = (((jj % 2) + 2) % 2) * 0.5
+      const cf = (u / TAU) * C - o
+      for (let di = -1; di <= 1; di++) {
+        const i = Math.round(cf) + di
+        const uc = ((i + o) / C) * TAU
+        let du = u - uc
+        du = du - TAU * Math.round(du / TAU)        // repli angulaire
+        const arc = du * Math.max(rad, 1e-3)        // en longueur d'arc → trous ronds
+        const dv = y - jj * rowH
+        const d = Math.hypot(arc, dv)
+        if (d < best) best = d
+      }
+    }
+    void colF
+    // Dégradé : petits près des extrémités, pleins au centre — la signature du style.
+    const t = clamp(0, 1, y / H + 0.5)
+    const g = 1 - gradient + gradient * Math.sin(Math.PI * t)
+    return best - Math.max(0.004, rMax * g)
+  }
+}
+
 /** The field that gets SUBTRACTED from the body to open it up. `null` = no perforation. */
 export function poreField(p: OrganicParams): Field | null {
   if (p.pore === 'aucun') return null
+  if (p.pore === 'grille') return gridPores(p.poreCount * 2, p.poreRows * 2, p.poreSize, 0.6)
   if (p.pore === 'lattice') return gyroid(p.latticeFreq, 0.62, ORG_BOUND * 1.4)
   if (p.pore === 'cellules') return voronoiWalls(Math.max(1.2, p.latticeFreq * 0.5), 0.05, ORG_BOUND * 1.4)
   // Discrete holes on rings around the axis. Smooth-unioned by metaballs(), so neighbours
@@ -140,6 +192,7 @@ export function buildOrganic(p: OrganicParams, onProgress?: (t: number) => void,
 
 /** Ready-made looks matching the reference imagery. */
 export const ORG_PRESETS: { name: string; desc: string; params: Partial<OrganicParams> }[] = [
+  { name: '🔷 Vase ajouré (design)', desc: 'Grille régulière à dégradé sur une coque torsadée — le style « design paramétrique ».', params: { form: 'lyre', pore: 'grille', poreCount: 11, poreRows: 7, poreSize: 0.05, blend: 0.012, shell: 0.03, mirror: false, twist: 0.9, taper: 0.1, noiseAmp: 0, res: 120 } },
   { name: '🫀 Bio-lattice', desc: 'Coque perforée à entretoises épaisses — la référence turquoise.', params: { form: 'lyre', pore: 'boucles', poreRows: 4, poreCount: 6, poreSize: 0.15, poreRadius: 0.42, blend: 0.09, shell: 0.055, mirror: true, twist: 0, noiseAmp: 0 } },
   { name: '🌸 Rosace radiale', desc: 'Symétrie radiale dense, lecture frontale en rosace.', params: { form: 'ovoide', pore: 'boucles', poreRows: 3, poreCount: 8, poreSize: 0.17, poreRadius: 0.46, blend: 0.11, shell: 0.05, mirror: true, twist: 0.3 } },
   { name: '🎗 Ruban chromé', desc: 'Surface pleine torsadée, sans perforation — pour un rendu métal.', params: { form: 'ruban', pore: 'aucun', shell: 0, mirror: false, twist: 2.4, taper: 0.2, noiseAmp: 0 } },

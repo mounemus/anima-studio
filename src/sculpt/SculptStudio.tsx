@@ -24,6 +24,8 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { ORG_DEFAULTS, ORG_FORMS, ORG_PORES, ORG_PRESETS, type OrganicParams, type OrgForm, type OrgPore } from './organic'
 import { textToOrganic, sanitiseOrganic, organicApiError, ORG_AI_HINTS } from './organicAI'
 import { importFile, geomToData, type MeshData } from '../morpho/imports'
+import { type FinishStats } from './finish'
+import { makeProject, saveProject, loadProject, listProjects, deleteProject, projectToBlob, projectFromFile, type SculptProject, type ProjectMeta } from './project'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 const GESTURE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
@@ -120,6 +122,13 @@ export function SculptStudio() {
   const [orgTris, setOrgTris] = useState(0)
   const [orgBusy, setOrgBusy] = useState(false)
   const [orgProgress, setOrgProgress] = useState(0)
+  const [mainOnly, setMainOnly] = useState(false)          // ne garder que la plus grosse pièce
+  const [orgStats, setOrgStats] = useState<FinishStats | null>(null)
+  const [projName, setProjName] = useState('')
+  const [projList, setProjList] = useState<ProjectMeta[]>([])
+  const [projMsg, setProjMsg] = useState('')
+  const refreshProjects = () => setProjList(listProjects())
+  useEffect(() => { refreshProjects() }, [])
   const [handsPaused, setHandsPaused] = useState(false)   // fige le pilotage/sculpture aux mains
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiBusy, setAiBusy] = useState(false)
@@ -130,6 +139,32 @@ export function SculptStudio() {
   const captureRef = useRef(false)                        // capture la pâte courante comme corps source
   const [orgSourceName, setOrgSourceName] = useState('')
   const [orgSourceVer, setOrgSourceVer] = useState(0)     // change ⇒ régénère
+
+  const doSaveProject = () => {
+    const p = makeProject(projName, { org, orgSmooth, mainOnly, material, colorA, sourceName: orgSourceName || undefined, source: orgSourceRef.current })
+    const err = saveProject(p)
+    setProjMsg(err ?? `✓ « ${p.name} » enregistré.`)
+    if (!err) { setProjName(p.name); refreshProjects() }
+  }
+  const doLoadProject = (name: string) => {
+    const p = loadProject(name)
+    if (!p) { setProjMsg('Projet illisible.'); return }
+    applyProject(p)
+    setProjMsg(`✓ « ${p.name} » chargé.`)
+  }
+  const applyProject = (p: SculptProject) => {
+    setOrg(p.org); setOrgSmooth(p.orgSmooth); setMainOnly(p.mainOnly)
+    setMaterial(p.material as MatKind); setColorA(p.colorA)
+    setProjName(p.name)
+    if (p.source) { orgSourceRef.current = p.source; setOrgSourceName(p.sourceName ?? 'source du projet') }
+    setOrgSourceVer((v) => v + 1)
+    setMode('organic')
+  }
+  const onLoadProjectFile = async (f: File | null) => {
+    if (!f) return
+    try { applyProject(await projectFromFile(f)); setProjMsg(`✓ « ${f.name} » importé.`) }
+    catch (e) { setProjMsg(`Import impossible : ${(e as Error).message}`) }
+  }
 
   const onImport = async (f: File | null) => {
     if (!f) return
@@ -225,7 +260,7 @@ export function SculptStudio() {
     let w: Worker | null = null
     try { w = new Worker(new URL('./organic.worker.ts', import.meta.url), { type: 'module' }) } catch { w = null }
     orgWorkerRef.current = w
-    if (w) w.onmessage = (e: MessageEvent<{ id: number; position?: Float32Array; normal?: Float32Array | null; index?: Uint32Array | null; tris?: number; empty?: boolean; error?: string; progress?: number }>) => {
+    if (w) w.onmessage = (e: MessageEvent<{ id: number; position?: Float32Array; normal?: Float32Array | null; index?: Uint32Array | null; tris?: number; stats?: FinishStats; empty?: boolean; error?: string; progress?: number }>) => {
       const d = e.data
       if (d.id !== orgJobRef.current) return                    // périmé : un job plus récent l'a remplacé
       if (typeof d.progress === 'number') { setOrgProgress(d.progress); return }
@@ -238,7 +273,7 @@ export function SculptStudio() {
       if (d.index) g.setIndex(new THREE.BufferAttribute(d.index, 1))
       if (!d.normal) g.computeVertexNormals()
       orgGeoRef.current = g; orgDirtyRef.current = true
-      setOrgTris(d.tris ?? 0)
+      setOrgTris(d.tris ?? 0); if (d.stats) setOrgStats(d.stats)
       setStatus(`Forme organique générée — ${(d.tris ?? 0).toLocaleString('fr-FR')} triangles.`)
     }
     return () => { w?.terminate(); orgWorkerRef.current = null }
@@ -248,9 +283,9 @@ export function SculptStudio() {
     const w = orgWorkerRef.current
     if (!w) { setStatus('Worker indisponible — génération organique impossible.'); return }
     setOrgBusy(true); setOrgProgress(0)
-    const t = setTimeout(() => { const id = ++orgJobRef.current; w.postMessage({ id, params: org, smooth: orgSmooth, source: org.form === 'mesh' ? orgSourceRef.current : null }) }, 200)
+    const t = setTimeout(() => { const id = ++orgJobRef.current; w.postMessage({ id, params: org, smooth: orgSmooth, mainOnly, source: org.form === 'mesh' ? orgSourceRef.current : null }) }, 200)
     return () => clearTimeout(t)
-  }, [org, orgSmooth, mode, orgSourceVer])
+  }, [org, orgSmooth, mode, orgSourceVer, mainOnly])
 
   useEffect(() => {
     const video = videoRef.current!, mount = mountRef.current!, overlay = overlayRef.current!
@@ -846,7 +881,14 @@ export function SculptStudio() {
 
             <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '10px 0 6px' }}>Définition</div>
             <Field label={`Résolution — ${org.res}${org.res >= 110 ? ' (lent)' : ''}`}><input type="range" min={40} max={140} step={4} value={org.res} onChange={(e) => setOrgP('res', +e.target.value)} style={rngStyle} /></Field>
-            <Field label={`Lissage — ${orgSmooth}`}><input type="range" min={0} max={4} step={1} value={orgSmooth} onChange={(e) => setOrgSmooth(+e.target.value)} style={rngStyle} /></Field>
+            <Field label={`Lissage — ${orgSmooth}`}><input type="range" min={0} max={6} step={1} value={orgSmooth} onChange={(e) => setOrgSmooth(+e.target.value)} style={rngStyle} /></Field>
+            <label style={chkRow} title="Ne conserve que la plus grosse pièce. Les perforations détachent souvent des fragments : c'est la garantie d'un solide unique et imprimable."><input type="checkbox" checked={mainOnly} onChange={(e) => setMainOnly(e.target.checked)} style={{ accentColor: '#6fe0c8' }} /> 🧩 Garder seulement la pièce principale</label>
+            {orgStats && <p style={{ color: '#7a6a58', fontSize: 10, margin: '2px 0 0', lineHeight: 1.4 }}>
+              Qualité : {orgStats.removed > 0 ? `${orgStats.removed} fragment(s) retiré(s) sur ${orgStats.components} · ` : ''}
+              bords ouverts <b style={{ color: orgStats.boundary === 0 ? '#a8f0e0' : '#ffcf9a' }}>{orgStats.boundary}</b>
+              {' · '}arêtes non-manifold <b style={{ color: orgStats.nonManifold === 0 ? '#a8f0e0' : '#ffcf9a' }}>{orgStats.nonManifold}</b>
+              {orgStats.nonManifold > 0 && <> — le maillage reste géométriquement fermé (les slicers et Rhino l'acceptent), mais ces arêtes viennent de parois plus fines qu'une cellule : monte la <b>coque</b> ou baisse la <b>taille des ouvertures</b> pour les supprimer.</>}
+            </p>}
             {/* Progression réelle : le worker remonte l'avancement de l'échantillonnage
                 du champ puis de la polygonisation (pas une animation décorative). */}
             <div style={{ height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.1)', overflow: 'hidden', margin: '6px 0 4px' }}>
@@ -865,6 +907,24 @@ export function SculptStudio() {
           <button onClick={() => { clearTexRef.current = true }} style={{ ...selStyle, marginBottom: 4, fontSize: 12 }}>🧽 Effacer la texture</button>
           <p style={{ color: '#7a6a58', fontSize: 10, margin: '4px 0 0', lineHeight: 1.35 }}>Astuce : choisis un outil ⋮⋮/🪨/〰 ci-dessus pour graver le motif <b>à la main</b> localement.</p>
           </>}
+
+          <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 6px' }}>Projets</div>
+          <Field label="Nom du projet">
+            <input value={projName} onChange={(e) => setProjName(e.target.value)} placeholder="mon-vase" style={{ width: '100%', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: 'white', padding: 8, borderRadius: 6, fontSize: 12, fontFamily: 'inherit' }} />
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <button onClick={doSaveProject} style={{ ...selStyle, flex: 1, fontSize: 11 }} title="Enregistre les réglages dans ce navigateur.">💾 Enregistrer</button>
+              <button onClick={() => { const p = makeProject(projName, { org, orgSmooth, mainOnly, material, colorA, sourceName: orgSourceName || undefined, source: orgSourceRef.current }); downloadBlob(projectToBlob(p), `${p.name}.json`); setProjMsg('✓ Projet exporté en .json.') }} style={{ ...selStyle, flex: 1, fontSize: 11 }} title="Fichier portable, sauvegardable — inclut la forme source si tu en as une.">⬇ .json</button>
+              <label style={{ ...selStyle, flex: 1, fontSize: 11, textAlign: 'center' }} title="Recharger un projet .json">⬆ Ouvrir<input type="file" accept=".json" onChange={(e) => { onLoadProjectFile(e.target.files?.[0] ?? null); e.currentTarget.value = '' }} style={{ display: 'none' }} /></label>
+            </div>
+            {projMsg && <p style={{ color: projMsg.startsWith('✓') ? '#a8f0e0' : '#ffcf9a', fontSize: 10, margin: '6px 0 0', lineHeight: 1.35 }}>{projMsg}</p>}
+            {projList.length > 0 && <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>{projList.map((p) => (
+              <div key={p.name} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                <button onClick={() => doLoadProject(p.name)} style={{ ...selStyle, flex: 1, fontSize: 11, padding: 6, textAlign: 'left' }} title={`Enregistré le ${new Date(p.savedAt).toLocaleString('fr-FR')} · ${(p.bytes / 1024).toFixed(1)} ko${p.hasSource ? ' · avec forme source' : ''}`}>📂 {p.name}</button>
+                <button onClick={() => { deleteProject(p.name); refreshProjects(); setProjMsg(`« ${p.name} » supprimé.`) }} style={{ ...selStyle, width: 34, fontSize: 11, padding: 6, background: 'rgba(255,80,80,0.18)', borderColor: 'rgba(255,80,80,0.4)' }} title="Supprimer">✕</button>
+              </div>
+            ))}</div>}
+            <p style={{ color: '#7a6a58', fontSize: 10, margin: '6px 0 0', lineHeight: 1.35 }}>Un projet enregistre les <b>réglages</b>, pas le maillage : la forme est régénérée à l'identique. Seule une forme source importée voyage avec (et alourdit le fichier).</p>
+          </Field>
 
           <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 6px' }}>Matière</div>
           <Field label="Matériau"><select value={material} onChange={(e) => setMaterial(e.target.value as MatKind)} style={selStyle}>{MATERIALS.map((m) => <option key={m.kind} value={m.kind}>{m.label}</option>)}</select></Field>

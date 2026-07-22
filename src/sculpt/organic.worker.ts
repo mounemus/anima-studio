@@ -13,10 +13,10 @@
 import * as THREE from 'three'
 import { buildOrganic, type OrganicParams } from './organic'
 import { meshToField } from './meshField'
-import { weld, laplacianSmooth } from '../morpho/mesh'
+import { finishMesh } from './finish'
 import type { Field } from '../morpho/marching'
 
-interface Req { id: number; params: OrganicParams; smooth: number; source?: { pos: number[] | Float32Array; idx?: number[] | Uint32Array } | null }
+interface Req { id: number; params: OrganicParams; smooth: number; mainOnly?: boolean; source?: { pos: number[] | Float32Array; idx?: number[] | Uint32Array } | null }
 
 self.onmessage = (e: MessageEvent<Req>) => {
   const { id, params, smooth, source } = e.data
@@ -36,13 +36,12 @@ self.onmessage = (e: MessageEvent<Req>) => {
       post({ id, error: 'Aucune forme source — sculpte ou importe un objet d\'abord.' }); return
     }
     const base = usesMesh ? 0.45 : 0
-    let geo = buildOrganic(params, (t) => report(base + t * (1 - base)), body)
-    if (geo.getAttribute('position').count < 3) { post({ id, empty: true }); return }
-    // Marching-cubes output is a raw triangle soup with flat normals — weld it so the
-    // surface reads as the smooth grown form it is, not a faceted shell.
-    geo = weld(geo)
-    if (smooth > 0) geo = laplacianSmooth(geo, Math.min(4, Math.round(smooth)), 0.5)
-    post({ id, progress: 94 })   // soudure + lissage : le reste du temps
+    const raw = buildOrganic(params, (t) => report(base + t * (1 - base)), body)
+    if (raw.getAttribute('position').count < 3) { post({ id, empty: true }); return }
+    post({ id, progress: 94 })
+    // Finition : soudure, retrait des débris flottants, fermeture, puis lissage.
+    // « mainOnly » ne garde que la plus grosse pièce → un solide unique, imprimable.
+    const { geo, stats } = finishMesh(raw, { smooth, minFrac: e.data.mainOnly ? 1 : 0.05 })
     const pos = (geo.getAttribute('position').array as Float32Array).slice()
     const nAttr = geo.getAttribute('normal')
     const nrm = nAttr ? (nAttr.array as Float32Array).slice() : null
@@ -51,7 +50,7 @@ self.onmessage = (e: MessageEvent<Req>) => {
     const transfer: Transferable[] = [pos.buffer]
     if (nrm) transfer.push(nrm.buffer)
     if (idx) transfer.push(idx.buffer)
-    post({ id, position: pos, normal: nrm, index: idx, tris: (idx ? idx.length : pos.length / 3) / 3 }, transfer)
+    post({ id, position: pos, normal: nrm, index: idx, tris: (idx ? idx.length : pos.length / 3) / 3, stats }, transfer)
   } catch (err) {
     post({ id, error: String((err as Error)?.message ?? err) })
   }
