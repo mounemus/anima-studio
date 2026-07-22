@@ -1,7 +1,7 @@
 /** The AI layer must never be able to push the generator into an invalid state, and the
  *  local fallback must stay useful with no key and no network. */
 import { describe, it, expect } from 'vitest'
-import { textToOrganic, sanitiseOrganic } from './organicAI'
+import { textToOrganic, sanitiseOrganic, organicApiError } from './organicAI'
 import { buildOrganic, ORG_DEFAULTS, type OrganicParams } from './organic'
 
 describe('sanitiseOrganic : hostile / sloppy model output', () => {
@@ -62,6 +62,40 @@ describe('textToOrganic : local deterministic fallback', () => {
   it('is deterministic for a given seed, and varies across seeds', () => {
     expect(textToOrganic('', 7).params).toEqual(textToOrganic('', 7).params)
     expect(textToOrganic('', 7).params).not.toEqual(textToOrganic('', 99).params)
+  })
+})
+
+describe('failure diagnosis : the artist must learn the CAUSE, not just "unavailable"', () => {
+  it('names the fix for each status', () => {
+    expect(organicApiError(401)).toMatch(/admin/)
+    expect(organicApiError(403)).toMatch(/admin/)
+    expect(organicApiError(503)).toMatch(/clé|cle/i)
+    expect(organicApiError(429)).toMatch(/requêtes|minute/)
+    expect(organicApiError(404)).toMatch(/dev|endpoint/)
+    expect(organicApiError(0)).toMatch(/réseau/)
+  })
+  it('falls back to the server message for unexpected statuses', () => {
+    expect(organicApiError(500, 'boom')).toBe('boom')
+    expect(organicApiError(500)).toMatch(/500/)
+  })
+})
+
+describe('matched flag : never present randomness as understanding', () => {
+  it('is true when a keyword drove the result', () => {
+    expect(textToOrganic('une urne ajourée').matched).toBe(true)
+    expect(textToOrganic('os trabéculaire').matched).toBe(true)
+  })
+  it('is false when nothing was recognised', () => {
+    expect(textToOrganic('zzzz qwerty 12345').matched).toBe(false)
+    expect(textToOrganic('').matched).toBe(false)
+  })
+  it('understands added vocabulary (en + fr synonyms)', () => {
+    expect(textToOrganic('a bone sponge').params.pore).toBe('lattice')
+    expect(textToOrganic('coral cellular').params.pore).toBe('cellules')
+    expect(textToOrganic('lace skeleton').params.pore).toBe('boucles')
+    expect(textToOrganic('polished chrome solid').params.pore).toBe('aucun')
+    expect(textToOrganic('une stèle verticale').params.form).toBe('colonne')
+    expect(textToOrganic('un cocon').params.form).toBe('ovoide')
   })
 })
 

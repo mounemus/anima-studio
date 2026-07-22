@@ -22,7 +22,7 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { ORG_DEFAULTS, ORG_FORMS, ORG_PORES, ORG_PRESETS, type OrganicParams, type OrgForm, type OrgPore } from './organic'
-import { textToOrganic, sanitiseOrganic } from './organicAI'
+import { textToOrganic, sanitiseOrganic, organicApiError, ORG_AI_HINTS } from './organicAI'
 import { importFile, geomToData, type MeshData } from '../morpho/imports'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
@@ -150,17 +150,26 @@ export function SculptStudio() {
   const runAI = async (prompt: string) => {
     setAiBusy(true); setAiNote('')
     const local = textToOrganic(prompt, (Date.now() & 0xffff) || 1)
+    let why = 'réseau injoignable'
     try {
       const r = await fetch('/api/organic', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }) })
-      if (!r.ok) throw new Error(String(r.status))
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({})) as { error?: string }
+        why = organicApiError(r.status, body.error)
+        throw new Error(why)
+      }
       const d = await r.json() as { explain?: string; params?: unknown }
       const p = sanitiseOrganic(d.params as Partial<OrganicParams>)
-      if (!Object.keys(p).length) throw new Error('aucun paramètre exploitable')
+      if (!Object.keys(p).length) { why = 'réponse du modèle inexploitable'; throw new Error(why) }
       setOrg((o) => ({ ...o, ...p }))
       setAiNote(`✨ ${d.explain || 'Forme proposée par l\'IA.'}`)
     } catch {
       setOrg((o) => ({ ...o, ...local.params }))
-      setAiNote(`⚙ IA indisponible — interprétation locale : ${local.explain}`)
+      // Distinguer « j'ai compris ta description » de « je n'ai rien reconnu, voilà du
+      // hasard » : présenter du bruit comme une interprétation serait mensonger.
+      setAiNote(local.matched
+        ? `⚙ IA distante indisponible (${why}) — interprété localement : ${local.explain}`
+        : `⚙ IA distante indisponible (${why}), et aucun mot-clé reconnu localement → variation aléatoire. Mots compris : ${ORG_AI_HINTS}`)
     } finally { setAiBusy(false) }
   }
   const [tool, setTool] = useState<Tool>('grab')
@@ -778,6 +787,8 @@ export function SculptStudio() {
                 <button disabled={aiBusy} onClick={() => { setAiPrompt(''); runAI('') }} style={{ ...selStyle, flex: 1, fontSize: 12, opacity: aiBusy ? 0.6 : 1 }} title="Variation aléatoire cohérente">🎲 Surprends-moi</button>
               </div>
               {aiNote && <p style={{ color: aiNote.startsWith('✨') ? '#c9b6ff' : '#ffcf9a', fontSize: 10, margin: '6px 0 0', lineHeight: 1.35 }}>{aiNote}</p>}
+              {aiNote.includes('/admin') && <p style={{ fontSize: 10, margin: '4px 0 0' }}><Link to="/admin" style={{ color: '#8fd0ff' }}>→ Ouvrir /admin pour se connecter</Link></p>}
+              <p style={{ color: '#7a6a58', fontSize: 10, margin: '6px 0 0', lineHeight: 1.35 }}>L'IA distante est réservée à l'admin connecté (les endpoints IA sont payants). Sans elle, l'interprète local prend le relais.</p>
             </Field>
 
             <Field label="Départ rapide">

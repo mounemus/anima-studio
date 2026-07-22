@@ -54,26 +54,40 @@ export function sanitiseOrganic(raw: Partial<OrganicParams> | null | undefined):
   return out
 }
 
-/** Deterministic local interpretation — the offline fallback. */
-export function textToOrganic(prompt: string, seed = 0): { params: Partial<OrganicParams>; explain: string } {
+/** Turn an HTTP failure from /api/organic into something the artist can act on.
+ *  « IA indisponible » alone is useless — the fix differs completely per cause. */
+export function organicApiError(status: number, bodyMessage?: string): string {
+  if (status === 401 || status === 403) return 'connecte-toi sur /admin (les endpoints IA sont réservés à l\'admin)'
+  if (status === 503) return 'clé Anthropic absente — renseigne-la sur /admin'
+  if (status === 429) return 'trop de requêtes, réessaie dans une minute'
+  if (status === 404) return 'endpoint absent (serveur de dev local : les routes /api ne tournent pas)'
+  if (status === 0) return 'réseau injoignable'
+  return bodyMessage || `erreur serveur ${status}`
+}
+
+/** Deterministic local interpretation — the offline fallback.
+ *  `matched` says whether any keyword was actually recognised : without it the caller
+ *  cannot tell a real interpretation from the random "surprise me" variation, and would
+ *  wrongly present noise as understanding. */
+export function textToOrganic(prompt: string, seed = 0): { params: Partial<OrganicParams>; explain: string; matched: boolean } {
   const t = (prompt || '').toLowerCase()
   const has = (...k: string[]) => k.some((x) => t.includes(x))
   const p: Partial<OrganicParams> = {}
   const why: string[] = []
 
-  // — corps —
-  if (has('vase', 'urne', 'amphore', 'lyre', 'buste', 'torse', 'corps')) { p.form = 'lyre'; why.push('corps en lyre') }
-  else if (has('colonne', 'totem', 'tour', 'pilier', 'haut', 'élancé', 'elance')) { p.form = 'colonne'; why.push('colonne élancée') }
-  else if (has('anneau', 'tore', 'donut', 'couronne', 'bague')) { p.form = 'tore'; why.push('tore') }
-  else if (has('ruban', 'ribbon', 'nœud', 'noeud', 'boucle infinie', 'vague')) { p.form = 'ruban'; why.push('ruban plat') }
-  else if (has('œuf', 'oeuf', 'ovale', 'ovoïde', 'ovoide', 'graine', 'galet')) { p.form = 'ovoide'; why.push('ovoïde') }
+  // — corps — (fr + en, l'artiste ne doit pas deviner mon vocabulaire)
+  if (has('vase', 'urne', 'amphore', 'lyre', 'buste', 'torse', 'corps', 'vessel', 'jarre', 'calice', 'silhouette')) { p.form = 'lyre'; why.push('corps en lyre') }
+  else if (has('colonne', 'totem', 'tour', 'pilier', 'élancé', 'elance', 'column', 'obélisque', 'obelisque', 'stèle', 'stele', 'vertical')) { p.form = 'colonne'; why.push('colonne élancée') }
+  else if (has('anneau', 'tore', 'torus', 'donut', 'couronne', 'bague', 'cercle')) { p.form = 'tore'; why.push('tore') }
+  else if (has('ruban', 'ribbon', 'nœud', 'noeud', 'knot', 'boucle infinie', 'vague', 'wave', 'flamme', 'plat')) { p.form = 'ruban'; why.push('ruban plat') }
+  else if (has('œuf', 'oeuf', 'egg', 'ovale', 'ovoïde', 'ovoide', 'graine', 'seed', 'galet', 'cocon', 'bulbe', 'boule', 'sphère', 'sphere')) { p.form = 'ovoide'; why.push('ovoïde') }
 
   // — perforation —
-  if (has('os', 'trabécul', 'trabecul', 'gyroïde', 'gyroide', 'mousse', 'éponge', 'eponge')) { p.pore = 'lattice'; p.shell = 0; why.push('réseau gyroïde') }
-  else if (has('cellule', 'voronoï', 'voronoi', 'corail', 'alvéol', 'alveol')) { p.pore = 'cellules'; p.shell = 0; why.push('cellules de Voronoï') }
-  else if (has('trou', 'perfor', 'pore', 'percé', 'perce', 'criblé', 'crible')) { p.pore = 'pores'; why.push('perforations rondes') }
-  else if (has('boucle', 'anse', 'entrelac', 'squelette', 'côte', 'cote', 'nervure', 'dentelle', 'ajour')) { p.pore = 'boucles'; why.push('boucles ajourées') }
-  else if (has('plein', 'lisse', 'massif', 'poli', 'chrome', 'métal', 'metal', 'miroir')) { p.pore = 'aucun'; p.shell = 0; why.push('surface pleine') }
+  if (has('os', 'bone', 'trabécul', 'trabecul', 'gyroïde', 'gyroide', 'gyroid', 'mousse', 'foam', 'éponge', 'eponge', 'sponge', 'poreux', 'poreu')) { p.pore = 'lattice'; p.shell = 0; why.push('réseau gyroïde') }
+  else if (has('cellule', 'cellular', 'voronoï', 'voronoi', 'corail', 'coral', 'alvéol', 'alveol', 'nid', 'ruche', 'bulle')) { p.pore = 'cellules'; p.shell = 0; why.push('cellules de Voronoï') }
+  else if (has('trou', 'hole', 'perfor', 'pore', 'percé', 'perce', 'criblé', 'crible', 'troué', 'troue')) { p.pore = 'pores'; why.push('perforations rondes') }
+  else if (has('boucle', 'loop', 'anse', 'entrelac', 'squelette', 'skeleton', 'côte', 'nervure', 'nervur', 'dentelle', 'lace', 'ajour', 'résille', 'resille', 'arche', 'lattice')) { p.pore = 'boucles'; why.push('boucles ajourées') }
+  else if (has('plein', 'solid', 'lisse', 'smooth', 'massif', 'poli', 'polish', 'chrome', 'métal', 'metal', 'miroir', 'mirror', 'liquide')) { p.pore = 'aucun'; p.shell = 0; why.push('surface pleine') }
 
   // — densité / finesse —
   if (has('dense', 'serré', 'serre', 'fin', 'fine', 'nombreux', 'beaucoup')) { p.poreCount = 9; p.poreRows = 6; p.latticeFreq = 11; why.push('trame dense') }
@@ -96,7 +110,8 @@ export function textToOrganic(prompt: string, seed = 0): { params: Partial<Organ
   else if (has('rapide', 'brouillon', 'aperçu', 'apercu', 'esquisse')) { p.res = 52; why.push('aperçu rapide') }
 
   // Rien de reconnu → une variation aléatoire mais cohérente (« surprends-moi »).
-  if (Object.keys(p).length === 0) {
+  const matched = Object.keys(p).length > 0
+  if (!matched) {
     let s = (seed || 1) >>> 0
     const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 }
     p.form = FORMS[Math.floor(rnd() * FORMS.length)]
@@ -108,5 +123,8 @@ export function textToOrganic(prompt: string, seed = 0): { params: Partial<Organ
     p.mirror = rnd() < 0.7
     why.push('variation aléatoire cohérente')
   }
-  return { params: sanitiseOrganic(p), explain: why.join(' · ') }
+  return { params: sanitiseOrganic(p), explain: why.join(' · '), matched }
 }
+
+/** Vocabulary hint shown when nothing was recognised — so the box isn't a black one. */
+export const ORG_AI_HINTS = 'os · dentelle · corail · alvéolaire · éponge · ajouré · nervuré · torsadé · effilé · courbé · épais · mince · dense · aéré · vase · totem · anneau · ruban · chromé · rugueux'
