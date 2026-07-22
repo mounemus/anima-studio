@@ -553,6 +553,8 @@ export function SculptStudio() {
         orgSourceRef.current = geomToData(geo)
         setOrgSourceName(`forme sculptée · ${V.toLocaleString('fr-FR')} sommets`)
         setOrgSourceVer((v) => v + 1)
+        setOrg((o) => ({ ...o, form: 'mesh' }))   // sinon le bouton paraît sans effet
+        setMode('organic')
         setStatus('Forme sculptée capturée — elle sert maintenant de corps organique.')
       }
       // « Sculpter cette forme » : the generated mesh becomes the sculptable blob. Topology
@@ -799,19 +801,25 @@ export function SculptStudio() {
 
             <Field label="Corps"><select value={org.form} onChange={(e) => setOrgP('form', e.target.value as OrgForm)} style={selStyle}>{ORG_FORMS.map((f) => <option key={f.kind} value={f.kind}>{f.label}</option>)}</select></Field>
 
-            {org.form === 'mesh' && <Field label="Forme source">
+            {/* Toujours visibles : ces deux actions étaient auparavant cachées derrière le
+                choix « Ma forme » dans le sélecteur ci-dessus — donc invisibles par défaut.
+                Elles basculent le corps sur « Ma forme » elles-mêmes. */}
+            <Field label="Appliquer à MA forme (sculptée ou importée)">
               <div style={{ display: 'grid', gap: 5 }}>
-                <button onClick={() => { captureRef.current = true }} style={{ ...selStyle, fontSize: 11, padding: 7 }} title="Prend la pâte actuellement sculptée comme corps : elle sera évidée, perforée et déformée par les réglages ci-dessous.">🖐️ Utiliser ma forme sculptée</button>
-                <label style={{ ...selStyle, fontSize: 11, padding: 7, display: 'block', textAlign: 'center' }} title="STL, OBJ ou SVG. Le modèle est recentré, mis à l'échelle, puis converti en champ de distance signée.">
+                <button onClick={() => { captureRef.current = true }} style={{ ...selStyle, fontSize: 11, padding: 7, background: 'rgba(255,140,60,0.18)', borderColor: 'rgba(255,140,60,0.45)' }} title="Prend la pâte actuellement sculptée comme corps : elle sera évidée, perforée et déformée par les réglages ci-dessous.">🖐️ Utiliser ma forme sculptée</button>
+                <label style={{ ...selStyle, fontSize: 11, padding: 7, display: 'block', textAlign: 'center', background: 'rgba(120,220,200,0.18)', borderColor: 'rgba(120,220,200,0.45)' }} title="STL, OBJ ou SVG. Le modèle est recentré, mis à l'échelle, puis converti en champ de distance signée.">
                   📥 Importer un objet (STL / OBJ / SVG)
                   <input type="file" accept=".stl,.obj,.svg" onChange={(e) => { onImport(e.target.files?.[0] ?? null); e.currentTarget.value = '' }} style={{ display: 'none' }} />
                 </label>
               </div>
-              <p style={{ color: orgSourceName ? '#a8f0e0' : '#ffcf9a', fontSize: 10, margin: '6px 0 0', lineHeight: 1.35 }}>
-                {orgSourceName ? `✓ Source : ${orgSourceName}` : '⚠ Aucune source — capture ta pâte ou importe un fichier.'}
+              <p style={{ color: orgSourceName ? '#a8f0e0' : '#9a8a78', fontSize: 10, margin: '6px 0 0', lineHeight: 1.35 }}>
+                {orgSourceName
+                  ? `✓ Source : ${orgSourceName}${org.form === 'mesh' ? '' : ' (choisis « Ma forme » comme corps pour l\'utiliser)'}`
+                  : 'Sinon, le corps est une des formes intégrées choisies ci-dessus.'}
               </p>
+              {org.form === 'mesh' && !orgSourceName && <p style={{ color: '#ffcf9a', fontSize: 10, margin: '4px 0 0', lineHeight: 1.35 }}>⚠ Corps « Ma forme » sélectionné mais aucune source — capture ta pâte ou importe un fichier.</p>}
               <p style={{ color: '#7a6a58', fontSize: 10, margin: '4px 0 0', lineHeight: 1.35 }}>Le maillage est cuit en champ de distance signée (grille 56³), puis traité comme les formes intégrées : coque, perforations, torsion.</p>
-            </Field>}
+            </Field>
             <Field label="Perforation"><select value={org.pore} onChange={(e) => setOrgP('pore', e.target.value as OrgPore)} style={selStyle}>{ORG_PORES.map((f) => <option key={f.kind} value={f.kind}>{f.label}</option>)}</select></Field>
 
             {(org.pore === 'pores' || org.pore === 'boucles') && <>
