@@ -22,6 +22,7 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { ORG_DEFAULTS, ORG_FORMS, ORG_PORES, ORG_PRESETS, type OrganicParams, type OrgForm, type OrgPore } from './organic'
+import { textToOrganic, sanitiseOrganic } from './organicAI'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 const GESTURE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
@@ -117,7 +118,32 @@ export function SculptStudio() {
   const [orgSmooth, setOrgSmooth] = useState(1)
   const [orgTris, setOrgTris] = useState(0)
   const [orgBusy, setOrgBusy] = useState(false)
+  const [orgProgress, setOrgProgress] = useState(0)
+  const [handsPaused, setHandsPaused] = useState(false)   // fige le pilotage/sculpture aux mains
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiNote, setAiNote] = useState('')
+  const adoptRef = useRef(false)                          // « Sculpter cette forme » : adopte le maillage généré
   const setOrgP = <K extends keyof OrganicParams>(k: K, v: OrganicParams[K]) => setOrg((o) => ({ ...o, [k]: v }))
+
+  /** Décrire → paramètres. Tente le vrai modèle, retombe sur l'interprète local (toujours
+   *  disponible : pas de clé, pas de réseau) pour que le bouton ne soit jamais mort. */
+  const runAI = async (prompt: string) => {
+    setAiBusy(true); setAiNote('')
+    const local = textToOrganic(prompt, (Date.now() & 0xffff) || 1)
+    try {
+      const r = await fetch('/api/organic', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }) })
+      if (!r.ok) throw new Error(String(r.status))
+      const d = await r.json() as { explain?: string; params?: unknown }
+      const p = sanitiseOrganic(d.params as Partial<OrganicParams>)
+      if (!Object.keys(p).length) throw new Error('aucun paramètre exploitable')
+      setOrg((o) => ({ ...o, ...p }))
+      setAiNote(`✨ ${d.explain || 'Forme proposée par l\'IA.'}`)
+    } catch {
+      setOrg((o) => ({ ...o, ...local.params }))
+      setAiNote(`⚙ IA indisponible — interprétation locale : ${local.explain}`)
+    } finally { setAiBusy(false) }
+  }
   const [tool, setTool] = useState<Tool>('grab')
   const [brushSize, setBrushSize] = useState(0.35)
   const [strength, setStrength] = useState(0.6)
@@ -153,8 +179,8 @@ export function SculptStudio() {
   const [status, setStatus] = useState('Initialisation de la caméra et du modèle…')
   const [error, setError] = useState<string | null>(null)
 
-  const paramsRef = useRef({ mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, morphStyle, depth, radial, gridN, turns, mirror, twist, spread, childScale, defTwist, defTaper, defNoise, noiseScale, noiseType, handDrive, colorA, colorB, material, showSkeleton, bgMode })
-  paramsRef.current = { mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, morphStyle, depth, radial, gridN, turns, mirror, twist, spread, childScale, defTwist, defTaper, defNoise, noiseScale, noiseType, handDrive, colorA, colorB, material, showSkeleton, bgMode }
+  const paramsRef = useRef({ handsPaused, mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, morphStyle, depth, radial, gridN, turns, mirror, twist, spread, childScale, defTwist, defTaper, defNoise, noiseScale, noiseType, handDrive, colorA, colorB, material, showSkeleton, bgMode })
+  paramsRef.current = { handsPaused, mode, tool, brushSize, strength, symX, surfPattern, texScale, texDepth, morphStyle, depth, radial, gridN, turns, mirror, twist, spread, childScale, defTwist, defTaper, defNoise, noiseScale, noiseType, handDrive, colorA, colorB, material, showSkeleton, bgMode }
   const clearTexRef = useRef(false)
   const resetRef = useRef(false), undoRef = useRef(false), redoRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
@@ -171,10 +197,11 @@ export function SculptStudio() {
     let w: Worker | null = null
     try { w = new Worker(new URL('./organic.worker.ts', import.meta.url), { type: 'module' }) } catch { w = null }
     orgWorkerRef.current = w
-    if (w) w.onmessage = (e: MessageEvent<{ id: number; position?: Float32Array; normal?: Float32Array | null; index?: Uint32Array | null; tris?: number; empty?: boolean; error?: string }>) => {
+    if (w) w.onmessage = (e: MessageEvent<{ id: number; position?: Float32Array; normal?: Float32Array | null; index?: Uint32Array | null; tris?: number; empty?: boolean; error?: string; progress?: number }>) => {
       const d = e.data
       if (d.id !== orgJobRef.current) return                    // périmé : un job plus récent l'a remplacé
-      setOrgBusy(false)
+      if (typeof d.progress === 'number') { setOrgProgress(d.progress); return }
+      setOrgBusy(false); setOrgProgress(100)
       if (d.error) { setStatus(`Génération organique : ${d.error}`); return }
       if (d.empty || !d.position) { setStatus('Forme vide — réduis les perforations ou l\'épaisseur de coque.'); return }
       const g = new THREE.BufferGeometry()
@@ -192,7 +219,7 @@ export function SculptStudio() {
     if (mode !== 'organic') return
     const w = orgWorkerRef.current
     if (!w) { setStatus('Worker indisponible — génération organique impossible.'); return }
-    setOrgBusy(true)
+    setOrgBusy(true); setOrgProgress(0)
     const t = setTimeout(() => { const id = ++orgJobRef.current; w.postMessage({ id, params: org, smooth: orgSmooth }) }, 200)
     return () => clearTimeout(t)
   }, [org, orgSmooth, mode])
@@ -214,14 +241,30 @@ export function SculptStudio() {
 
     // ── Deformable clay blob : icosphere WELDED into an indexed geometry (shared vertices)
     // so deforming a vertex moves the whole surface continuously (no cracks). ──
-    const geo = mergeVertices(new THREE.IcosahedronGeometry(1, SUBDIV))
-    geo.computeVertexNormals()
-    const posAttr = geo.getAttribute('position') as THREE.BufferAttribute
-    const V = posAttr.count
-    const rest = new Float32Array(posAttr.array as Float32Array)   // original (for reset)
-    // Equirectangular UV from the rest sphere directions (fixed → the texture sticks to the
-    // surface as it's sculpted). Drives the bump map for carved surface texture.
-    { const uv = new Float32Array(V * 2); for (let i = 0; i < V; i++) { const x = rest[i * 3], y = rest[i * 3 + 1], z = rest[i * 3 + 2], l = Math.max(1e-4, Math.hypot(x, y, z)); uv[i * 2] = Math.atan2(z, x) / (Math.PI * 2) + 0.5; uv[i * 2 + 1] = 1 - Math.acos(clamp(-1, 1, y / l)) / Math.PI } geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2)) }
+    // The sculptable geometry is SWAPPABLE : it starts as an icosphere, but a form generated
+    // by the organic module can be adopted in its place (« Sculpter cette forme »), so the
+    // hand/mouse tools work on generated shapes too. installSculptGeo() rebuilds everything
+    // that is indexed by vertex (rest pose, UVs, adjacency) for whatever mesh it is handed.
+    let geo!: THREE.BufferGeometry, posAttr!: THREE.BufferAttribute, V = 0
+    let rest!: Float32Array, adj: number[][] = []
+    const installSculptGeo = (src: THREE.BufferGeometry) => {
+      const g = src.getIndex() ? src : mergeVertices(src)
+      g.computeVertexNormals()
+      geo = g
+      posAttr = g.getAttribute('position') as THREE.BufferAttribute
+      V = posAttr.count
+      rest = new Float32Array(posAttr.array as Float32Array)   // pose de repos (pour « remise à zéro »)
+      // Equirectangular UV from the rest directions (fixed → the texture sticks to the
+      // surface as it's sculpted). Drives the bump map for carved surface texture.
+      const uv = new Float32Array(V * 2)
+      for (let i = 0; i < V; i++) { const x = rest[i * 3], y = rest[i * 3 + 1], z = rest[i * 3 + 2], l = Math.max(1e-4, Math.hypot(x, y, z)); uv[i * 2] = Math.atan2(z, x) / (Math.PI * 2) + 0.5; uv[i * 2 + 1] = 1 - Math.acos(clamp(-1, 1, y / l)) / Math.PI }
+      g.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+      // adjacency for the smooth tool
+      adj = Array.from({ length: V }, () => [] as number[])
+      const idx = g.getIndex()
+      if (idx) { const a = idx.array as ArrayLike<number>; for (let i = 0; i < a.length; i += 3) { const t = [a[i], a[i + 1], a[i + 2]]; for (let j = 0; j < 3; j++) { const x = t[j], y = t[(j + 1) % 3]; if (!adj[x].includes(y)) adj[x].push(y) } } }
+    }
+    installSculptGeo(mergeVertices(new THREE.IcosahedronGeometry(1, SUBDIV)))
     // Bump canvas : the carved-relief height map (grey 128 = flat, darker = recessed).
     // Filled procedurally by the global surface finish AND painted locally by the hand tools.
     const BW = 2048, BH = 1024
@@ -237,9 +280,6 @@ export function SculptStudio() {
     try { envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture } catch { envTex = null }
     const orgMat = new THREE.MeshPhysicalMaterial({ color: new THREE.Color('#9fd8d0'), roughness: 0.3, metalness: 0.1, clearcoat: 0.8, clearcoatRoughness: 0.16, side: THREE.DoubleSide, envMap: envTex, envMapIntensity: 1.1 })
     const orgMesh = new THREE.Mesh(new THREE.BufferGeometry(), orgMat); orgMesh.frustumCulled = false; orgMesh.visible = false; scene.add(orgMesh)
-    // adjacency for the smooth tool
-    const adj: number[][] = Array.from({ length: V }, () => [])
-    { const idx = geo.getIndex(); if (idx) { const a = idx.array as ArrayLike<number>; for (let i = 0; i < a.length; i += 3) { const t = [a[i], a[i + 1], a[i + 2]]; for (let j = 0; j < 3; j++) { const x = t[j], y = t[(j + 1) % 3]; if (!adj[x].includes(y)) adj[x].push(y) } } } }
 
     // ── Surface texture painting (bump canvas) ──
     const mkRng = (seed: number) => { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 } }
@@ -479,6 +519,20 @@ export function SculptStudio() {
         orgDirtyRef.current = false
         const old = orgMesh.geometry; orgMesh.geometry = orgGeoRef.current; old.dispose()
       }
+      // « Sculpter cette forme » : the generated mesh becomes the sculptable blob. Topology
+      // changes completely, so the undo history (indexed by vertex) has to be dropped.
+      if (adoptRef.current) {
+        adoptRef.current = false
+        const src = orgMesh.geometry
+        if (src.getAttribute('position')?.count) {
+          const old = blob.geometry
+          installSculptGeo(src.clone())
+          blob.geometry = geo
+          if (old !== geo) old.dispose()
+          past.length = 0; future = []
+          setStatus(`Forme adoptée — ${V.toLocaleString('fr-FR')} sommets sculptables. Travaille-la à la main ou à la souris.`)
+        } else setStatus('Génère d\'abord une forme avant de la sculpter.')
+      }
       if (p.mode === 'organic') {
         const m = MATERIALS.find((x) => x.kind === p.material)!
         orgMat.metalness = m.metal; orgMat.roughness = m.rough; orgMat.color.set(p.colorA)
@@ -490,7 +544,8 @@ export function SculptStudio() {
 
       anySculpt = false
       let hpar = { sp: p.spread, tw: p.twist, cs: p.childScale, driving: false }
-      if (video.readyState >= 2 && video.currentTime !== lastVideoTime && landmarker) {
+      if (p.handsPaused) skelHands = []      // pause : les mains n'agissent plus (souris toujours active)
+      if (!p.handsPaused && video.readyState >= 2 && video.currentTime !== lastVideoTime && landmarker) {
         lastVideoTime = video.currentTime
         const res = landmarker.recognizeForVideo(video, performance.now())
         const hands = res.landmarks ?? []
@@ -643,7 +698,8 @@ export function SculptStudio() {
             <button onClick={() => setMode('sculpt')} style={{ ...selStyle, flex: 1, background: mode === 'sculpt' ? 'rgba(255,140,60,0.3)' : 'rgba(255,255,255,0.08)', borderColor: mode === 'sculpt' ? 'rgba(255,140,60,0.6)' : 'rgba(255,255,255,0.18)' }}>🖐️ Sculpter</button>
             <button onClick={() => setMode('morph')} style={{ ...selStyle, flex: 1, background: mode === 'morph' ? 'rgba(255,140,60,0.3)' : 'rgba(255,255,255,0.08)', borderColor: mode === 'morph' ? 'rgba(255,140,60,0.6)' : 'rgba(255,255,255,0.18)' }}>🧬 Métamorphoser</button>
           </div>
-          <button onClick={() => setMode('organic')} style={{ ...selStyle, marginBottom: 10, background: mode === 'organic' ? 'rgba(120,220,200,0.28)' : 'rgba(255,255,255,0.08)', borderColor: mode === 'organic' ? 'rgba(120,220,200,0.6)' : 'rgba(255,255,255,0.18)' }} title="Génère des formes organiques-paramétriques continues : coques perforées, boucles, lattices — impossibles à obtenir par réplication d'instances.">🪸 Organique paramétrique</button>
+          <button onClick={() => setMode('organic')} style={{ ...selStyle, marginBottom: 6, background: mode === 'organic' ? 'rgba(120,220,200,0.28)' : 'rgba(255,255,255,0.08)', borderColor: mode === 'organic' ? 'rgba(120,220,200,0.6)' : 'rgba(255,255,255,0.18)' }} title="Génère des formes organiques-paramétriques continues : coques perforées, boucles, lattices — impossibles à obtenir par réplication d'instances.">🪸 Organique paramétrique</button>
+          <button onClick={() => setHandsPaused((v) => !v)} style={{ ...selStyle, marginBottom: 10, background: handsPaused ? 'rgba(90,200,255,0.28)' : 'rgba(255,255,255,0.08)', borderColor: handsPaused ? '#5ac8ff' : 'rgba(255,255,255,0.18)' }} title="Fige le suivi des mains : la caméra n'agit plus sur la matière. Orbite, cadrage, souris et curseurs restent actifs.">{handsPaused ? '▶ Reprendre les mains' : '⏸ Pause des mains (figer la sculpture)'}</button>
 
           {mode === 'sculpt' && <>
             <div style={{ fontSize: 10, color: '#ffcf9a', marginBottom: 10, lineHeight: 1.35, background: 'rgba(255,140,0,0.08)', padding: 7, borderRadius: 6 }}>☝️ <b>Pince</b> pouce+index pour toucher la pâte, puis <b>bouge le doigt</b> pour la travailler. Deux mains = deux outils.<br />🖱️/👆 <b>Sans caméra</b> : 1 doigt / clic gauche = <b>sculpter</b> · clic droit ou 2 doigts = <b>tourner + zoom</b>.</div>
@@ -686,6 +742,17 @@ export function SculptStudio() {
           {mode === 'organic' && <>
             <div style={{ fontSize: 10, color: '#a8f0e0', marginBottom: 10, lineHeight: 1.35, background: 'rgba(60,200,180,0.1)', padding: 7, borderRadius: 6 }}>🪸 Forme <b>continue</b> générée par champ de distance : un corps est <b>évidé</b> en coque puis <b>perforé</b> avec un booléen adouci — c'est ce fondu qui donne les entretoises rondes « poussées » plutôt que percées.<br />Tout est recalculé hors du thread d'affichage : l'aperçu reste fluide.</div>
 
+            <Field label="✨ Générer par l'IA (décris la sculpture)">
+              <textarea value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} rows={2} placeholder="ex. « une urne en dentelle d'os, ajourée et torsadée »"
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!aiBusy) runAI(aiPrompt) } }}
+                style={{ width: '100%', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)', color: 'white', padding: 8, borderRadius: 6, fontSize: 12, resize: 'vertical', fontFamily: 'inherit' }} />
+              <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                <button disabled={aiBusy} onClick={() => runAI(aiPrompt)} style={{ ...selStyle, flex: 2, fontSize: 12, opacity: aiBusy ? 0.6 : 1, background: 'rgba(160,120,255,0.24)', borderColor: 'rgba(160,120,255,0.55)' }}>{aiBusy ? '⏳ Génération…' : '✨ Générer'}</button>
+                <button disabled={aiBusy} onClick={() => { setAiPrompt(''); runAI('') }} style={{ ...selStyle, flex: 1, fontSize: 12, opacity: aiBusy ? 0.6 : 1 }} title="Variation aléatoire cohérente">🎲 Surprends-moi</button>
+              </div>
+              {aiNote && <p style={{ color: aiNote.startsWith('✨') ? '#c9b6ff' : '#ffcf9a', fontSize: 10, margin: '6px 0 0', lineHeight: 1.35 }}>{aiNote}</p>}
+            </Field>
+
             <Field label="Départ rapide">
               <div style={{ display: 'grid', gap: 5 }}>{ORG_PRESETS.map((pr) => (
                 <button key={pr.name} onClick={() => setOrg((o) => ({ ...o, ...pr.params }))} style={{ ...selStyle, fontSize: 11, padding: 7, textAlign: 'left' }} title={pr.desc}>{pr.name}</button>
@@ -720,7 +787,14 @@ export function SculptStudio() {
             <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '10px 0 6px' }}>Définition</div>
             <Field label={`Résolution — ${org.res}${org.res >= 110 ? ' (lent)' : ''}`}><input type="range" min={40} max={140} step={4} value={org.res} onChange={(e) => setOrgP('res', +e.target.value)} style={rngStyle} /></Field>
             <Field label={`Lissage — ${orgSmooth}`}><input type="range" min={0} max={4} step={1} value={orgSmooth} onChange={(e) => setOrgSmooth(+e.target.value)} style={rngStyle} /></Field>
-            <p style={{ color: orgBusy ? '#ffcf9a' : '#7a6a58', fontSize: 10, margin: '4px 0 0', lineHeight: 1.35 }}>{orgBusy ? '⏳ Génération en cours…' : `✓ ${orgTris.toLocaleString('fr-FR')} triangles · exportable en STL/GLB`}</p>
+            {/* Progression réelle : le worker remonte l'avancement de l'échantillonnage
+                du champ puis de la polygonisation (pas une animation décorative). */}
+            <div style={{ height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.1)', overflow: 'hidden', margin: '6px 0 4px' }}>
+              <div style={{ height: '100%', width: `${orgBusy ? orgProgress : 100}%`, background: orgBusy ? 'linear-gradient(90deg,#6fe0c8,#a078ff)' : 'rgba(120,220,200,0.5)', transition: 'width 120ms linear' }} />
+            </div>
+            <p style={{ color: orgBusy ? '#ffcf9a' : '#7a6a58', fontSize: 10, margin: '0 0 6px', lineHeight: 1.35 }}>{orgBusy ? `⏳ Génération — ${orgProgress} %` : `✓ ${orgTris.toLocaleString('fr-FR')} triangles · exportable en STL/GLB`}</p>
+            <button onClick={() => { adoptRef.current = true; setMode('sculpt') }} disabled={orgBusy || orgTris === 0} style={{ ...selStyle, marginBottom: 4, fontSize: 12, opacity: orgBusy || orgTris === 0 ? 0.5 : 1, background: 'rgba(255,140,60,0.22)', borderColor: 'rgba(255,140,60,0.55)' }} title="Bascule cette forme générée dans le mode Sculpter : tu peux ensuite l'étirer, la pincer, la lisser à la main ou à la souris.">🖐️ Sculpter cette forme</button>
+            <p style={{ color: '#7a6a58', fontSize: 10, margin: 0, lineHeight: 1.35 }}>La forme générée devient de la pâte : tous les outils de modelage s'y appliquent. L'historique repart à zéro (la topologie change).</p>
           </>}
 
           {mode !== 'organic' && <>

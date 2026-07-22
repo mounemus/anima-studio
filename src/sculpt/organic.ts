@@ -130,9 +130,9 @@ export function organicField(p: OrganicParams): Field {
   return f
 }
 
-/** Field → real, exportable geometry. */
-export function buildOrganic(p: OrganicParams): THREE.BufferGeometry {
-  return marchingCubes(organicField(p), clamp(24, 160, Math.round(p.res)), ORG_BOUND, 0)
+/** Field → real, exportable geometry. `onProgress(0→1)` reports meshing progress. */
+export function buildOrganic(p: OrganicParams, onProgress?: (t: number) => void): THREE.BufferGeometry {
+  return marchingCubes(organicField(p), clamp(24, 160, Math.round(p.res)), ORG_BOUND, 0, onProgress)
 }
 
 /** Ready-made looks matching the reference imagery. */

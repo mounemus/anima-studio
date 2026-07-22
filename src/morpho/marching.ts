@@ -35,19 +35,23 @@ const EDGE_CORNER: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5],
 const CORNER: [number, number, number][] = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]
 
 /** Polygonise a field within [-b,b]³ at `res` cells/axis, iso level `iso`.
- *  Returns a welded, normal-computed BufferGeometry (empty if no surface). */
-export function marchingCubes(field: Field, res: number, bound: number, iso = 0): THREE.BufferGeometry {
+ *  Returns a welded, normal-computed BufferGeometry (empty if no surface).
+ *  `onProgress(t)` (0→1), when given, is called a few dozen times so a caller in a worker
+ *  can report real progress — sampling is ~70 % of the cost, polygonisation the rest. */
+export function marchingCubes(field: Field, res: number, bound: number, iso = 0, onProgress?: (t: number) => void): THREE.BufferGeometry {
   const N = Math.max(8, Math.min(160, Math.round(res)))
   const step = (bound * 2) / N
   const dim = N + 1
   // sample the field on the grid
   const grid = new Float32Array(dim * dim * dim)
   const at = (i: number, j: number, k: number) => i + j * dim + k * dim * dim
-  for (let k = 0; k < dim; k++) { const z = -bound + k * step; for (let j = 0; j < dim; j++) { const y = -bound + j * step; for (let i = 0; i < dim; i++) { grid[at(i, j, k)] = field(-bound + i * step, y, z) } } }
+  const tick = Math.max(1, Math.floor(dim / 24))
+  for (let k = 0; k < dim; k++) { const z = -bound + k * step; for (let j = 0; j < dim; j++) { const y = -bound + j * step; for (let i = 0; i < dim; i++) { grid[at(i, j, k)] = field(-bound + i * step, y, z) } } if (onProgress && k % tick === 0) onProgress((k / dim) * 0.7) }
   const pos: number[] = []
   const vp = new Float32Array(3), corner = new Float32Array(8), cpos: number[][] = []
   const edgeV: (number[] | null)[] = new Array(12)
-  for (let k = 0; k < N; k++) for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+  for (let k = 0; k < N; k++) { if (onProgress && k % tick === 0) onProgress(0.7 + (k / N) * 0.3)
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     let cubeIndex = 0
     for (let c = 0; c < 8; c++) { const cc = CORNER[c]; const v = grid[at(i + cc[0], j + cc[1], k + cc[2])]; corner[c] = v; if (v < iso) cubeIndex |= 1 << c; cpos[c] = [-bound + (i + cc[0]) * step, -bound + (j + cc[1]) * step, -bound + (k + cc[2]) * step] }
     const edges = EDGE_TABLE[cubeIndex]
@@ -58,7 +62,8 @@ export function marchingCubes(field: Field, res: number, bound: number, iso = 0)
     }
     const tri = TRI_TABLE[cubeIndex]
     for (let t = 0; t < tri.length; t += 3) { const e0 = edgeV[tri[t]]!, e1 = edgeV[tri[t + 1]]!, e2 = edgeV[tri[t + 2]]!; if (e0 && e1 && e2) pos.push(e0[0], e0[1], e0[2], e1[0], e1[1], e1[2], e2[0], e2[1], e2[2]) }
-  }
+  } }
+  onProgress?.(1)
   void vp
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))

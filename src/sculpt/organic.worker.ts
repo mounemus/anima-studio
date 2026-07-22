@@ -13,8 +13,11 @@ interface Req { id: number; params: OrganicParams; smooth: number }
 self.onmessage = (e: MessageEvent<Req>) => {
   const { id, params, smooth } = e.data
   try {
-    let geo = buildOrganic(params)
-    if (geo.getAttribute('position').count < 3) { (self as unknown as Worker).postMessage({ id, empty: true }); return }
+    const post = (self as unknown as Worker).postMessage.bind(self)
+    let last = -1
+    let geo = buildOrganic(params, (t) => { const pc = Math.round(t * 90); if (pc !== last) { last = pc; post({ id, progress: pc }) } })
+    if (geo.getAttribute('position').count < 3) { post({ id, empty: true }); return }
+    post({ id, progress: 94 })   // soudure + lissage : le reste du temps
     // Marching-cubes output is a raw triangle soup with flat normals — weld it so the
     // surface reads as the smooth grown form it is, not a faceted shell.
     geo = weld(geo)
