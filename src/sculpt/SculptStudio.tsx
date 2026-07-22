@@ -20,6 +20,8 @@ import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision'
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
+import { ORG_DEFAULTS, ORG_FORMS, ORG_PORES, ORG_PRESETS, type OrganicParams, type OrgForm, type OrgPore } from './organic'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 const GESTURE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
@@ -110,7 +112,12 @@ export function SculptStudio() {
   const mountRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
 
-  const [mode, setMode] = useState<'sculpt' | 'morph'>('sculpt')
+  const [mode, setMode] = useState<'sculpt' | 'morph' | 'organic'>('sculpt')
+  const [org, setOrg] = useState<OrganicParams>(ORG_DEFAULTS)
+  const [orgSmooth, setOrgSmooth] = useState(1)
+  const [orgTris, setOrgTris] = useState(0)
+  const [orgBusy, setOrgBusy] = useState(false)
+  const setOrgP = <K extends keyof OrganicParams>(k: K, v: OrganicParams[K]) => setOrg((o) => ({ ...o, [k]: v }))
   const [tool, setTool] = useState<Tool>('grab')
   const [brushSize, setBrushSize] = useState(0.35)
   const [strength, setStrength] = useState(0.6)
@@ -151,7 +158,44 @@ export function SculptStudio() {
   const clearTexRef = useRef(false)
   const resetRef = useRef(false), undoRef = useRef(false), redoRef = useRef(false)
   const exportRef = useRef<null | 'stl' | 'glb'>(null)
+  const orgGeoRef = useRef<THREE.BufferGeometry | null>(null)   // dernier maillage organique reçu du worker
+  const orgDirtyRef = useRef(false)                              // → à brancher sur le mesh dans la boucle
   const recCtl = useRef<{ start: () => void; stop: () => void } | null>(null)
+
+  // ── Organic module : the field is polygonised in a worker (res 64 ≈ 0.5 s, res 128 ≈ 3.4 s
+  //    — inline it would stall the render loop). Jobs are numbered so a superseded result
+  //    from a slower, older job can never overwrite a newer mesh. ──
+  const orgWorkerRef = useRef<Worker | null>(null)
+  const orgJobRef = useRef(0)
+  useEffect(() => {
+    let w: Worker | null = null
+    try { w = new Worker(new URL('./organic.worker.ts', import.meta.url), { type: 'module' }) } catch { w = null }
+    orgWorkerRef.current = w
+    if (w) w.onmessage = (e: MessageEvent<{ id: number; position?: Float32Array; normal?: Float32Array | null; index?: Uint32Array | null; tris?: number; empty?: boolean; error?: string }>) => {
+      const d = e.data
+      if (d.id !== orgJobRef.current) return                    // périmé : un job plus récent l'a remplacé
+      setOrgBusy(false)
+      if (d.error) { setStatus(`Génération organique : ${d.error}`); return }
+      if (d.empty || !d.position) { setStatus('Forme vide — réduis les perforations ou l\'épaisseur de coque.'); return }
+      const g = new THREE.BufferGeometry()
+      g.setAttribute('position', new THREE.BufferAttribute(d.position, 3))
+      if (d.normal) g.setAttribute('normal', new THREE.BufferAttribute(d.normal, 3))
+      if (d.index) g.setIndex(new THREE.BufferAttribute(d.index, 1))
+      if (!d.normal) g.computeVertexNormals()
+      orgGeoRef.current = g; orgDirtyRef.current = true
+      setOrgTris(d.tris ?? 0)
+      setStatus(`Forme organique générée — ${(d.tris ?? 0).toLocaleString('fr-FR')} triangles.`)
+    }
+    return () => { w?.terminate(); orgWorkerRef.current = null }
+  }, [])
+  useEffect(() => {
+    if (mode !== 'organic') return
+    const w = orgWorkerRef.current
+    if (!w) { setStatus('Worker indisponible — génération organique impossible.'); return }
+    setOrgBusy(true)
+    const t = setTimeout(() => { const id = ++orgJobRef.current; w.postMessage({ id, params: org, smooth: orgSmooth }) }, 200)
+    return () => clearTimeout(t)
+  }, [org, orgSmooth, mode])
 
   useEffect(() => {
     const video = videoRef.current!, mount = mountRef.current!, overlay = overlayRef.current!
@@ -186,6 +230,13 @@ export function SculptStudio() {
     const bumpTex = new THREE.CanvasTexture(bumpCanvas); bumpTex.wrapS = THREE.RepeatWrapping; bumpTex.wrapT = THREE.ClampToEdgeWrapping
     const clayMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#c8794a'), roughness: 0.85, metalness: 0, flatShading: false, bumpMap: bumpTex, bumpScale: 1, displacementMap: bumpTex, displacementScale: 0, displacementBias: 0 })
     const blob = new THREE.Mesh(geo, clayMat); blob.frustumCulled = false; scene.add(blob)
+
+    // ── Organic-parametric mesh (mode « organique ») : geometry arrives from the worker.
+    // Gets its own PMREM environment so glossy glaze / chrome actually reflect something. ──
+    const pmrem = new THREE.PMREMGenerator(renderer); let envTex: THREE.Texture | null = null
+    try { envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture } catch { envTex = null }
+    const orgMat = new THREE.MeshPhysicalMaterial({ color: new THREE.Color('#9fd8d0'), roughness: 0.3, metalness: 0.1, clearcoat: 0.8, clearcoatRoughness: 0.16, side: THREE.DoubleSide, envMap: envTex, envMapIntensity: 1.1 })
+    const orgMesh = new THREE.Mesh(new THREE.BufferGeometry(), orgMat); orgMesh.frustumCulled = false; orgMesh.visible = false; scene.add(orgMesh)
     // adjacency for the smooth tool
     const adj: number[][] = Array.from({ length: V }, () => [])
     { const idx = geo.getIndex(); if (idx) { const a = idx.array as ArrayLike<number>; for (let i = 0; i < a.length; i += 3) { const t = [a[i], a[i + 1], a[i + 2]]; for (let j = 0; j < 3; j++) { const x = t[j], y = t[(j + 1) % 3]; if (!adj[x].includes(y)) adj[x].push(y) } } } }
@@ -378,7 +429,8 @@ export function SculptStudio() {
     const doExport = (fmt: 'stl' | 'glb') => {
       const p = paramsRef.current
       let merged: THREE.BufferGeometry | null
-      if (p.mode === 'morph' && inst.count > 0) { const geoms: THREE.BufferGeometry[] = []; const m4 = new THREE.Matrix4(); const n = Math.min(inst.count, 400); for (let i = 0; i < n; i++) { inst.getMatrixAt(i, m4); const g = warpGeo.clone().applyMatrix4(m4); geoms.push(g) } merged = mergeGeometries(geoms, false); geoms.forEach((g) => g.dispose()) }
+      if (p.mode === 'organic') { const og = orgMesh.geometry; merged = og.getAttribute('position')?.count ? og.clone() : null; if (!merged) { setStatus('Rien à exporter — génère d\'abord une forme.'); return } }
+      else if (p.mode === 'morph' && inst.count > 0) { const geoms: THREE.BufferGeometry[] = []; const m4 = new THREE.Matrix4(); const n = Math.min(inst.count, 400); for (let i = 0; i < n; i++) { inst.getMatrixAt(i, m4); const g = warpGeo.clone().applyMatrix4(m4); geoms.push(g) } merged = mergeGeometries(geoms, false); geoms.forEach((g) => g.dispose()) }
       else merged = geo.clone()
       if (!merged) { setStatus('Export impossible.'); return }
       if (fmt === 'stl') { const stl = new STLExporter().parse(new THREE.Mesh(merged, new THREE.MeshStandardMaterial()), { binary: false }); downloadBlob(new Blob([stl], { type: 'model/stl' }), `sculpt-${Date.now()}.stl`); merged.dispose(); setStatus('Export STL.') }
@@ -421,7 +473,20 @@ export function SculptStudio() {
       instMat.bumpScale = p.texDepth * 1.8; instMat.displacementScale = disp * 0.7; instMat.displacementBias = -disp * 0.35
       if (clearTexRef.current) { clearTexRef.current = false; bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, BW, BH); bumpTex.needsUpdate = true; lastTexSig = 'cleared'; setStatus('Texture effacée.') }
       { const tsig = `${p.surfPattern}|${p.texScale.toFixed(2)}`; if (tsig !== lastTexSig) { paintGlobal(p.surfPattern, p.texScale); lastTexSig = tsig } }
-      blob.visible = p.mode === 'sculpt'; inst.visible = p.mode === 'morph'
+      blob.visible = p.mode === 'sculpt'; inst.visible = p.mode === 'morph'; orgMesh.visible = p.mode === 'organic'
+      // Pick up a freshly generated organic mesh (built off-thread) and drive its finish.
+      if (orgDirtyRef.current && orgGeoRef.current) {
+        orgDirtyRef.current = false
+        const old = orgMesh.geometry; orgMesh.geometry = orgGeoRef.current; old.dispose()
+      }
+      if (p.mode === 'organic') {
+        const m = MATERIALS.find((x) => x.kind === p.material)!
+        orgMat.metalness = m.metal; orgMat.roughness = m.rough; orgMat.color.set(p.colorA)
+        // « bio » = émail irisé façon raku/nacre ; chrome = clearcoat pur, sans irisation.
+        orgMat.iridescence = p.material === 'bio' ? 0.85 : 0
+        orgMat.iridescenceIOR = 1.5
+        orgMat.clearcoat = p.material === 'matte' ? 0 : 0.85
+      }
 
       anySculpt = false
       let hpar = { sp: p.spread, tw: p.twist, cs: p.childScale, driving: false }
@@ -545,7 +610,9 @@ export function SculptStudio() {
       try { landmarker?.close() } catch { /* noop */ }
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
       try { if (recActive && recorder) recorder.stop() } catch { /* noop */ }
-      geo.dispose(); warpGeo.dispose(); clayMat.dispose(); instMat.dispose(); inst.dispose(); bumpTex.dispose(); renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
+      geo.dispose(); warpGeo.dispose(); clayMat.dispose(); instMat.dispose(); inst.dispose(); bumpTex.dispose()
+      orgMesh.geometry.dispose(); orgMat.dispose(); envTex?.dispose(); pmrem.dispose()
+      renderer.dispose(); if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
     }
   }, [])
 
@@ -572,10 +639,11 @@ export function SculptStudio() {
           </div>
           <div style={{ color: error ? '#ff6b6b' : '#9a8a78', fontSize: 11, marginBottom: 10, lineHeight: 1.3 }}>{error ?? status}</div>
 
-          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
             <button onClick={() => setMode('sculpt')} style={{ ...selStyle, flex: 1, background: mode === 'sculpt' ? 'rgba(255,140,60,0.3)' : 'rgba(255,255,255,0.08)', borderColor: mode === 'sculpt' ? 'rgba(255,140,60,0.6)' : 'rgba(255,255,255,0.18)' }}>🖐️ Sculpter</button>
             <button onClick={() => setMode('morph')} style={{ ...selStyle, flex: 1, background: mode === 'morph' ? 'rgba(255,140,60,0.3)' : 'rgba(255,255,255,0.08)', borderColor: mode === 'morph' ? 'rgba(255,140,60,0.6)' : 'rgba(255,255,255,0.18)' }}>🧬 Métamorphoser</button>
           </div>
+          <button onClick={() => setMode('organic')} style={{ ...selStyle, marginBottom: 10, background: mode === 'organic' ? 'rgba(120,220,200,0.28)' : 'rgba(255,255,255,0.08)', borderColor: mode === 'organic' ? 'rgba(120,220,200,0.6)' : 'rgba(255,255,255,0.18)' }} title="Génère des formes organiques-paramétriques continues : coques perforées, boucles, lattices — impossibles à obtenir par réplication d'instances.">🪸 Organique paramétrique</button>
 
           {mode === 'sculpt' && <>
             <div style={{ fontSize: 10, color: '#ffcf9a', marginBottom: 10, lineHeight: 1.35, background: 'rgba(255,140,0,0.08)', padding: 7, borderRadius: 6 }}>☝️ <b>Pince</b> pouce+index pour toucher la pâte, puis <b>bouge le doigt</b> pour la travailler. Deux mains = deux outils.<br />🖱️/👆 <b>Sans caméra</b> : 1 doigt / clic gauche = <b>sculpter</b> · clic droit ou 2 doigts = <b>tourner + zoom</b>.</div>
@@ -615,12 +683,54 @@ export function SculptStudio() {
             </>}
           </>}
 
+          {mode === 'organic' && <>
+            <div style={{ fontSize: 10, color: '#a8f0e0', marginBottom: 10, lineHeight: 1.35, background: 'rgba(60,200,180,0.1)', padding: 7, borderRadius: 6 }}>🪸 Forme <b>continue</b> générée par champ de distance : un corps est <b>évidé</b> en coque puis <b>perforé</b> avec un booléen adouci — c'est ce fondu qui donne les entretoises rondes « poussées » plutôt que percées.<br />Tout est recalculé hors du thread d'affichage : l'aperçu reste fluide.</div>
+
+            <Field label="Départ rapide">
+              <div style={{ display: 'grid', gap: 5 }}>{ORG_PRESETS.map((pr) => (
+                <button key={pr.name} onClick={() => setOrg((o) => ({ ...o, ...pr.params }))} style={{ ...selStyle, fontSize: 11, padding: 7, textAlign: 'left' }} title={pr.desc}>{pr.name}</button>
+              ))}</div>
+            </Field>
+
+            <Field label="Corps"><select value={org.form} onChange={(e) => setOrgP('form', e.target.value as OrgForm)} style={selStyle}>{ORG_FORMS.map((f) => <option key={f.kind} value={f.kind}>{f.label}</option>)}</select></Field>
+            <Field label="Perforation"><select value={org.pore} onChange={(e) => setOrgP('pore', e.target.value as OrgPore)} style={selStyle}>{ORG_PORES.map((f) => <option key={f.kind} value={f.kind}>{f.label}</option>)}</select></Field>
+
+            {(org.pore === 'pores' || org.pore === 'boucles') && <>
+              <Field label={`Symétrie radiale (par anneau) — ${org.poreCount}`}><input type="range" min={2} max={12} step={1} value={org.poreCount} onChange={(e) => setOrgP('poreCount', +e.target.value)} style={rngStyle} /></Field>
+              <Field label={`Anneaux (hauteur) — ${org.poreRows}`}><input type="range" min={1} max={8} step={1} value={org.poreRows} onChange={(e) => setOrgP('poreRows', +e.target.value)} style={rngStyle} /></Field>
+              <Field label={`Taille des ouvertures — ${org.poreSize.toFixed(2)}`}><input type="range" min={0.04} max={0.32} step={0.01} value={org.poreSize} onChange={(e) => setOrgP('poreSize', +e.target.value)} style={rngStyle} /></Field>
+              <Field label={`Écartement à l'axe — ${org.poreRadius.toFixed(2)}`}><input type="range" min={0.1} max={0.8} step={0.02} value={org.poreRadius} onChange={(e) => setOrgP('poreRadius', +e.target.value)} style={rngStyle} /></Field>
+            </>}
+            {(org.pore === 'lattice' || org.pore === 'cellules') && <Field label={`Densité du réseau — ${org.latticeFreq.toFixed(1)}`}><input type="range" min={2} max={14} step={0.5} value={org.latticeFreq} onChange={(e) => setOrgP('latticeFreq', +e.target.value)} style={rngStyle} /></Field>}
+
+            <Field label={`Fondu des jonctions — ${org.blend.toFixed(3)}`}><input type="range" min={0} max={0.22} step={0.005} value={org.blend} onChange={(e) => setOrgP('blend', +e.target.value)} style={rngStyle} /></Field>
+            <Field label={`Épaisseur de coque — ${org.shell === 0 ? 'plein' : org.shell.toFixed(3)}`}><input type="range" min={0} max={0.16} step={0.005} value={org.shell} onChange={(e) => setOrgP('shell', +e.target.value)} style={rngStyle} /></Field>
+            <label style={chkRow}><input type="checkbox" checked={org.mirror} onChange={(e) => setOrgP('mirror', e.target.checked)} style={{ accentColor: '#6fe0c8' }} /> 🦋 Miroir bilatéral</label>
+
+            <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '10px 0 6px' }}>Déformateurs</div>
+            <Field label={`Torsion — ${org.twist.toFixed(2)}`}><input type="range" min={-3.5} max={3.5} step={0.05} value={org.twist} onChange={(e) => setOrgP('twist', +e.target.value)} style={rngStyle} /></Field>
+            <Field label={`Effilé — ${org.taper.toFixed(2)}`}><input type="range" min={-0.8} max={0.8} step={0.02} value={org.taper} onChange={(e) => setOrgP('taper', +e.target.value)} style={rngStyle} /></Field>
+            <Field label={`Courbure — ${org.bend.toFixed(2)}`}><input type="range" min={-1.2} max={1.2} step={0.02} value={org.bend} onChange={(e) => setOrgP('bend', +e.target.value)} style={rngStyle} /></Field>
+            <Field label={`Bruit organique — ${org.noiseAmp.toFixed(3)}`}><input type="range" min={0} max={0.09} step={0.003} value={org.noiseAmp} onChange={(e) => setOrgP('noiseAmp', +e.target.value)} style={rngStyle} /></Field>
+            {org.noiseAmp > 0 && <>
+              <Field label="Type de bruit"><select value={org.noiseType} onChange={(e) => setOrgP('noiseType', e.target.value as OrganicParams['noiseType'])} style={selStyle}>{[['fbm', '🌫 Fractal'], ['ridged', '⛰ Crêtes'], ['turbulence', '🌀 Turbulence'], ['worley', '🫧 Cellulaire'], ['value', '▫ Simple']].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+              <Field label={`Grain — ${org.noiseFreq.toFixed(1)}`}><input type="range" min={0.5} max={8} step={0.5} value={org.noiseFreq} onChange={(e) => setOrgP('noiseFreq', +e.target.value)} style={rngStyle} /></Field>
+            </>}
+
+            <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '10px 0 6px' }}>Définition</div>
+            <Field label={`Résolution — ${org.res}${org.res >= 110 ? ' (lent)' : ''}`}><input type="range" min={40} max={140} step={4} value={org.res} onChange={(e) => setOrgP('res', +e.target.value)} style={rngStyle} /></Field>
+            <Field label={`Lissage — ${orgSmooth}`}><input type="range" min={0} max={4} step={1} value={orgSmooth} onChange={(e) => setOrgSmooth(+e.target.value)} style={rngStyle} /></Field>
+            <p style={{ color: orgBusy ? '#ffcf9a' : '#7a6a58', fontSize: 10, margin: '4px 0 0', lineHeight: 1.35 }}>{orgBusy ? '⏳ Génération en cours…' : `✓ ${orgTris.toLocaleString('fr-FR')} triangles · exportable en STL/GLB`}</p>
+          </>}
+
+          {mode !== 'organic' && <>
           <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 6px' }}>Texture de surface</div>
           <Field label="Finition globale (tout d'un coup)"><select value={surfPattern} onChange={(e) => setSurfPattern(e.target.value as SurfPattern)} style={selStyle}>{SURF_PATTERNS.map((s) => <option key={s.kind} value={s.kind}>{s.label}</option>)}</select></Field>
           <Field label={`Échelle du motif — ${Math.round(texScale * 100)}%`}><input type="range" min={0.1} max={1} step={0.05} value={texScale} onChange={(e) => setTexScale(+e.target.value)} style={rngStyle} /></Field>
           <Field label={`Profondeur du relief — ${Math.round(texDepth * 100)}%`}><input type="range" min={0} max={1} step={0.05} value={texDepth} onChange={(e) => setTexDepth(+e.target.value)} style={rngStyle} /></Field>
           <button onClick={() => { clearTexRef.current = true }} style={{ ...selStyle, marginBottom: 4, fontSize: 12 }}>🧽 Effacer la texture</button>
           <p style={{ color: '#7a6a58', fontSize: 10, margin: '4px 0 0', lineHeight: 1.35 }}>Astuce : choisis un outil ⋮⋮/🪨/〰 ci-dessus pour graver le motif <b>à la main</b> localement.</p>
+          </>}
 
           <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 6px' }}>Matière</div>
           <Field label="Matériau"><select value={material} onChange={(e) => setMaterial(e.target.value as MatKind)} style={selStyle}>{MATERIALS.map((m) => <option key={m.kind} value={m.kind}>{m.label}</option>)}</select></Field>
