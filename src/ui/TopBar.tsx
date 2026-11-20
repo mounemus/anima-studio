@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music, ScanFace, Glasses, Clock, Sparkles, Aperture, PenTool, Disc3, Atom, Workflow } from 'lucide-react'
+import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music, ScanFace, Glasses, Clock, Sparkles, Aperture, PenTool, Disc3, Atom, Workflow, Shapes } from 'lucide-react'
 import { startMood, stopMood, isMoodActive, triggerMoodReflect } from '../engine/MoodEngine'
 import { Link } from 'react-router-dom'
 import { listDisplays, openOutputWindow, type DisplayInfo } from '../lib/multiDisplay'
 import { startMIDI, stopMIDI } from '../senses/MIDI'
 import { useSceneStore } from '../store/sceneStore'
 import { startHands, stopHands, createCameraStream } from '../senses/Hands'
+import { LeapToggle } from './LeapToggle'
 import { startPose, stopPose } from '../senses/Pose'
 import { startAudio, stopAudio } from '../senses/Audio'
 import { startLight, stopLight } from '../senses/Light'
@@ -281,6 +282,7 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
           <button onClick={toggleHands} className={handsOn ? 'primary' : ''} title="Webcam + tracking main + corps">
             <Camera size={14} /> Caméra
           </button>
+          <LeapToggle compact />
           <button onClick={toggleAudio} className={audioOn ? 'primary' : ''} title="Microphone (FFT)">
             <Mic size={14} /> Micro
           </button>
@@ -358,6 +360,9 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
         </Link>
         <Link to="/sketch" title="Sketch AR 3D — dessin 3D dans l'espace aux doigts (Gravity Sketch / Sketchar)" style={{ display: 'inline-flex' }}>
           <button className="ghost icon"><PenTool size={16} /></button>
+        </Link>
+        <Link to="/spatial" title="Esquisse spatiale — dessin et modelage 3D en réalité augmentée, au Leap Motion ou à la caméra" style={{ display: 'inline-flex' }}>
+          <button className="ghost icon"><Shapes size={16} /></button>
         </Link>
         <Link to="/pottery" title="Poterie — tour de potier, argile tournée aux deux mains" style={{ display: 'inline-flex' }}>
           <button className="ghost icon"><Disc3 size={16} /></button>

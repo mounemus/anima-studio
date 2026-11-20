@@ -17,6 +17,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
+import { pollHands, handClock, autoConnectLeap } from '../senses/Leap'
+import { LeapToggle } from '../ui/LeapToggle'
 import { senseBus } from '../senses/SenseBus'
 import { startAudio } from '../senses/Audio'
 
@@ -95,7 +97,7 @@ export function MandalaStudio() {
     let rafId = 0
     let running = true
     let hueBase = 0
-    let lastVideoTime = -1
+    const clock = handClock(); autoConnectLeap()
 
     const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight }
     resize()
@@ -339,9 +341,8 @@ export function MandalaStudio() {
       const tips: { x: number; y: number }[] = []
       const attractors: { x: number; y: number; hue: number }[] = []   // all fingertips, for quantum + sacred modes
 
-      if (video.readyState >= 2 && video.currentTime !== lastVideoTime && landmarker) {
-        lastVideoTime = video.currentTime
-        const res = landmarker.detectForVideo(video, performance.now())
+      const res = pollHands(video, landmarker, clock)   // Leap Motion s'il est connecté, sinon caméra
+      if (res) {
         const hands = res.landmarks ?? []
         if (hands.length > 0) {
           hands.forEach((lm, handIdx) => {
@@ -482,6 +483,7 @@ export function MandalaStudio() {
         loop()
       } catch (e: any) {
         setError(`Caméra ou modèle indisponible : ${e?.message ?? e}`)
+        loop()   // sans caméra, le Leap Motion peut quand même piloter
       }
     }
     init()
@@ -620,6 +622,7 @@ export function MandalaStudio() {
           </div>
         )}
 
+        <LeapToggle />
         <Field label="Squelette des mains">
           <select value={skeleton ? 'visible' : 'hidden'} onChange={(e) => setSkeleton(e.target.value === 'visible')} style={selStyle}>
             <option value="visible">Visible (cyan AR)</option>

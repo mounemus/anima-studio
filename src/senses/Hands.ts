@@ -1,5 +1,6 @@
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
 import { senseBus } from './SenseBus'
+import { leapConnected, onLeapFrame } from './Leap'
 
 let landmarker: HandLandmarker | null = null
 let video: HTMLVideoElement | null = null
@@ -71,44 +72,7 @@ function loop() {
   if (!running || !video || !landmarker) return
   if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime
-    const res = landmarker.detectForVideo(video, performance.now())
-    if (res.landmarks && res.landmarks.length > 0) {
-      const lm = res.landmarks[0]
-      const indexTip = lm[8]
-      const thumbTip = lm[4]
-      const palm = lm[9]
-      const pinchDist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y, (indexTip.z ?? 0) - (thumbTip.z ?? 0))
-      const pinch = Math.max(0, Math.min(1, 1 - pinchDist * 5))
-      const tips = [lm[8], lm[12], lm[16], lm[20]]
-      const opn = tips.reduce((s, t) => s + Math.hypot(t.x - palm.x, t.y - palm.y), 0) / tips.length
-      const openness = Math.max(0, Math.min(1, opn * 3))
-      // MediaPipe x is mirrored once here (webcam is mirrored visually); the rest
-      // of the pipeline (Obstacles.toWorldX, ColorTracker.pickColorAt, MaskedWebcam)
-      // must NOT apply another `1 - x` flip — they read these values as-is.
-      senseBus.hands.detected = true
-      senseBus.hands.indexTip.x = 1 - indexTip.x
-      senseBus.hands.indexTip.y = indexTip.y
-      senseBus.hands.indexTip.z = indexTip.z ?? 0
-      senseBus.hands.palm.x = 1 - palm.x
-      senseBus.hands.palm.y = palm.y
-      senseBus.hands.palm.z = palm.z ?? 0
-      senseBus.hands.pinch = pinch
-      senseBus.hands.openness = openness
-      // Mirror + copy all 21 landmarks into the pre-allocated buffer so the
-      // overlay can draw the full hand skeleton. Same mirrored-x convention
-      // as indexTip/palm — downstream readers must NOT apply another flip.
-      const dst = senseBus.hands.landmarks
-      for (let i = 0; i < 21; i++) {
-        const src = lm[i]
-        if (!src) continue
-        dst[i].x = 1 - src.x
-        dst[i].y = src.y
-        dst[i].z = src.z ?? 0
-      }
-      lastDetectionTime = performance.now()
-    } else {
-      senseBus.hands.detected = false
-    }
+    if (!leapConnected()) writeHands(landmarker.detectForVideo(video, performance.now()).landmarks)
   }
   // Stale guard: if we haven't had a positive detection in the last 300ms,
   // force `detected = false` even if the last frame happened to set true.
@@ -118,6 +82,51 @@ function loop() {
   }
   if (running) rafId = requestAnimationFrame(loop)
 }
+
+/** Écrit la première main détectée dans le SenseBus (caméra ou Leap Motion). */
+function writeHands(landmarks: { x: number; y: number; z?: number }[][] | undefined) {
+  if (landmarks && landmarks.length > 0) {
+    const lm = landmarks[0]
+    const indexTip = lm[8]
+    const thumbTip = lm[4]
+    const palm = lm[9]
+    const pinchDist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y, (indexTip.z ?? 0) - (thumbTip.z ?? 0))
+    const pinch = Math.max(0, Math.min(1, 1 - pinchDist * 5))
+    const tips = [lm[8], lm[12], lm[16], lm[20]]
+    const opn = tips.reduce((s, t) => s + Math.hypot(t.x - palm.x, t.y - palm.y), 0) / tips.length
+    const openness = Math.max(0, Math.min(1, opn * 3))
+    // MediaPipe x is mirrored once here (webcam is mirrored visually); the rest
+    // of the pipeline (Obstacles.toWorldX, ColorTracker.pickColorAt, MaskedWebcam)
+    // must NOT apply another `1 - x` flip — they read these values as-is.
+    senseBus.hands.detected = true
+    senseBus.hands.indexTip.x = 1 - indexTip.x
+    senseBus.hands.indexTip.y = indexTip.y
+    senseBus.hands.indexTip.z = indexTip.z ?? 0
+    senseBus.hands.palm.x = 1 - palm.x
+    senseBus.hands.palm.y = palm.y
+    senseBus.hands.palm.z = palm.z ?? 0
+    senseBus.hands.pinch = pinch
+    senseBus.hands.openness = openness
+    // Mirror + copy all 21 landmarks into the pre-allocated buffer so the
+    // overlay can draw the full hand skeleton. Same mirrored-x convention
+    // as indexTip/palm — downstream readers must NOT apply another flip.
+    const dst = senseBus.hands.landmarks
+    for (let i = 0; i < 21; i++) {
+      const src = lm[i]
+      if (!src) continue
+      dst[i].x = 1 - src.x
+      dst[i].y = src.y
+      dst[i].z = src.z ?? 0
+    }
+    lastDetectionTime = performance.now()
+  } else {
+    senseBus.hands.detected = false
+  }
+}
+
+// Leap Motion branché (bouton de la barre du haut) : ses trames remplacent la caméra,
+// même caméra éteinte. Le capteur envoie aussi des trames vides, donc `detected` retombe.
+onLeapFrame((f) => writeHands(f.landmarks))
 
 export async function createCameraStream(videoEl: HTMLVideoElement) {
   const stream = await navigator.mediaDevices.getUserMedia({

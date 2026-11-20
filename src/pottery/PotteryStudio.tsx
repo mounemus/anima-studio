@@ -21,6 +21,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import * as THREE from 'three'
+import { pollHands, handClock, autoConnectLeap } from '../senses/Leap'
+import { LeapToggle } from '../ui/LeapToggle'
 import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
@@ -361,7 +363,8 @@ export function PotteryStudio() {
     const video = videoRef.current!, mount = mountRef.current!, overlay = overlayRef.current!
     const octx = overlay.getContext('2d')!
     let landmarker: GestureRecognizer | null = null, stream: MediaStream | null = null
-    let rafId = 0, running = true, lastVideoTime = -1
+    let rafId = 0, running = true
+    const clock = handClock(); autoConnectLeap()
 
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 100)
@@ -624,9 +627,9 @@ export function PotteryStudio() {
       let newFrame = false
       const contacts: Contact[] = []
       if (p.paused) skelHands = []   // en pause : fige tout (tour + sculpture), on ne fait que rendre/orbiter
-      if (!p.paused && video.readyState >= 2 && video.currentTime !== lastVideoTime && landmarker) {
-        lastVideoTime = video.currentTime; newFrame = true
-        const res = landmarker.recognizeForVideo(video, performance.now())
+      const res = p.paused ? null : pollHands(video, landmarker, clock)   // Leap Motion s'il est connecté, sinon caméra
+      if (res) {
+        newFrame = true
         const hands = res.landmarks ?? []
         skelHands = hands.slice(0, 2).map((lm) => lm.map((k: { x: number; y: number }) => ({ x: (1 - k.x) * overlay.width, y: k.y * overlay.height })))
         for (let i = 0; i < Math.min(2, hands.length); i++) {
@@ -840,6 +843,7 @@ export function PotteryStudio() {
           <label style={chkRow}><input type="checkbox" checked={showGuides} onChange={(e) => setShowGuides(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> 📐 Repères (axe)</label>
           <label style={chkRow}><input type="checkbox" checked={showSkeleton} onChange={(e) => setShowSkeleton(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> ✋ Squelette des mains</label>
           <label style={chkRow}><input type="checkbox" checked={showMeasure} onChange={(e) => setShowMeasure(e.target.checked)} style={{ accentColor: '#ffb47a' }} /> 📏 Cotes (hauteur / Ø / paroi / volume)</label>
+          <LeapToggle accent="#ffb47a" />
           <Field label="Fond"><select value={bgMode} onChange={(e) => setBgMode(e.target.value as 'webcam' | 'black')} style={selStyle}><option value="webcam">📷 Webcam</option><option value="black">⬛ Atelier sombre</option></select></Field>
 
           <div style={{ fontSize: 10, color: '#ffb47a', textTransform: 'uppercase', letterSpacing: 1, margin: '14px 0 6px' }}>Finaliser & exporter</div>

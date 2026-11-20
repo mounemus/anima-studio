@@ -16,6 +16,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import * as THREE from 'three'
+import { pollHands, handClock, autoConnectLeap } from '../senses/Leap'
+import { LeapToggle } from '../ui/LeapToggle'
 import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision'
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
@@ -291,7 +293,8 @@ export function SculptStudio() {
     const video = videoRef.current!, mount = mountRef.current!, overlay = overlayRef.current!
     const octx = overlay.getContext('2d')!
     let landmarker: GestureRecognizer | null = null, stream: MediaStream | null = null
-    let rafId = 0, running = true, lastVideoTime = -1
+    let rafId = 0, running = true
+    const clock = handClock(); autoConnectLeap()
 
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 100)
@@ -618,9 +621,8 @@ export function SculptStudio() {
       anySculpt = false
       let hpar = { sp: p.spread, tw: p.twist, cs: p.childScale, driving: false }
       if (p.handsPaused) skelHands = []      // pause : les mains n'agissent plus (souris toujours active)
-      if (!p.handsPaused && video.readyState >= 2 && video.currentTime !== lastVideoTime && landmarker) {
-        lastVideoTime = video.currentTime
-        const res = landmarker.recognizeForVideo(video, performance.now())
+      const res = p.handsPaused ? null : pollHands(video, landmarker, clock)   // Leap Motion s'il est connecté, sinon caméra
+      if (res) {
         const hands = res.landmarks ?? []
         skelHands = hands.slice(0, 2).map((lm) => lm.map((k: { x: number; y: number }) => ({ x: (1 - k.x) * overlay.width, y: k.y * overlay.height })))
         if (!hands.length) skelHands = []
@@ -930,6 +932,7 @@ export function SculptStudio() {
           <Field label="Matériau"><select value={material} onChange={(e) => setMaterial(e.target.value as MatKind)} style={selStyle}>{MATERIALS.map((m) => <option key={m.kind} value={m.kind}>{m.label}</option>)}</select></Field>
           <Field label={mode === 'morph' ? 'Couleurs (dégradé par profondeur)' : 'Couleur'}><div style={{ display: 'flex', gap: 10, alignItems: 'center' }}><input type="color" value={colorA} onChange={(e) => setColorA(e.target.value)} style={{ width: 40, height: 30, border: 'none', background: 'none', cursor: 'pointer' }} />{mode === 'morph' && <input type="color" value={colorB} onChange={(e) => setColorB(e.target.value)} style={{ width: 40, height: 30, border: 'none', background: 'none', cursor: 'pointer' }} />}</div></Field>
           <label style={chkRow}><input type="checkbox" checked={showSkeleton} onChange={(e) => setShowSkeleton(e.target.checked)} style={{ accentColor: '#ff8c3c' }} /> ✋ Squelette des mains</label>
+          <LeapToggle accent="#ff8c3c" />
           <Field label="Fond"><select value={bgMode} onChange={(e) => setBgMode(e.target.value as 'webcam' | 'black')} style={selStyle}><option value="black">⬛ Noir</option><option value="webcam">📷 Webcam</option></select></Field>
 
           <div style={{ fontSize: 10, color: '#ff8c3c', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 6px' }}>Export</div>

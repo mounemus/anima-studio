@@ -17,6 +17,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import * as THREE from 'three'
+import { pollHands, handClock, autoConnectLeap } from '../senses/Leap'
+import { LeapToggle } from '../ui/LeapToggle'
 import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
@@ -352,7 +354,8 @@ export function SketchStudio() {
     const video = videoRef.current!, mount = mountRef.current!, overlay = overlayRef.current!
     const octx = overlay.getContext('2d')!
     let landmarker: GestureRecognizer | null = null, stream: MediaStream | null = null
-    let rafId = 0, running = true, lastVideoTime = -1
+    let rafId = 0, running = true
+    const clock = handClock(); autoConnectLeap()
 
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 100)
@@ -752,10 +755,9 @@ export function SketchStudio() {
       // (rAF, ~60fps) runs faster than the webcam (~30fps) ; clearing every rAF but drawing
       // only on new frames made the overlay (menu, cursor, gauge) blink at ~30Hz. Skipping
       // both on unchanged frames keeps the last overlay on screen → rock-steady.
-      if (video.readyState >= 2 && video.currentTime !== lastVideoTime && landmarker) {
-        lastVideoTime = video.currentTime
+      const res = pollHands(video, landmarker, clock)   // Leap Motion s'il est connecté, sinon caméra
+      if (res) {
         octx.clearRect(0, 0, overlay.width, overlay.height)
-        const res = landmarker.recognizeForVideo(video, performance.now())
         const hands = res.landmarks ?? []
         const gestures = res.gestures ?? []
         if (hands.length > 0) {
@@ -1005,7 +1007,7 @@ export function SketchStudio() {
         // One-Euro filter + hysteresis absorb the extra noise.
         landmarker = await GestureRecognizer.createFromOptions(files, { baseOptions: { modelAssetPath: GESTURE_MODEL_URL, delegate: 'GPU' }, runningMode: 'VIDEO', numHands: 2, minHandDetectionConfidence: 0.45, minHandPresenceConfidence: 0.3, minTrackingConfidence: 0.3 })
         setStatus('Prêt — trace, ferme le POING pour tourner la vue, dessine dans le nouveau plan ✦'); loop()
-      } catch (e: any) { setError(`Caméra ou modèle indisponible : ${e?.message ?? e}`) }
+      } catch (e: any) { setError(`Caméra ou modèle indisponible : ${e?.message ?? e}`); loop() }
     }
     init()
 
@@ -1080,6 +1082,7 @@ export function SketchStudio() {
             <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onFile} />
             {refUrl && <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}><span style={{ fontSize: 11, color: '#aaa' }}>Opacité</span><input type="range" min={0.05} max={1} step={0.05} value={refOpacity} onChange={(e) => setRefOpacity(+e.target.value)} style={{ ...rngStyle, flex: 1 }} /></div>}
           </Field>
+          <LeapToggle />
           <Field label="Fond"><select value={bgMode} onChange={(e) => setBgMode(e.target.value as BgMode)} style={selStyle}><option value="webcam">📷 Webcam (AR)</option><option value="black">⬛ Noir</option></select></Field>
 
           <div style={{ fontSize: 10, color: '#00f0ff', textTransform: 'uppercase', letterSpacing: 1, margin: '4px 0 6px' }}>Calques</div>
