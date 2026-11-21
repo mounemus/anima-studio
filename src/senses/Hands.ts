@@ -1,6 +1,6 @@
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
 import { senseBus } from './SenseBus'
-import { leapConnected, onLeapFrame } from './Leap'
+import { leapConnected, onLeapFrame, leapAutoCalibrate, handClock } from './Leap'
 
 let landmarker: HandLandmarker | null = null
 let video: HTMLVideoElement | null = null
@@ -12,6 +12,7 @@ let lastVideoTime = -1
  *  don't keep the flag stuck true for a stale frame. */
 let lastDetectionTime = 0
 const STALE_TIMEOUT_MS = 300
+const calClock = handClock()
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
@@ -73,6 +74,7 @@ function loop() {
   if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime
     if (!leapConnected()) writeHands(landmarker.detectForVideo(video, performance.now()).landmarks)
+    else leapAutoCalibrate(video, landmarker, calClock)   // le Leap pilote : la caméra sert à le caler sur l'image
   }
   // Stale guard: if we haven't had a positive detection in the last 300ms,
   // force `detected = false` even if the last frame happened to set true.

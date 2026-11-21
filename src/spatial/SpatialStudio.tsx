@@ -22,7 +22,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
-import { pollHands, handClock, autoConnectLeap, leapSettings, type LeapHand } from '../senses/Leap'
+import { pollHands, handClock, autoConnectLeap, leapWidthPerMm, type LeapHand } from '../senses/Leap'
 import { LeapToggle } from '../ui/LeapToggle'
 import { buildGeometry, makeMaterial, symMatrices, objMatrix, simplify, bakeForExport, type Obj, type P3, type Kind, type Section, type Prim, type Mat, type Sym } from './build'
 
@@ -204,10 +204,16 @@ export function SpatialStudio() {
       dirV.set(ndc.x, ndc.y, 0.5).unproject(camera).sub(camera.position).normalize()
       return out.copy(camera.position).addScaledVector(dirV, (dz - camera.position.z) / dirV.z)
     }
+    /** Jalon (0..1 dans l'image de la caméra) → pixel de l'écran. La vidéo est affichée en miroir et
+     *  en « cover » : elle déborde en haut et en bas (ou sur les côtés) quand la fenêtre n'a pas ses proportions. */
+    const toScreen = (x: number, y: number) => {
+      const W = overlay.width, H = overlay.height, va = video.videoWidth > 0 ? video.videoWidth / video.videoHeight : W / H
+      return W / H > va ? { x: (1 - x) * W, y: H / 2 + (y - 0.5) * W / va } : { x: W / 2 + (0.5 - x) * H * va, y: y * H }
+    }
     const readHands = (res: { landmarks?: any[][]; gestures?: any[][]; leap?: LeapHand[] }, p: typeof P, now: number) => {
       const W = overlay.width, H = overlay.height
       const hands = (res.landmarks ?? []).slice(0, 2)
-      const palms = hands.map((lm) => ({ x: (1 - lm[9].x) * W, y: lm[9].y * H }))
+      const palms = hands.map((lm) => toScreen(lm[9].x, lm[9].y))
       // garder chaque main dans sa case d'une image à l'autre (la plus proche de sa position précédente)
       const cost = (i: number, s: number) => (slots[s].has ? dist2(palms[i], slots[s].palmScr) : 0)
       let order = [0, 1]
@@ -227,15 +233,15 @@ export function SpatialStudio() {
         s.pinch = on && s.fist < 2
         // point d'action : milieu pouce-index (la paume quand le poing est fermé, plus stable)
         const ax = s.fist >= 2 ? lm[9].x : (lm[4].x + lm[8].x) / 2, ay = s.fist >= 2 ? lm[9].y : (lm[4].y + lm[8].y) / 2
-        s.scr.x = (1 - ax) * W; s.scr.y = ay * H; s.palmScr = palms[i]
-        s.ndc.set((1 - ax) * 2 - 1, -(ay * 2 - 1))
+        s.scr = toScreen(ax, ay); s.palmScr = palms[i]
+        s.ndc.set(s.scr.x / W * 2 - 1, -(s.scr.y / H * 2 - 1))
         // profondeur : millimètres réels du Leap, ou taille apparente de la main à la caméra
         // (main poussée vers l'écran = plus loin dans la scène)
-        const dz = leap ? leap.pinchMm.z * (visW() / leapSettings().span) * p.depthGain : -clamp(-1, 1, (hs - 0.16) / 0.12) * 1.2 * p.depthGain
+        const dz = leap ? leap.pinchMm.z * visW() * leapWidthPerMm() * p.depthGain : -clamp(-1, 1, (hs - 0.16) / 0.12) * 1.2 * p.depthGain
         pointAt(s.ndc, clamp(-3.5, 3.5, dz), tmp)
         if (s.fresh || !s.has) s.p.copy(tmp); else s.p.lerp(tmp, clamp(0.3, 0.9, 0.3 + tmp.distanceTo(s.p) * 3))
         s.fresh = false; s.has = true; s.seen = now; s.leap = leap
-        s.lm = lm.map((k: { x: number; y: number }) => ({ x: (1 - k.x) * W, y: k.y * H }))
+        s.lm = lm.map((k: { x: number; y: number }) => toScreen(k.x, k.y))
       })
       for (let i = 0; i < 2; i++) if (!used.has(i)) { const s = slots[i]; s.has = false; s.pinch = false; s.fist = 0; s.open = 0; s.fresh = true; s.lm = [] }
     }

@@ -43,27 +43,43 @@ export interface LeapSettings {
   placement: 'desk' | 'screen'
   /** Largeur de la zone des mains (mm) qui remplit la largeur de l'écran. */
   span: number
+  /** Hauteur de la webcam au-dessus du capteur (mm) : centre vertical de l'image. */
+  height: number
   /** Se reconnecter tout seul à l'ouverture d'un atelier. */
   auto: boolean
+  /** Caler en continu la projection du Leap sur la main vue par la webcam. */
+  autoCal: boolean
+  /** Caméra calée (mesurée sur la webcam). `null` : caméra par défaut déduite de `span` et `height`. */
+  cal: LeapCal | null
 }
-export const LEAP_DEFAULTS: LeapSettings = { url: 'ws://127.0.0.1:6437/v6.json', placement: 'desk', span: 600, auto: false }
+/** Webcam vue depuis le repère du Leap : projection complète (position, orientation, focale),
+ *  11 nombres [a0..a3, b0..b3, c0..c2] avec, pour un point (x, y, z) en dm :
+ *  u = ½ + (a·[x y z 1]) / w,  v = ½ + (b·[x y z 1]) / w,  w = c·[x y z] + 1. */
+export type LeapCal = number[]
+export const LEAP_DEFAULTS: LeapSettings = { url: 'ws://127.0.0.1:6437/v6.json', placement: 'desk', span: 700, height: 360, auto: false, autoCal: true, cal: null }
 const KEY = 'digiart:leap'
 
 function loadSettings(): LeapSettings {
-  try { return { ...LEAP_DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') } } catch { return { ...LEAP_DEFAULTS } }
+  try {
+    const s = { ...LEAP_DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }
+    if (!(Array.isArray(s.cal) && s.cal.length === 11 && s.cal.every(Number.isFinite))) s.cal = null
+    return s
+  } catch { return { ...LEAP_DEFAULTS } }
 }
 let settings = loadSettings()
 
 export type LeapStatus = 'off' | 'connecting' | 'on' | 'error'
-interface View { status: LeapStatus; message: string; settings: LeapSettings }
-let view: View = { status: 'off', message: '', settings }
+interface View { status: LeapStatus; message: string; settings: LeapSettings; fit: { n: number; err: number } }
+let view: View = { status: 'off', message: '', settings, fit: { n: 0, err: 0 } }
 const subs = new Set<() => void>()
 const frameSubs = new Set<(f: HandFrame) => void>()
-const S = { ws: null as WebSocket | null, raw: null as any, seq: 0, connected: false, lastAt: 0, watch: 0 as any }
+const S = { ws: null as WebSocket | null, raw: null as any, seq: 0, connected: false, lastAt: 0, watch: 0 as any, aspect: 0, speed: 0, palm: null as number[] | null }
 
 function publish(patch: Partial<View>) { view = { ...view, ...patch }; subs.forEach((f) => f()) }
 
 export function setLeapSettings(patch: Partial<LeapSettings>) {
+  // changer la caméra par défaut (zone, hauteur, emplacement) repart d'un calage neuf
+  if ('span' in patch || 'height' in patch || 'placement' in patch) { patch = { ...patch, cal: null }; resetFit() }
   settings = { ...settings, ...patch }
   try { localStorage.setItem(KEY, JSON.stringify(settings)) } catch { /* stockage indisponible */ }
   publish({ settings })
@@ -99,12 +115,22 @@ function pos(a: any, s: LeapSettings): V3 | null {
   return s.placement === 'screen' ? { x: d.x, y: d.y + CENTER_Y, z: d.z - 250 } : d
 }
 
-/** Position mm → coordonnées image 0..1 d'une webcam virtuelle (non miroir : la droite de
- *  l'utilisateur est à gauche de l'image, les ateliers font déjà `1 - x`). */
-function project(p: V3, s: LeapSettings, aspect: number) {
-  const depth = Math.max(80, p.z + CAM_DIST), f = CAM_DIST / Math.max(120, s.span)
-  return { x: 0.5 - f * p.x / depth, y: 0.5 - f * aspect * (p.y - CENTER_Y) / depth, depth, f }
+/** Caméra par défaut : à l'écran, 350 mm derrière le capteur, à la hauteur réglée, à l'horizontale. */
+export function priorCal(s: LeapSettings, aspect: number): LeapCal {
+  const d = CAM_DIST / 100, f = CAM_DIST / Math.max(120, s.span), cy = (s.placement === 'screen' ? CENTER_Y : s.height) / 100
+  return [-f / d, 0, 0, 0, 0, -f * aspect / d, 0, f * aspect * cy / d, 0, 0, 1 / d]
 }
+export const calOf = (s: LeapSettings, aspect: number): LeapCal => s.cal ?? priorCal(s, aspect)
+
+/** Position mm → coordonnées image 0..1 de la webcam (non miroir : la droite de l'utilisateur
+ *  est à gauche de l'image, les ateliers font déjà `1 - x`). `k` = largeurs d'image par mm. */
+export function project(p: V3, c: LeapCal) {
+  const x = p.x / 100, y = p.y / 100, z = p.z / 100
+  const w = Math.max(0.12, c[8] * x + c[9] * y + c[10] * z + 1)
+  return { x: 0.5 + (c[0] * x + c[1] * y + c[2] * z + c[3]) / w, y: 0.5 + (c[4] * x + c[5] * y + c[6] * z + c[7]) / w, k: Math.hypot(c[0], c[1], c[2]) / w / 100 }
+}
+/** Largeurs d'image par millimètre, pour une main au-dessus du capteur (échelle de la profondeur). */
+export const leapWidthPerMm = () => project({ x: 0, y: 250, z: 0 }, calOf(settings, S.aspect || 16 / 9)).k
 
 /** Un doigt Leap → 4 jalons MediaPipe (mcp, pip, dip, tip ; pouce : cmc, mcp, ip, tip).
  *  Les services anciens donnent les articulations ; le pont ne donne que le bout : on
@@ -120,7 +146,7 @@ function fingerJoints(f: any, knuckle: V3, s: LeapSettings): V3[] {
 // Jointures (mm) dans le repère de la paume : [vers les doigts, vers le pouce].
 const KNUCKLES: [number, number][] = [[-22, 30], [38, 22], [42, 2], [38, -16], [30, -32]]
 
-export function convertHand(h: any, pointables: any[], s: LeapSettings, aspect: number): { lm: V3[]; hand: LeapHand } | null {
+export function convertHand(h: any, pointables: any[], s: LeapSettings, aspect: number): { lm: V3[]; hand: LeapHand; pts: V3[]; full: boolean } | null {
   const fingers = pointables.filter((p) => p.handId === h.id && !p.tool && typeof p.type === 'number').sort((a, b) => a.type - b.type)
   const palm = pos(h.palmPosition, s)
   if (fingers.length < 5 || !palm) return null
@@ -135,14 +161,16 @@ export function convertHand(h: any, pointables: any[], s: LeapSettings, aspect: 
     const k = add(add(palm, direction, KNUCKLES[i][0]), side, KNUCKLES[i][1] * thumbward)
     pts.push(...fingerJoints(f, k, s))
   })                                             // 1 + 5 × 4 = 21
-  const w = project(wrist, s, aspect)
-  const lm = pts.map((p) => { const q = project(p, s, aspect); return { x: q.x, y: q.y, z: (q.depth - w.depth) * q.f / q.depth } })
+  const cal = calOf(s, aspect)
+  const lm = pts.map((p) => { const q = project(p, cal); return { x: q.x, y: q.y, z: (p.z - wrist.z) * q.k } })
+  // le service donne-t-il les vraies articulations, ou seulement le bout des doigts ?
+  const full = fingers.slice(0, 5).every((f) => !!f.mcpPosition || (Array.isArray(f.positions) && f.positions.length >= 5))
   const tT = pts[4], tI = pts[8]
   // Orion 4 laisse souvent pinchStrength à 0 en mode bureau (mesuré sur le vrai capteur) :
   // on prend le max avec une pince déduite de la distance pouce-index (≤ 15 mm → 1, ≥ 60 mm → 0).
   const byDist = clamp01(1 - (Math.hypot(tT.x - tI.x, tT.y - tI.y, tT.z - tI.z) - 15) / 45)
   return {
-    lm,
+    lm, pts, full,
     hand: {
       type: right ? 'right' : 'left',
       pinchMm: lerp(tT, tI, 0.5), palmMm: palm, normal, direction,
@@ -177,7 +205,105 @@ export function convertFrame(raw: any, s: LeapSettings = settings, aspect = 16 /
 }
 
 const screenAspect = () => (typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerWidth / window.innerHeight : 16 / 9)
-export const leapFrame = (): HandFrame => convertFrame(S.raw, settings, screenAspect())
+export const leapFrame = (): HandFrame => convertFrame(S.raw, settings, S.aspect || screenAspect())
+
+// ───────────────────────── calage sur la webcam ─────────────────────────
+//
+// Le Leap et la webcam voient la même main depuis deux endroits. Pour que la main du Leap
+// tombe sur celle de l'image, on estime la projection de la webcam dans le repère du Leap à
+// partir des mêmes jalons vus des deux côtés. Pour un jalon (u, v) de l'image et le même
+// point X = (x, y, z) chez le Leap, la projection s'écrit de façon linéaire en ses 11 nombres :
+//   a·[X 1] − (u − ½)·(c·X) = u − ½        b·[X 1] − (v − ½)·(c·X) = v − ½
+// Moindres carrés cumulés, retenus vers la caméra courante tant que la main n'a pas assez
+// bougé pour tout déterminer (surtout la perspective, c).
+
+const NP = 11
+const FIT = { A: new Float64Array(NP * NP), b: new Float64Array(NP), n: 0, err: 0, rej: 0, lastAt: 0, savedAt: 0 }
+const RIDGE = [1, 1, 1, 0.2, 1, 1, 1, 0.2, 6, 6, 6]
+export function resetFit() { FIT.A.fill(0); FIT.b.fill(0); FIT.n = 0; FIT.err = 0; FIT.rej = 0 }
+/** Oublier le calage mesuré et repartir de la caméra par défaut. */
+export function resetLeapCal() { resetFit(); setLeapSettings({ cal: null }); publish({ fit: { n: 0, err: 0 } }) }
+
+/** Résout M·x = r (n × n) par élimination de Gauss avec pivot ; `null` si le système est dégénéré. */
+function solve(M: Float64Array, r: Float64Array, n: number): number[] | null {
+  const a = Array.from({ length: n }, (_, i) => [...M.slice(i * n, i * n + n), r[i]])
+  for (let c = 0; c < n; c++) {
+    let p = c
+    for (let i = c + 1; i < n; i++) if (Math.abs(a[i][c]) > Math.abs(a[p][c])) p = i
+    if (Math.abs(a[p][c]) < 1e-10) return null
+    ;[a[c], a[p]] = [a[p], a[c]]
+    for (let i = 0; i < n; i++) if (i !== c) { const f = a[i][c] / a[c][c]; for (let j = c; j <= n; j++) a[i][j] -= f * a[c][j] }
+  }
+  return a.map((row, i) => row[n] / row[i])
+}
+
+/** Une mesure : les mains du Leap (`leap`, 21 points en mm chacune) et les mêmes mains vues
+ *  par la webcam (`cam`, jalons MediaPipe). Renvoie la caméra recalée, ou `null` si la mesure
+ *  est écartée (mains en nombre différent, incohérente, système dégénéré). */
+export function calibrate(leap: { pts: V3[]; full: boolean }[], cam: { x: number; y: number }[][], cal: LeapCal): LeapCal | null {
+  if (!leap.length || leap.length !== cam.length) return null
+  // apparier par ordre horizontal dans l'image (avec la caméra courante pour le Leap)
+  const L = [...leap].sort((p, q) => project(p.pts[0], cal).x - project(q.pts[0], cal).x)
+  const C = [...cam].sort((p, q) => p[0].x - q[0].x)
+  const rows: { r: number[]; y: number }[] = []
+  let err = 0, cnt = 0
+  L.forEach((h, i) => {
+    const idx = h.full ? Array.from({ length: 21 }, (_, j) => j) : [0, 4, 8, 12, 16, 20]   // sans articulations : poignet + bouts des doigts
+    for (const j of idx) {
+      const p = h.pts[j], m = C[i][j]; if (!p || !m) continue
+      const x = p.x / 100, y = p.y / 100, z = p.z / 100, q = project(p, cal), du = m.x - 0.5, dv = m.y - 0.5
+      err += Math.hypot(q.x - m.x, q.y - m.y); cnt++
+      rows.push({ r: [x, y, z, 1, 0, 0, 0, 0, -du * x, -du * y, -du * z], y: du })
+      rows.push({ r: [0, 0, 0, 0, x, y, z, 1, -dv * x, -dv * y, -dv * z], y: dv })
+    }
+  })
+  if (!cnt) return null
+  err /= cnt
+  // Mesure écartée (autre main que celle du Leap, fausse détection) : rien n'est retenu. Si cela
+  // dure 3 s d'affilée, c'est le calage accumulé qui est faux : on repart de zéro.
+  const A0 = Float64Array.from(FIT.A), b0 = Float64Array.from(FIT.b)
+  const reject = () => { FIT.A.set(A0); FIT.b.set(b0); if (++FIT.rej >= 15) resetFit(); return null }
+  if (FIT.n >= 20 && err > 0.25) return reject()
+  for (let i = 0; i < NP * NP; i++) FIT.A[i] *= 0.997   // les vieilles mesures s'effacent lentement
+  for (let i = 0; i < NP; i++) FIT.b[i] *= 0.997
+  for (const { r, y } of rows) for (let i = 0; i < NP; i++) { if (!r[i]) continue; FIT.b[i] += r[i] * y; for (let j = 0; j < NP; j++) FIT.A[i * NP + j] += r[i] * r[j] }
+  const M = Float64Array.from(FIT.A), r = Float64Array.from(FIT.b)
+  for (let i = 0; i < NP; i++) { M[i * NP + i] += RIDGE[i]; r[i] += RIDGE[i] * cal[i] }
+  const c = solve(M, r, NP); if (!c || !c.every(Number.isFinite)) return reject()
+  // garde-fous : tous les points devant la caméra, et une échelle plausible (150 mm à 3 m pour la largeur de l'image)
+  const sane = L.every((h) => h.pts.every((p) => c[8] * p.x / 100 + c[9] * p.y / 100 + c[10] * p.z / 100 + 1 > 0.2 && (() => { const k = project(p, c).k; return k > 1 / 3000 && k < 1 / 150 })()))
+  if (!sane) return reject()
+  // une vraie correspondance s'explique par la caméra recalée ; une autre main, non
+  let post = 0
+  L.forEach((h, i) => h.pts.forEach((p, j) => { if (h.full || j % 4 === 0) { const q = project(p, c); post += Math.hypot(q.x - C[i][j].x, q.y - C[i][j].y) } }))
+  if (FIT.n >= 5 && post / cnt > 0.05) return reject()
+  FIT.n++; FIT.rej = 0; FIT.err += (err - FIT.err) * (FIT.n === 1 ? 1 : 0.1)
+  return c
+}
+export const fitState = () => ({ n: FIT.n, err: FIT.err })
+
+/** Pendant que le Leap pilote : regarder la webcam ~6 fois par seconde et recaler. */
+export function leapAutoCalibrate(video: HTMLVideoElement | null, model: any, clock: HandClock) {
+  if (!video || video.readyState < 2) return
+  if (video.videoWidth > 0 && video.videoHeight > 0) S.aspect = video.videoWidth / video.videoHeight
+  const now = performance.now()
+  if (!settings.autoCal || !model || video.currentTime === clock.t || now - FIT.lastAt < 150) return
+  clock.t = video.currentTime; FIT.lastAt = now
+  if (S.speed > 150) return                           // main rapide : la webcam a ~80 ms de retard sur le Leap
+  let cam: { x: number; y: number }[][]
+  try { cam = (model.recognizeForVideo ? model.recognizeForVideo(video, now) : model.detectForVideo(video, now)).landmarks ?? [] } catch { return }
+  const pointables = Array.isArray(S.raw?.pointables) ? S.raw.pointables : []
+  const aspect = S.aspect || 16 / 9
+  const leap = (Array.isArray(S.raw?.hands) ? S.raw.hands : []).map((h: any) => convertHand(h, pointables, settings, aspect)).filter(Boolean)
+  const c = calibrate(leap, cam, calOf(settings, aspect))
+  if (!c) return
+  settings = { ...settings, cal: c }
+  if (now - FIT.savedAt > 3000) {                    // enregistrer et afficher de temps en temps, pas à chaque mesure
+    FIT.savedAt = now
+    try { localStorage.setItem(KEY, JSON.stringify(settings)) } catch { /* stockage indisponible */ }
+    publish({ settings, fit: { n: FIT.n, err: FIT.err } })
+  }
+}
 
 // ───────────────────────── source unique pour les ateliers ─────────────────────────
 
@@ -188,6 +314,7 @@ export const handClock = (): HandClock => ({ t: -1, seq: -1 })
  *  Leap connecté → trames du capteur ; sinon → modèle MediaPipe sur la vidéo. */
 export function pollHands(video: HTMLVideoElement | null, model: any, clock: HandClock): HandFrame | null {
   if (leapConnected()) {
+    leapAutoCalibrate(video, model, clock)
     if (S.seq === clock.seq) return null
     clock.seq = S.seq
     return leapFrame()
@@ -240,7 +367,10 @@ export async function connectLeap(): Promise<boolean> {
     ws.onmessage = (ev) => {
       let m: any; try { m = JSON.parse(ev.data) } catch { return }
       if (Array.isArray(m.hands)) {
-        S.raw = m; S.seq++; S.lastAt = performance.now()
+        const now = performance.now(), pp = m.hands[0]?.palmPosition
+        if (Array.isArray(pp) && S.palm && now > S.lastAt) S.speed += (Math.hypot(pp[0] - S.palm[0], pp[1] - S.palm[1], pp[2] - S.palm[2]) / (now - S.lastAt) * 1000 - S.speed) * 0.3
+        S.palm = Array.isArray(pp) ? pp : null
+        S.raw = m; S.seq++; S.lastAt = now
         if (frameSubs.size) { const f = leapFrame(); frameSubs.forEach((cb) => cb(f)) }
       }
       if (!settled && (m.version !== undefined || Array.isArray(m.hands))) {
