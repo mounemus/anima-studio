@@ -300,3 +300,53 @@ describe('pince : caméra et Leap', () => {
     expect(isPinching(leap(1, 'Closed_Fist'), 0, false)).toBe(false)
   })
 })
+
+// Capteur sur un casque, sur la tête : son dessus regarde devant, il voit les mains par l'arrière.
+describe('Leap : capteur sur la tête', () => {
+  const head = { ...LEAP_DEFAULTS, placement: 'head' as const }
+  // dans le repère du capteur monté sur casque : y = devant soi, x = vers la gauche, z = vers le bas
+  const hand = (p: number[]) => ({ hands: [{ id: 1, type: 'right', palmPosition: p, palmNormal: [0, 1, 0], direction: [0, 0, -1], pinchStrength: 0, grabStrength: 0 }],
+    pointables: [0, 1, 2, 3, 4].map((i) => ({ id: 10 + i, handId: 1, type: i, extended: true, tipPosition: [p[0] + (i - 2) * 20, p[1], p[2] - 90], length: 50 })) })
+
+  it('main devant, à droite et au-dessus du regard : millimètres dans le repère de la tête', () => {
+    const c = convertFrame(hand([-100, 300, -50]), head).leap![0]
+    expect(c.palmMm.x).toBeCloseTo(100)    // à droite
+    expect(c.palmMm.y).toBeCloseTo(50)     // plus haut que le capteur
+    expect(c.palmMm.z).toBeCloseTo(-300)   // 30 cm devant, donc loin de l'utilisateur
+  })
+
+  it('à l\'image : la droite de l\'utilisateur à gauche (non miroir), le haut en haut', () => {
+    const right = convertFrame(hand([-150, 350, 50]), head).landmarks[0][0], left = convertFrame(hand([150, 350, 50]), head).landmarks[0][0]
+    expect(right.x).toBeLessThan(left.x)
+    const up = convertFrame(hand([0, 350, -100]), head).landmarks[0][0], down = convertFrame(hand([0, 350, 150]), head).landmarks[0][0]
+    expect(up.y).toBeLessThan(down.y)
+  })
+
+  it('main plus loin devant soi = plus près de la webcam = plus grande', () => {
+    const size = (y: number) => { const lm = convertFrame(hand([0, y, 50]), head).landmarks[0]; return Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y) }
+    expect(size(450)).toBeGreaterThan(size(250) * 1.3)
+  })
+
+  it('capteur monté dans l\'autre sens : même résultat en retournant gauche-droite et haut-bas', () => {
+    const a = convertFrame(hand([-100, 300, -50]), head).leap![0], b = convertFrame(hand([100, 300, 50]), { ...head, flip: true }).leap![0]
+    expect(b.palmMm.x).toBeCloseTo(a.palmMm.x); expect(b.palmMm.y).toBeCloseTo(a.palmMm.y); expect(b.palmMm.z).toBeCloseTo(a.palmMm.z)
+    const desk = convertFrame(hand([80, 200, 30]), { ...LEAP_DEFAULTS, flip: true }).leap![0]
+    expect(desk.palmMm.x).toBeCloseTo(-80); expect(desk.palmMm.y).toBeCloseTo(200); expect(desk.palmMm.z).toBeCloseTo(-30)
+  })
+
+  it('le calage retrouve une webcam posée en face de la tête', () => {
+    const A = 16 / 9, T: LeapCal = { cx: 40, cy: -90, cz: -640, f: 0.68, pitch: -0.08, yaw: 0.06 }
+    let seed = 5
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 - 0.5 }
+    const SHAPE = [[0, -80, 10], [-35, -55, 0], [-60, -30, -5], [-78, -8, -8], [-90, 12, -10], [-28, 5, 0], [-32, 45, -3], [-34, 72, -5], [-35, 95, -6], [-5, 10, 0], [-5, 55, -3], [-5, 85, -5], [-5, 110, -6], [16, 5, 0], [18, 48, -3], [19, 76, -5], [20, 98, -6], [36, -5, 0], [42, 30, -3], [45, 52, -5], [47, 70, -6]]
+    const handAt = (c: number[]): V3[] => SHAPE.map(([x, y, z]) => ({ x: c[0] + x + rnd() * 4, y: c[1] + y + rnd() * 4, z: c[2] + z + rnd() * 4 }))
+    const seen = (pts: V3[]) => pts.map((q) => { const m = project(q, T, A); return { x: m.x + rnd() * 0.01, y: m.y + rnd() * 0.01 } })
+    const errAt = (cal: LeapCal, c: number[]) => { const pts = handAt(c); return pts.reduce((e, q) => { const a = project(q, cal, A), b = project(q, T, A); return e + Math.hypot(a.x - b.x, (a.y - b.y) / A) }, 0) / pts.length }
+    const prior = priorCal(head)
+    resetFit()
+    let cal = prior
+    for (let i = 0; i < 40; i++) { const pts = handAt([Math.sin(i * 0.7) * 160, -120 + Math.cos(i * 0.4) * 90, -360 + Math.sin(i * 0.23) * 80]); cal = calibrate([{ pts, full: true }], [seen(pts)], cal, prior, A, i * 200, 15000) ?? cal }
+    for (const c of [[-150, -200, -300], [0, -100, -380], [160, -30, -420]]) expect(errAt(cal, c)).toBeLessThan(0.02)
+    expect(fitState().n).toBeGreaterThan(5)
+  })
+})

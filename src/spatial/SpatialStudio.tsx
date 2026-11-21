@@ -542,6 +542,10 @@ export function SpatialStudio() {
       switch (c.type) {
         case 'undo': if (past.length) { future.push(JSON.stringify(objs)); restore(past.pop()!); setStatus('↶ Annulé.') } else setStatus('Rien à annuler.'); break
         case 'redo': if (future.length) { past.push(JSON.stringify(objs)); restore(future.pop()!); setStatus('↷ Refait.') } else setStatus('Rien à refaire.'); break
+        case 'clearAll': if (objs.length) {   // toute la scène, tous calques confondus ; un seul « Annuler » la rend
+          const n = objs.length; pushHistory(); [...objs].forEach((o) => remove(o.id)); setRail(null); autosave()
+          setStatus(`Scène effacée : ${n} objet${n > 1 ? 's' : ''} retiré${n > 1 ? 's' : ''}. « Annuler » pour tout retrouver.`)
+        } else setStatus('La scène est déjà vide.'); break
         case 'clear': if (objs.some((o) => o.layer === p.activeLayer)) { pushHistory(); objs.filter((o) => o.layer === p.activeLayer).forEach((o) => remove(o.id)); autosave(); setStatus('Calque actif vidé (Annuler pour le retrouver).') } break
         case 'delete': if (selId) { pushHistory(); remove(selId); autosave() } break
         case 'apply': { const o = objs.find((x) => x.id === selId); if (!o || o.kind === 'image') break
@@ -745,7 +749,7 @@ export function SpatialStudio() {
       <canvas ref={overlayRef} style={{ position: 'absolute', inset: 0, width: '100vw', height: '100vh', zIndex: 4, pointerEvents: 'none' }} />
 
       {/* barre d'outils : toujours visible, atteignable au clavier (1 à 8) */}
-      <div role="toolbar" aria-label="Outils" style={{ position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 10, display: 'flex', gap: 6, padding: 6, borderRadius: 14, background: 'rgba(10,12,18,0.82)', border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(10px)', maxWidth: 'calc(100vw - 24px)', overflowX: 'auto' }}>
+      <div role="toolbar" aria-label="Outils" style={{ position: 'absolute', bottom: 14, left: 0, right: 0, margin: '0 auto', width: 'fit-content', boxSizing: 'border-box', zIndex: 10, display: 'flex', gap: 6, padding: 6, borderRadius: 14, background: 'rgba(10,12,18,0.82)', border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(10px)', maxWidth: 'calc(100vw - 24px)', overflowX: 'auto' }}>
         {TOOLS.map((t, i) => (
           <button key={t.id} onClick={() => setTool(t.id)} aria-pressed={tool === t.id} title={`${t.label} (${i + 1}) — ${t.hint}`} style={{ minWidth: 58, flexShrink: 0, padding: '6px 4px', borderRadius: 10, cursor: 'pointer', border: `1px solid ${tool === t.id ? '#00f0ff' : 'transparent'}`, background: tool === t.id ? 'rgba(0,240,255,0.22)' : 'transparent', color: '#fff', fontSize: 11, fontWeight: 600 }}>
             <div style={{ fontSize: 20, lineHeight: 1.2 }}>{t.icon}</div>{t.label}
@@ -755,6 +759,7 @@ export function SpatialStudio() {
         <button onClick={() => setHandsOn((v) => !v)} aria-pressed={handsOn} title="Suivi des mains (barre d'espace) : mets-le en pause quand tu utilises le clavier ou la souris" style={{ ...barBtn, fontSize: 11, fontWeight: 600, minWidth: 58, padding: '6px 4px', border: `1px solid ${handsOn ? 'transparent' : '#ffd200'}`, color: handsOn ? '#fff' : '#ffd200' }}><div style={{ fontSize: 20, lineHeight: 1.2 }}>{handsOn ? '✋' : '⏸'}</div>{handsOn ? 'Mains' : 'En pause'}</button>
         <button onClick={() => send('undo')} title="Annuler (Ctrl+Z)" style={barBtn}>↶</button>
         <button onClick={() => send('redo')} title="Refaire (Ctrl+Y)" style={barBtn}>↷</button>
+        <button onClick={() => send('clearAll')} disabled={!count} title="Effacer toute la scène, tous calques confondus (annulable)" style={{ ...barBtn, fontSize: 11, fontWeight: 600, minWidth: 58, padding: '6px 4px', opacity: count ? 1 : 0.4, color: '#ff8a8a' }}><div style={{ fontSize: 20, lineHeight: 1.2 }}>🗑</div>Tout effacer</button>
       </div>
 
       {/* vue et plan de dessin : toujours à portée */}
@@ -832,7 +837,7 @@ export function SpatialStudio() {
           ))}
           <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
             <button onClick={() => { const id = `L${Date.now()}`; setLayers((ls) => [...ls, { id, name: `Calque ${ls.length + 1}`, visible: true, locked: false }]); setActiveLayer(id) }} style={{ ...sel, flex: 1 }}>+ Calque</button>
-            <button onClick={() => send('clear')} style={{ ...sel, flex: 1, background: 'rgba(255,40,100,0.2)' }} title="Efface les objets du calque actif (annulable)">Vider</button>
+            <button onClick={() => send('clear')} style={{ ...sel, flex: 1, background: 'rgba(255,40,100,0.2)' }} title="Efface les objets du calque actif (annulable)">Vider le calque</button>
           </div>
 
           <Title>Vues</Title>

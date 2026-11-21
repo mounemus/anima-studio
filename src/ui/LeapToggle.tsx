@@ -44,22 +44,31 @@ export function LeapToggle({ accent = '#00f0ff', compact = false }: { accent?: s
       {open && (
         <div>
           <label style={label}>Emplacement du capteur
-            <select value={settings.placement} onChange={(e) => setLeapSettings({ placement: e.target.value as 'desk' | 'screen' })} style={{ ...input, marginTop: 3 }}>
+            <select value={settings.placement} onChange={(e) => setLeapSettings({ placement: e.target.value as 'desk' | 'screen' | 'head' })} style={{ ...input, marginTop: 3 }}>
               <option value="desk">À plat sur le bureau (fenêtre vers le haut)</option>
               <option value="screen">Fixé à l'écran, face à moi</option>
+              <option value="head">Sur un casque, sur la tête (regarde devant moi)</option>
             </select>
           </label>
+          <label style={{ ...label, display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, color: '#ccc' }}>
+            <input type="checkbox" checked={settings.flip} onChange={(e) => setLeapSettings({ flip: e.target.checked })} style={{ accentColor: accent }} /> Capteur monté dans l'autre sens
+          </label>
+          {settings.placement === 'head' && <p style={{ fontSize: 10, color: '#888', lineHeight: 1.4, margin: '4px 0 0' }}>
+            Sur la tête, le capteur bouge avec toi : le calage se refait en continu, reste face à l'écran. Si tes mains partent du mauvais côté, coche « monté dans l'autre sens ».
+          </p>}
           <label style={{ ...label, display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, color: '#ccc' }}>
             <input type="checkbox" checked={settings.autoCal} onChange={(e) => setLeapSettings({ autoCal: e.target.checked })} style={{ accentColor: accent }} /> Caler tout seul sur l'image de la caméra
           </label>
           <button onClick={resetLeapCal} style={{ ...input, cursor: 'pointer', marginTop: 6 }}>Recommencer le calage</button>
-          <p style={{ fontSize: 10, color: '#888', lineHeight: 1.4, margin: '6px 0 0' }}>Sans caméra, ou case décochée, règle à la main les deux curseurs ci-dessous.</p>
-          <label style={label}>Hauteur de la caméra au-dessus du capteur — {settings.height} mm
-            <input type="range" min={0} max={700} step={10} value={settings.height} onChange={(e) => setLeapSettings({ height: +e.target.value })} style={{ width: '100%', accentColor: accent }} />
-          </label>
-          <label style={label}>Zone des mains couverte par l'écran — {settings.span} mm
-            <input type="range" min={300} max={1400} step={20} value={settings.span} onChange={(e) => setLeapSettings({ span: +e.target.value })} style={{ width: '100%', accentColor: accent }} />
-          </label>
+          {settings.placement !== 'head' && <>
+            <p style={{ fontSize: 10, color: '#888', lineHeight: 1.4, margin: '6px 0 0' }}>Sans caméra, ou case décochée, règle à la main les deux curseurs ci-dessous.</p>
+            <label style={label}>Hauteur de la caméra au-dessus du capteur — {settings.height} mm
+              <input type="range" min={0} max={700} step={10} value={settings.height} onChange={(e) => setLeapSettings({ height: +e.target.value })} style={{ width: '100%', accentColor: accent }} />
+            </label>
+            <label style={label}>Zone des mains couverte par l'écran — {settings.span} mm
+              <input type="range" min={300} max={1400} step={20} value={settings.span} onChange={(e) => setLeapSettings({ span: +e.target.value })} style={{ width: '100%', accentColor: accent }} />
+            </label>
+          </>}
           <label style={label}>Adresse du service
             <input value={settings.url} onChange={(e) => setLeapSettings({ url: e.target.value })} onBlur={(e) => { if (!e.target.value.trim()) setLeapSettings({ url: LEAP_DEFAULTS.url }) }} spellCheck={false} style={{ ...input, marginTop: 3 }} />
           </label>

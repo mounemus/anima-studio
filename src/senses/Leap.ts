@@ -41,8 +41,10 @@ export interface HandFrame {
 
 export interface LeapSettings {
   url: string
-  /** Où est posé le capteur : à plat sur le bureau, ou fixé à l'écran face à l'utilisateur. */
-  placement: 'desk' | 'screen'
+  /** Où est le capteur : à plat sur le bureau, fixé à l'écran face à l'utilisateur, ou sur un casque, sur la tête. */
+  placement: 'desk' | 'screen' | 'head'
+  /** Capteur monté dans l'autre sens (tourné d'un demi-tour sur lui-même, câble de l'autre côté). */
+  flip: boolean
   /** Largeur de la zone des mains (mm) qui remplit la largeur de l'écran. */
   span: number
   /** Hauteur de la webcam au-dessus du capteur (mm) : centre vertical de l'image. */
@@ -57,7 +59,7 @@ export interface LeapSettings {
 /** Webcam vue depuis le repère du Leap : position (mm), focale (en largeurs d'image) et
  *  inclinaison (radians ; `pitch` > 0 = caméra penchée vers le bas, `yaw` = tournée). */
 export interface LeapCal { cx: number; cy: number; cz: number; f: number; pitch: number; yaw: number }
-export const LEAP_DEFAULTS: LeapSettings = { url: 'ws://127.0.0.1:6437/v6.json', placement: 'desk', span: 700, height: 360, auto: false, autoCal: true, cal: null }
+export const LEAP_DEFAULTS: LeapSettings = { url: 'ws://127.0.0.1:6437/v6.json', placement: 'desk', flip: false, span: 700, height: 360, auto: false, autoCal: true, cal: null }
 const KEY = 'digiart:leap'
 const CAL_KEYS = ['cx', 'cy', 'cz', 'f', 'pitch', 'yaw'] as const
 
@@ -81,7 +83,7 @@ function publish(patch: Partial<View>) { view = { ...view, ...patch }; subs.forE
 
 export function setLeapSettings(patch: Partial<LeapSettings>) {
   // changer la caméra par défaut (zone, hauteur, emplacement) repart d'un calage neuf
-  if ('span' in patch || 'height' in patch || 'placement' in patch) { patch = { ...patch, cal: null }; resetFit() }
+  if ('span' in patch || 'height' in patch || 'placement' in patch || 'flip' in patch) { patch = { ...patch, cal: null }; resetFit() }
   settings = { ...settings, ...patch }
   try { localStorage.setItem(KEY, JSON.stringify(settings)) } catch { /* stockage indisponible */ }
   publish({ settings })
@@ -109,7 +111,11 @@ const cross = (a: V3, b: V3): V3 => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - 
  *  vers l'utilisateur et son axe z vers le bas. */
 function dir(a: any, s: LeapSettings): V3 | null {
   if (!Array.isArray(a) || a.length < 3 || !a.every(Number.isFinite)) return null
-  return s.placement === 'screen' ? { x: a[0], y: -a[2], z: a[1] } : { x: a[0], y: a[1], z: a[2] }
+  const x = s.flip ? -a[0] : a[0], y = a[1], z = s.flip ? -a[2] : a[2]
+  // Sur la tête : le dessus du capteur regarde devant soi, son grand bord « utilisateur » vers le bas. C'est
+  // la convention du montage officiel sur casque : droite = −x, haut = −z, vers soi = −y.
+  if (s.placement === 'head') return { x: -x, y: -z, z: -y }
+  return s.placement === 'screen' ? { x, y: -z, z: y } : { x, y, z }
 }
 function pos(a: any, s: LeapSettings): V3 | null {
   const d = dir(a, s); if (!d) return null
@@ -121,6 +127,8 @@ const F_WEBCAM = 0.7   // focale typique d'une webcam d'ordinateur (champ horizo
 /** Caméra par défaut, réglable à la main : à l'écran, à l'horizontale, à la hauteur réglée, et à
  *  la distance où une zone large de `span` mm remplit l'image. */
 export function priorCal(s: LeapSettings): LeapCal {
+  // capteur sur la tête : la webcam est en face, à une soixantaine de centimètres, un peu plus bas que les yeux
+  if (s.placement === 'head') return { cx: 0, cy: -60, cz: -600, f: F_WEBCAM, pitch: 0, yaw: 0 }
   return { cx: 0, cy: s.placement === 'screen' ? CENTER_Y : s.height, cz: -F_WEBCAM * Math.max(200, s.span), f: F_WEBCAM, pitch: 0, yaw: 0 }
 }
 export const calOf = (s: LeapSettings): LeapCal => s.cal ?? priorCal(s)
@@ -135,7 +143,7 @@ export function project(p: V3, c: LeapCal, aspect: number) {
   return { x: 0.5 - k * x1, y: 0.5 - k * aspect * y2, k }
 }
 /** Largeurs d'image par millimètre, pour une main au-dessus du capteur (échelle de la profondeur). */
-export const leapWidthPerMm = () => project({ x: 0, y: 250, z: 0 }, calOf(settings), 1).k
+export const leapWidthPerMm = () => project(settings.placement === 'head' ? { x: 0, y: -100, z: -350 } : { x: 0, y: 250, z: 0 }, calOf(settings), 1).k
 
 /** Un doigt Leap → 4 jalons MediaPipe (mcp, pip, dip, tip ; pouce : cmc, mcp, ip, tip).
  *  Les services anciens donnent les articulations ; le pont ne donne que le bout : on
@@ -305,7 +313,7 @@ function sameHand(s: Sample, view: LeapCal, aspect: number): boolean {
 /** Une mesure : les mains du Leap (`leap`, 21 points en mm chacune) et les mêmes mains vues par la
  *  webcam (`cam`, jalons MediaPipe). Renvoie la caméra ajustée sur toutes les zones mesurées, ou
  *  `null` si la mesure est écartée (mains en nombre différent, ou incompatible avec le calage acquis). */
-export function calibrate(leap: { pts: V3[]; full: boolean }[], cam: { x: number; y: number }[][], cur: LeapCal, prior: LeapCal, aspect: number, now = 0): LeapCal | null {
+export function calibrate(leap: { pts: V3[]; full: boolean }[], cam: { x: number; y: number }[][], cur: LeapCal, prior: LeapCal, aspect: number, now = 0, maxAge = 180000): LeapCal | null {
   if (!leap.length || leap.length !== cam.length) return null
   // apparier par ordre horizontal : la droite de l'utilisateur (x du Leap) est à gauche de l'image non miroir
   const L = [...leap].sort((p, q) => q.pts[0].x - p.pts[0].x), C = [...cam].sort((p, q) => p[0].x - q[0].x)
@@ -327,7 +335,7 @@ export function calibrate(leap: { pts: V3[]; full: boolean }[], cam: { x: number
   }
   CAL.bad = 0
   for (const [key, smp] of fresh) CAL.samples.set(key, smp)
-  if (CAL.samples.size > 8) for (const [key, smp] of CAL.samples) if (now - smp.t > 180000) CAL.samples.delete(key)   // les vieilles mesures s'effacent
+  if (CAL.samples.size > 8) for (const [key, smp] of CAL.samples) if (now - smp.t > maxAge) CAL.samples.delete(key)   // les vieilles mesures s'effacent
   while (CAL.samples.size > 60) CAL.samples.delete(CAL.samples.keys().next().value as string)
   const fit = fitCal(CAL.fit ?? cur, prior, [...CAL.samples.values()], aspect)
   CAL.fit = fit.cal; CAL.err = fit.err
@@ -351,7 +359,8 @@ export function leapAutoCalibrate(video: HTMLVideoElement | null, model: any, cl
   const pointables = Array.isArray(S.raw?.pointables) ? S.raw.pointables : []
   const aspect = S.aspect || 16 / 9
   const leap = hands.map((h) => convertHand(h, pointables, settings, aspect)).filter(Boolean) as { pts: V3[]; full: boolean }[]
-  const fit = calibrate(leap, cam, calOf(settings), priorCal(settings), aspect, now)
+  // sur la tête, le capteur bouge avec elle : seules les mesures des 15 dernières secondes comptent
+  const fit = calibrate(leap, cam, calOf(settings), priorCal(settings), aspect, now, settings.placement === 'head' ? 15000 : 180000)
   if (!fit) return
   // glisser vers la caméra ajustée plutôt que sauter : le squelette ne tressaute pas à chaque mesure
   const cur = settings.cal
