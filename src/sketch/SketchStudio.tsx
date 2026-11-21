@@ -17,7 +17,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import * as THREE from 'three'
-import { pollHands, handClock, autoConnectLeap } from '../senses/Leap'
+import { pollHands, handClock, autoConnectLeap, isPinching } from '../senses/Leap'
 import { LeapToggle } from '../ui/LeapToggle'
 import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
@@ -772,7 +772,7 @@ export function SketchStudio() {
           const lm = hands[pi]
           const gName = gestures[pi]?.[0]?.categoryName ?? 'None'
           primaryPos = { x: lm[0].x, y: lm[0].y }
-          const idx = lm[TIP_INDEX], thumb = lm[TIP_THUMB]
+          const idx = lm[TIP_INDEX]
           const ndcX = (1 - idx.x) * 2 - 1, ndcY = -(idx.y * 2 - 1)
           // Palm size (scale-invariant). Auto-calibrating depth : near = hand close to its
           // recent max size, far = small → works standing / far away.
@@ -812,9 +812,8 @@ export function SketchStudio() {
           } else {
             navPrev = null
             // Gestures NORMALIZED by palm size (hs) → same feel close-up or far/standing.
-            const pinch = Math.hypot(idx.x - thumb.x, idx.y - thumb.y) / hs
             let rawOn: boolean
-            if (p.drawMode === 'pinch') rawOn = onState ? pinch < 0.62 : pinch < 0.42   // hysteresis
+            if (p.drawMode === 'pinch') rawOn = isPinching(res, pi, onState)   // règle partagée : écart à l'écran + écart 3D + index déplié
             else {
               const idxUp = (lm[PIP_INDEX].y - lm[TIP_INDEX].y) / hs    // >0 : index tip above its knuckle
               const midFold = (lm[TIP_MIDDLE].y - lm[PIP_INDEX].y) / hs // >0 : middle folded below index knuckle

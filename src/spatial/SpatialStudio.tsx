@@ -22,7 +22,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
-import { pollHands, handClock, autoConnectLeap, leapWidthPerMm, type LeapHand } from '../senses/Leap'
+import { pollHands, handClock, autoConnectLeap, leapWidthPerMm, isPinching, type LeapHand, type HandFrame } from '../senses/Leap'
 import { LeapToggle } from '../ui/LeapToggle'
 import { buildGeometry, makeMaterial, symMatrices, objMatrix, simplify, bakeForExport, type Obj, type P3, type Kind, type Section, type Prim, type Mat, type Sym } from './build'
 
@@ -67,11 +67,12 @@ function loadSaved(): { objs: Obj[]; layers: Layer[] } | null {
 interface Slot {
   has: boolean; seen: number
   pinch: boolean; was: boolean; fist: number; open: number
+  raw: boolean; rawAt: number; since: number   // pince brute, depuis quand, et depuis quand la main est là
   scr: { x: number; y: number }; palmScr: { x: number; y: number }
   ndc: THREE.Vector2; p: THREE.Vector3; fresh: boolean
   lm: { x: number; y: number }[]; leap?: LeapHand
 }
-const mkSlot = (): Slot => ({ has: false, seen: 0, pinch: false, was: false, fist: 0, open: 0, scr: { x: 0, y: 0 }, palmScr: { x: 0, y: 0 }, ndc: new THREE.Vector2(), p: new THREE.Vector3(), fresh: true, lm: [] })
+const mkSlot = (): Slot => ({ has: false, seen: 0, pinch: false, was: false, fist: 0, open: 0, raw: false, rawAt: 0, since: 0, scr: { x: 0, y: 0 }, palmScr: { x: 0, y: 0 }, ndc: new THREE.Vector2(), p: new THREE.Vector3(), fresh: true, lm: [] })
 
 export function SpatialStudio() {
   const [saved] = useState(loadSaved)
@@ -196,6 +197,7 @@ export function SpatialStudio() {
 
     // ───────── mains ─────────
     const slots: Slot[] = [mkSlot(), mkSlot(), mkSlot()]
+    let zRef: number | null = null
     const suppress = [false, false, false]      // pince consommée par la palette
     const dist2 = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y)
     const tmp = new THREE.Vector3(), dirV = new THREE.Vector3()
@@ -210,7 +212,7 @@ export function SpatialStudio() {
       const W = overlay.width, H = overlay.height, va = video.videoWidth > 0 ? video.videoWidth / video.videoHeight : W / H
       return W / H > va ? { x: (1 - x) * W, y: H / 2 + (y - 0.5) * W / va } : { x: W / 2 + (0.5 - x) * H * va, y: y * H }
     }
-    const readHands = (res: { landmarks?: any[][]; gestures?: any[][]; leap?: LeapHand[] }, p: typeof P, now: number) => {
+    const readHands = (res: HandFrame, p: typeof P, now: number) => {
       const W = overlay.width, H = overlay.height
       const hands = (res.landmarks ?? []).slice(0, 2)
       const palms = hands.map((lm) => toScreen(lm[9].x, lm[9].y))
@@ -227,23 +229,28 @@ export function SpatialStudio() {
         const fist = g === 'Closed_Fist'
         s.fist = fist ? Math.min(s.fist + 1, 9) : 0
         s.open = g === 'Open_Palm' ? Math.min(s.open + 1, 30) : 0
-        // pince avec hystérésis : lue sur le capteur avec le Leap, sur les jalons avec la caméra
-        const ratio = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) / hs
-        const on = leap ? (s.pinch ? leap.pinch > 0.55 : leap.pinch > 0.8) : (s.pinch ? ratio < 0.62 : ratio < 0.42)
-        s.pinch = on && s.fist < 2
+        const raw = isPinching(res, i, s.pinch) && s.fist < 2
+        // anti-rebond : 50 ms pour fermer, 90 ms pour rouvrir, et rien pendant le quart de seconde où la
+        // main entre dans le champ (détection encore instable) : fini les traits parasites
+        if (!s.has) s.since = now
+        if (raw !== s.raw) { s.raw = raw; s.rawAt = now }
+        if (s.fist >= 2) s.pinch = false
+        else if (raw && !s.pinch && now - s.rawAt >= 50 && now - s.since >= 250) s.pinch = true
+        else if (!raw && s.pinch && now - s.rawAt >= 90) s.pinch = false
         // point d'action : milieu pouce-index (la paume quand le poing est fermé, plus stable)
         const ax = s.fist >= 2 ? lm[9].x : (lm[4].x + lm[8].x) / 2, ay = s.fist >= 2 ? lm[9].y : (lm[4].y + lm[8].y) / 2
         s.scr = toScreen(ax, ay); s.palmScr = palms[i]
         s.ndc.set(s.scr.x / W * 2 - 1, -(s.scr.y / H * 2 - 1))
         // profondeur : millimètres réels du Leap, ou taille apparente de la main à la caméra
         // (main poussée vers l'écran = plus loin dans la scène)
-        const dz = leap ? leap.pinchMm.z * visW() * leapWidthPerMm() * p.depthGain : -clamp(-1, 1, (hs - 0.16) / 0.12) * 1.2 * p.depthGain
+        if (leap && zRef === null) zRef = leap.pinchMm.z   // la profondeur zéro de la scène = là où la main se tient d'abord
+        const dz = leap ? (leap.pinchMm.z - (zRef ?? 0)) * visW() * leapWidthPerMm() * p.depthGain : -clamp(-1, 1, (hs - 0.16) / 0.12) * 1.2 * p.depthGain
         pointAt(s.ndc, clamp(-3.5, 3.5, dz), tmp)
         if (s.fresh || !s.has) s.p.copy(tmp); else s.p.lerp(tmp, clamp(0.3, 0.9, 0.3 + tmp.distanceTo(s.p) * 3))
         s.fresh = false; s.has = true; s.seen = now; s.leap = leap
         s.lm = lm.map((k: { x: number; y: number }) => toScreen(k.x, k.y))
       })
-      for (let i = 0; i < 2; i++) if (!used.has(i)) { const s = slots[i]; s.has = false; s.pinch = false; s.fist = 0; s.open = 0; s.fresh = true; s.lm = [] }
+      for (let i = 0; i < 2; i++) if (!used.has(i)) { const s = slots[i]; s.has = false; s.pinch = false; s.raw = false; s.fist = 0; s.open = 0; s.fresh = true; s.lm = [] }
     }
 
     // ───────── souris / tactile (case 2) : même chemin que les mains ─────────
@@ -386,7 +393,12 @@ export function SpatialStudio() {
       const a = act!; act = null
       const d = draft; draft = null; showDraft()
       if (d) {
-        if (a.tool === 'stroke') { if (d.pts.length > 2) thin(d, d.size * 0.25); commit(d) }
+        if (a.tool === 'stroke') {
+          // à la main, un trait plus court que deux fois son épaisseur est une pince involontaire : on ne le garde pas
+          const len = d.pts.reduce((e, q, i) => (i ? e + d3(q, d.pts[i - 1]) : 0), 0)
+          if (a.slot < 2 && len < d.size * 4) { setStatus('Pince trop brève : rien de tracé.'); return }
+          if (d.pts.length > 2) thin(d, d.size * 0.25); commit(d)
+        }
         else if (a.tool === 'revolve') { thin(d, 0.004 * k); if (d.pts.length >= 2) commit(d); else setStatus('Profil trop court : pince et déplace la main pour tracer le profil.') }
         else if (a.tool === 'prim') { if (d3(d.pts[0], d.pts[1]) > 0.03 * k) commit(d); else setStatus('Volume trop petit : pince, écarte la main, puis relâche.') }
         else if (a.tool === 'surface') {
@@ -481,7 +493,7 @@ export function SpatialStudio() {
 
       const res = p.handsOn ? pollHands(video, landmarker, clock) : null   // Leap Motion s'il est connecté, sinon caméra
       if (res) readHands(res, p, now)
-      for (let i = 0; i < 2; i++) if (slots[i].has && now - slots[i].seen > 350) { slots[i].has = false; slots[i].pinch = false; slots[i].fist = 0; slots[i].open = 0; slots[i].fresh = true; slots[i].lm = [] }
+      for (let i = 0; i < 2; i++) if (slots[i].has && now - slots[i].seen > 350) { slots[i].has = false; slots[i].pinch = false; slots[i].raw = false; slots[i].fist = 0; slots[i].open = 0; slots[i].fresh = true; slots[i].lm = [] }
       if (drag === 'draw') pointAt(slots[2].ndc, mouseDepth, slots[2].p)
 
       if (viewGoal) {   // glisser vers une vue mémorisée
