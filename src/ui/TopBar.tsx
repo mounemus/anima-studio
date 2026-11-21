@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music, ScanFace, Glasses, Clock, Sparkles, Aperture, PenTool, Disc3, Atom, Workflow, Shapes } from 'lucide-react'
+import { Camera, Mic, Sun, Maximize2, MessageCircle, Video, ImageDown, Settings, Monitor, MonitorPlay, Music, ScanFace, Glasses, Clock, Sparkles, Aperture, PenTool, Disc3, Atom, Workflow, Shapes, Guitar, MonitorDown } from 'lucide-react'
+import { useInstall } from './install'
 import { startMood, stopMood, isMoodActive, triggerMoodReflect } from '../engine/MoodEngine'
 import { Link } from 'react-router-dom'
 import { listDisplays, openOutputWindow, type DisplayInfo } from '../lib/multiDisplay'
@@ -219,6 +220,7 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
     showToast(r.inputs.length > 0 ? `MIDI : ${r.inputs.join(', ')}` : 'MIDI prêt (aucun appareil connecté)')
   }
 
+  const install = useInstall()
   const toggleFs = () => {
     if (stageRef.current) enterFullscreen(stageRef.current)
   }
@@ -354,6 +356,7 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
         </div>
         <button onClick={onToggleOutput} className={`ghost icon ${outputMode ? 'active' : ''}`} title="Mode SORTIE (F) — cache l'UI"><Monitor size={16} /></button>
         <button onClick={toggleFs} className="ghost icon" title="Plein écran"><Maximize2 size={16} /></button>
+        {install && <button onClick={install} className="ghost icon" title="Installer DigiArt sur cet ordinateur (fenêtre à part, icône dans le menu Démarrer)"><MonitorDown size={16} /></button>}
         <button onClick={onToggleAI} className="ghost icon" title="Compagnon IA"><MessageCircle size={16} /></button>
         <Link to="/mandala" title="Mandala Studio AR — dessin kaléidoscopique par les mains" style={{ display: 'inline-flex' }}>
           <button className="ghost icon"><Aperture size={16} /></button>
@@ -363,6 +366,9 @@ export function TopBar({ videoRef, fpsRef, onToggleAI, onToggleOutput, outputMod
         </Link>
         <Link to="/spatial" title="Esquisse spatiale — dessin et modelage 3D en réalité augmentée, au Leap Motion ou à la caméra" style={{ display: 'inline-flex' }}>
           <button className="ghost icon"><Shapes size={16} /></button>
+        </Link>
+        <Link to="/music" title="Lutherie d'air — composer en dessinant cordes, tambours et clochettes dans l'image de la caméra" style={{ display: 'inline-flex' }}>
+          <button className="ghost icon"><Guitar size={16} /></button>
         </Link>
         <Link to="/pottery" title="Poterie — tour de potier, argile tournée aux deux mains" style={{ display: 'inline-flex' }}>
           <button className="ghost icon"><Disc3 size={16} /></button>

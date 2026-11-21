@@ -1,0 +1,23 @@
+{
+  "name": "DigiArt",
+  "short_name": "DigiArt",
+  "description": "Ateliers d'art interactif en réalité augmentée : dessin, sculpture, poterie et musique, à la main, à la caméra ou au Leap Motion.",
+  "lang": "fr",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Lutherie d'air", "description": "Composer en dessinant ses instruments", "url": "/music" },
+    { "name": "Esquisse spatiale", "description": "Dessin et modelage 3D en réalité augmentée", "url": "/spatial" },
+    { "name": "Sketch AR 3D", "url": "/sketch" },
+    { "name": "Poterie", "url": "/pottery" }
+  ]
+}
