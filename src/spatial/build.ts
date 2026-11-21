@@ -71,6 +71,17 @@ export function simplify(pts: P3[], eps: number): number[] {
   return out
 }
 
+/** Adoucit un tracé à main levée : chaque point glisse vers la moyenne de ses voisins. Les
+ *  extrémités ne bougent pas, une ligne droite reste droite. */
+export function relax(pts: P3[], iterations: number): P3[] {
+  let cur = pts
+  for (let n = 0; n < iterations; n++) {
+    const prev = cur
+    cur = prev.map((p, i) => (i === 0 || i === prev.length - 1 ? p : [0, 1, 2].map((k) => (prev[i - 1][k] + 2 * p[k] + prev[i + 1][k]) / 4) as P3))
+  }
+  return cur
+}
+
 /** Décalages (u, v) du profil de section, en multiples du rayon. */
 function sectionRing(section: Section): [number, number][] {
   if (section === 'square') return [[0.8, 0.8], [-0.8, 0.8], [-0.8, -0.8], [0.8, -0.8]]

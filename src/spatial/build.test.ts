@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { sweep, revolve, surface, primitive, simplify, symMatrices, bakeForExport, type Obj, type P3 } from './build'
+import { sweep, revolve, surface, primitive, simplify, relax, symMatrices, bakeForExport, type Obj, type P3 } from './build'
 
 const arc: P3[] = Array.from({ length: 12 }, (_, i) => [Math.cos(i / 6), Math.sin(i / 6), i * 0.05])
 const finite = (g: THREE.BufferGeometry) => Array.from(g.getAttribute('position').array as Float32Array).every(Number.isFinite)
@@ -93,5 +93,19 @@ describe('esquisse spatiale : géométrie', () => {
     let out = 0
     for (let i = 0; i < p.count; i++) if ((p.getX(i) - c.x) * n.getX(i) + (p.getY(i) - c.y) * n.getY(i) + (p.getZ(i) - c.z) * n.getZ(i) > 0) out++
     expect(out / p.count).toBeGreaterThan(0.95)
+  })
+})
+
+describe('esquisse spatiale : adoucir un tracé', () => {
+  it('réduit le tremblement, garde les extrémités, laisse une droite intacte', () => {
+    const zig: P3[] = Array.from({ length: 21 }, (_, i) => [i * 0.1, i % 2 ? 0.05 : -0.05, 0])
+    const out = relax(zig, 3)
+    expect(out).toHaveLength(21)
+    expect(out[0]).toEqual(zig[0]); expect(out[20]).toEqual(zig[20])
+    const amp = (a: P3[]) => Math.max(...a.slice(2, -2).map((q) => Math.abs(q[1])))
+    expect(amp(out)).toBeLessThan(amp(zig) * 0.2)
+    const line: P3[] = [[0, 0, 0], [1, 1, 1], [2, 2, 2], [3, 3, 3]]
+    relax(line, 3).forEach((q, i) => q.forEach((v, k) => expect(v).toBeCloseTo(line[i][k], 9)))
+    expect(relax(zig, 0)).toBe(zig)
   })
 })

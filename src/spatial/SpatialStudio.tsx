@@ -24,13 +24,43 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import { pollHands, handClock, autoConnectLeap, leapWidthPerMm, isPinching, type LeapHand, type HandFrame } from '../senses/Leap'
 import { LeapToggle } from '../ui/LeapToggle'
-import { buildGeometry, makeMaterial, symMatrices, objMatrix, simplify, bakeForExport, type Obj, type P3, type Kind, type Section, type Prim, type Mat, type Sym } from './build'
+import { buildGeometry, makeMaterial, symMatrices, objMatrix, simplify, relax, bakeForExport, type Obj, type P3, type Kind, type Section, type Prim, type Mat, type Sym } from './build'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 const GESTURE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
 const FINGER_CHAINS = [[0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [0, 9, 10, 11, 12], [0, 13, 14, 15, 16], [0, 17, 18, 19, 20]]
 const SAVE_KEY = 'digiart:spatial'
 const CAM_Z = 5, FOV = 50
+const FIST_MS = 60, OPEN_MS = 300     // temps de tenue avant qu'un poing ou une paume ouverte compte
+const DWELL_MS = 550                  // temps de pointage sur un bouton de la palette pour le choisir
+const ZOOM_MIN = 0.2, ZOOM_MAX = 8, ORBIT = 3.5   // bornes du zoom ; radians de rotation par largeur d'écran parcourue
+const _e = new THREE.Vector3()
+
+/** Plans de dessin : on dessine toujours dans le plan qui fait face à l'écran, donc changer de plan
+ *  = tourner le monde pour amener la face voulue devant soi. */
+const PLANES: { id: string; label: string; hint: string; quat: [number, number, number, number] }[] = [
+  { id: 'front', label: 'Face', hint: 'Dessiner sur le plan de face', quat: [0, 0, 0, 1] },
+  { id: 'top', label: 'Dessus', hint: 'Dessiner sur le sol, vu de dessus', quat: [Math.SQRT1_2, 0, 0, Math.SQRT1_2] },
+  { id: 'side', label: 'Côté', hint: 'Dessiner sur le plan de côté', quat: [0, -Math.SQRT1_2, 0, Math.SQRT1_2] },
+  { id: 'iso', label: '3/4', hint: 'Vue de trois quarts, pour juger le volume', quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(0.45, -0.6, 0)).toArray() as [number, number, number, number] },
+]
+
+/** Filtre « 1 € » : lisse fort quand la main est lente (plus de tremblement dans le trait), peu quand
+ *  elle va vite (pas de retard). `smooth` 0..1 règle le compromis. */
+class Euro {
+  private x: THREE.Vector3 | null = null
+  private v = new THREE.Vector3()
+  private t = 0
+  reset() { this.x = null }
+  next(p: THREE.Vector3, now: number, smooth: number): THREE.Vector3 {
+    if (!this.x) { this.x = p.clone(); this.v.set(0, 0, 0); this.t = now; return this.x }
+    const dt = clamp(0.001, 0.1, (now - this.t) / 1000); this.t = now
+    const alpha = (cut: number) => { const r = 2 * Math.PI * cut * dt; return r / (r + 1) }
+    this.v.lerp(_e.subVectors(p, this.x).divideScalar(dt), alpha(1))
+    this.x.lerp(p, alpha(3 - 2.4 * smooth + (1.2 - 0.85 * smooth) * this.v.length()))
+    return this.x
+  }
+}
 const clamp = (a: number, b: number, v: number) => Math.max(a, Math.min(b, v))
 
 type Tool = 'stroke' | 'revolve' | 'surface' | 'prim' | 'grab' | 'edit' | 'paint' | 'erase'
@@ -57,6 +87,11 @@ const MATS: { id: Mat; label: string }[] = [
   { id: 'matte', label: 'Mat (argile)' }, { id: 'gloss', label: 'Laqué brillant' }, { id: 'metal', label: 'Métal' },
   { id: 'neon', label: 'Néon' }, { id: 'glass', label: 'Verre' }, { id: 'wire', label: 'Fil de fer' },
 ]
+/** Palette à la main : les 8 outils, plus trois actions qu'on veut sans lâcher le dessin. */
+const MENU: { id: string; icon: string; label: string }[] = [
+  ...TOOLS.map((t) => ({ id: t.id as string, icon: t.icon, label: t.label })),
+  { id: 'undo', icon: '↶', label: 'Annuler' }, { id: 'plane', icon: '🧭', label: 'Plan' }, { id: 'home', icon: '⊙', label: 'Centre' },
+]
 const SWATCHES = ['#00f0ff', '#ff2d78', '#ffd200', '#7cff00', '#ff7a00', '#8a5cff', '#ffffff', '#20232b']
 
 function loadSaved(): { objs: Obj[]; layers: Layer[] } | null {
@@ -66,13 +101,17 @@ function loadSaved(): { objs: Obj[]; layers: Layer[] } | null {
 /** Une main suivie (0 et 1) ou la souris (2). */
 interface Slot {
   has: boolean; seen: number
-  pinch: boolean; was: boolean; fist: number; open: number
+  pinch: boolean; was: boolean
+  fist: number; open: number; fistAt: number; openAt: number   // millisecondes de tenue du poing / de la paume ouverte
   raw: boolean; rawAt: number; since: number   // pince brute, depuis quand, et depuis quand la main est là
   scr: { x: number; y: number }; palmScr: { x: number; y: number }
-  ndc: THREE.Vector2; p: THREE.Vector3; fresh: boolean
+  cur: { x: number; y: number }; tip: { x: number; y: number }; palmS: { x: number; y: number }   // point d'action lissé, bout de l'index, paume lissée
+  ndc: THREE.Vector2; p: THREE.Vector3; fresh: boolean; euro: Euro
   lm: { x: number; y: number }[]; leap?: LeapHand
 }
-const mkSlot = (): Slot => ({ has: false, seen: 0, pinch: false, was: false, fist: 0, open: 0, raw: false, rawAt: 0, since: 0, scr: { x: 0, y: 0 }, palmScr: { x: 0, y: 0 }, ndc: new THREE.Vector2(), p: new THREE.Vector3(), fresh: true, lm: [] })
+const mkSlot = (): Slot => ({ has: false, seen: 0, pinch: false, was: false, fist: 0, open: 0, fistAt: 0, openAt: 0, raw: false, rawAt: 0, since: 0, scr: { x: 0, y: 0 }, palmScr: { x: 0, y: 0 }, cur: { x: 0, y: 0 }, tip: { x: 0, y: 0 }, palmS: { x: 0, y: 0 }, ndc: new THREE.Vector2(), p: new THREE.Vector3(), fresh: true, euro: new Euro(), lm: [] })
+/** La main a quitté le champ : tout remettre à zéro. */
+const dropSlot = (s: Slot) => { s.has = false; s.pinch = false; s.raw = false; s.fist = 0; s.open = 0; s.fistAt = 0; s.openAt = 0; s.fresh = true; s.lm = []; s.euro.reset() }
 
 export function SpatialStudio() {
   const [saved] = useState(loadSaved)
@@ -103,9 +142,12 @@ export function SpatialStudio() {
   const [error, setError] = useState<string | null>(null)
   const [count, setCount] = useState(0)
   const [selected, setSelected] = useState(false)
+  const [flat, setFlat] = useState(true)        // dessiner à plat sur le plan face à l'écran (précis), ou libre en profondeur
+  const [smooth, setSmooth] = useState(0.6)     // lissage du tracé
+  const [zoom, setZoom] = useState(1)
   const [handsOn, setHandsOn] = useState(true)   // suspendre le suivi : sinon des mains au clavier, vues par la caméra, dessinent
 
-  const P = { tool, section, straight, size, taper, color, mat, prim, sym, symN, sides, sweepDeg, snap, snapStep, duplicate, layers, activeLayer, bg, showGrid, showHands, depthGain, views, handsOn }
+  const P = { tool, section, straight, size, taper, color, mat, prim, sym, symN, sides, sweepDeg, snap, snapStep, duplicate, layers, activeLayer, bg, showGrid, showHands, depthGain, views, handsOn, flat, smooth }
   const paramsRef = useRef(P); paramsRef.current = P
   const cmdRef = useRef<Cmd[]>([])
   const send = (type: string, data?: any) => { cmdRef.current.push({ type, data }) }
@@ -137,6 +179,10 @@ export function SpatialStudio() {
     ;(grid.material as THREE.Material).transparent = true; (grid.material as THREE.Material).opacity = 0.4; world.add(grid)
     const mirrorPlane = new THREE.Mesh(new THREE.PlaneGeometry(7, 4.4), new THREE.MeshBasicMaterial({ color: 0xff2d78, transparent: true, opacity: 0.07, side: THREE.DoubleSide, depthWrite: false }))
     mirrorPlane.rotation.y = Math.PI / 2; mirrorPlane.position.y = 0.6; world.add(mirrorPlane)
+    // le plan de dessin : un cadre quadrillé discret, face à l'écran, là où le trait se pose
+    const drawPlane = new THREE.GridHelper(5, 10, 0xffd200, 0xffd200); drawPlane.rotation.x = Math.PI / 2
+    ;(drawPlane.material as THREE.Material).transparent = true; (drawPlane.material as THREE.Material).opacity = 0.1; (drawPlane.material as THREE.Material).depthWrite = false
+    scene.add(drawPlane)
     const lineOf = (hex: number) => { const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1, 0)]), new THREE.LineBasicMaterial({ color: hex, transparent: true, opacity: 0.8, depthTest: false })); l.renderOrder = 9; l.frustumCulled = false; return l }
     const axisLine = lineOf(0xffd200), dropLine = lineOf(0xffffff); world.add(axisLine, dropLine)
     const setLine = (l: THREE.Line, a: THREE.Vector3, b: THREE.Vector3) => { const at = l.geometry.getAttribute('position') as THREE.BufferAttribute; at.setXYZ(0, a.x, a.y, a.z); at.setXYZ(1, b.x, b.y, b.z); at.needsUpdate = true }
@@ -197,6 +243,7 @@ export function SpatialStudio() {
 
     // ───────── mains ─────────
     const slots: Slot[] = [mkSlot(), mkSlot(), mkSlot()]
+    let planeZ = 0                              // profondeur du plan de dessin, face à l'écran (Maj + molette)
     let zRef: number | null = null
     const suppress = [false, false, false]      // pince consommée par la palette
     const dist2 = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y)
@@ -226,42 +273,46 @@ export function SpatialStudio() {
         const s = slots[order[i]], leap = res.leap?.[i], g = res.gestures?.[i]?.[0]?.categoryName ?? 'None'
         used.add(order[i])
         const hs = Math.max(0.02, Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y))
-        const fist = g === 'Closed_Fist'
-        s.fist = fist ? Math.min(s.fist + 1, 9) : 0
-        s.open = g === 'Open_Palm' ? Math.min(s.open + 1, 30) : 0
-        const raw = isPinching(res, i, s.pinch) && s.fist < 2
+        if (g === 'Closed_Fist') { if (!s.fistAt) s.fistAt = now } else s.fistAt = 0
+        if (g === 'Open_Palm') { if (!s.openAt) s.openAt = now } else s.openAt = 0
+        s.fist = s.fistAt ? now - s.fistAt : 0; s.open = s.openAt ? now - s.openAt : 0
+        const raw = isPinching(res, i, s.pinch) && s.fist < FIST_MS
         // anti-rebond : 50 ms pour fermer, 90 ms pour rouvrir, et rien pendant le quart de seconde où la
         // main entre dans le champ (détection encore instable) : fini les traits parasites
         if (!s.has) s.since = now
         if (raw !== s.raw) { s.raw = raw; s.rawAt = now }
-        if (s.fist >= 2) s.pinch = false
+        if (s.fist >= FIST_MS) s.pinch = false
         else if (raw && !s.pinch && now - s.rawAt >= 50 && now - s.since >= 250) s.pinch = true
         else if (!raw && s.pinch && now - s.rawAt >= 90) s.pinch = false
         // point d'action : milieu pouce-index (la paume quand le poing est fermé, plus stable)
-        const ax = s.fist >= 2 ? lm[9].x : (lm[4].x + lm[8].x) / 2, ay = s.fist >= 2 ? lm[9].y : (lm[4].y + lm[8].y) / 2
-        s.scr = toScreen(ax, ay); s.palmScr = palms[i]
+        const ax = s.fist >= FIST_MS ? lm[9].x : (lm[4].x + lm[8].x) / 2, ay = s.fist >= FIST_MS ? lm[9].y : (lm[4].y + lm[8].y) / 2
+        s.scr = toScreen(ax, ay); s.palmScr = palms[i]; s.tip = toScreen(lm[8].x, lm[8].y)
+        if (!s.has) s.palmS = { ...palms[i] }; else { s.palmS.x += (palms[i].x - s.palmS.x) * 0.45; s.palmS.y += (palms[i].y - s.palmS.y) * 0.45 }
         s.ndc.set(s.scr.x / W * 2 - 1, -(s.scr.y / H * 2 - 1))
-        // profondeur : millimètres réels du Leap, ou taille apparente de la main à la caméra
-        // (main poussée vers l'écran = plus loin dans la scène)
-        if (leap && zRef === null) zRef = leap.pinchMm.z   // la profondeur zéro de la scène = là où la main se tient d'abord
-        const dz = leap ? (leap.pinchMm.z - (zRef ?? 0)) * visW() * leapWidthPerMm() * p.depthGain : -clamp(-1, 1, (hs - 0.16) / 0.12) * 1.2 * p.depthGain
-        pointAt(s.ndc, clamp(-3.5, 3.5, dz), tmp)
-        if (s.fresh || !s.has) s.p.copy(tmp); else s.p.lerp(tmp, clamp(0.3, 0.9, 0.3 + tmp.distanceTo(s.p) * 3))
+        // Profondeur. À plat : tout se dessine sur le plan de dessin, face à l'écran (le plus précis). Libre :
+        // millimètres réels du Leap, ou taille apparente de la main à la caméra (main poussée vers l'écran =
+        // plus loin dans la scène), autour du plan de dessin.
+        if (leap && zRef === null) zRef = leap.pinchMm.z   // la profondeur zéro = là où la main se tient d'abord
+        const dz = p.flat ? 0 : leap ? (leap.pinchMm.z - (zRef ?? 0)) * visW() * leapWidthPerMm() * p.depthGain : -clamp(-1, 1, (hs - 0.16) / 0.12) * 1.2 * p.depthGain
+        pointAt(s.ndc, clamp(-3.5, 3.5, planeZ + dz), tmp)
+        if (s.fresh || !s.has) s.euro.reset()
+        s.p.copy(s.euro.next(tmp, now, p.smooth))
+        _e.copy(s.p).project(camera); s.cur = { x: (_e.x * 0.5 + 0.5) * W, y: (-_e.y * 0.5 + 0.5) * H }
         s.fresh = false; s.has = true; s.seen = now; s.leap = leap
         s.lm = lm.map((k: { x: number; y: number }) => toScreen(k.x, k.y))
       })
-      for (let i = 0; i < 2; i++) if (!used.has(i)) { const s = slots[i]; s.has = false; s.pinch = false; s.raw = false; s.fist = 0; s.open = 0; s.fresh = true; s.lm = [] }
+      for (let i = 0; i < 2; i++) if (!used.has(i)) dropSlot(slots[i])
     }
 
     // ───────── souris / tactile (case 2) : même chemin que les mains ─────────
-    let mouseDepth = 0, drag: null | 'draw' | 'orbit' | 'pan' = null, lastPtr = { x: 0, y: 0 }
+    let drag: null | 'draw' | 'orbit' | 'pan' = null, lastPtr = { x: 0, y: 0 }
     const ptrNdc = (e: PointerEvent | WheelEvent) => slots[2].ndc.set((e.clientX / window.innerWidth) * 2 - 1, -((e.clientY / window.innerHeight) * 2 - 1))
     const onDown = (e: PointerEvent) => {
       try { el.setPointerCapture?.(e.pointerId) } catch { /* pointeur déjà relâché */ }
       lastPtr = { x: e.clientX, y: e.clientY }; ptrNdc(e)
       drag = e.button === 2 ? 'orbit' : (e.button === 1 || e.altKey) ? 'pan' : 'draw'
       const s = slots[2]; s.scr = { x: e.clientX, y: e.clientY }
-      if (drag === 'draw') { pointAt(s.ndc, mouseDepth, s.p); s.has = true; s.pinch = true }
+      if (drag === 'draw') { pointAt(s.ndc, planeZ, s.p); s.cur = s.scr; s.has = true; s.pinch = true }
     }
     const onMove = (e: PointerEvent) => {
       const dx = e.clientX - lastPtr.x, dy = e.clientY - lastPtr.y; lastPtr = { x: e.clientX, y: e.clientY }
@@ -272,8 +323,8 @@ export function SpatialStudio() {
     const onUp = () => { drag = null; slots[2].pinch = false; slots[2].has = false }
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
-      if (e.shiftKey) { mouseDepth = clamp(-3.5, 3.5, mouseDepth - Math.sign(e.deltaY || e.deltaX) * 0.15); setStatus(`Profondeur du pointeur : ${mouseDepth.toFixed(2)}`); return }
-      const f = clamp(0.5, 2, Math.exp(-e.deltaY * 0.0012)), s = clamp(0.1, 20, world.scale.x * f), k = s / world.scale.x
+      if (e.shiftKey) { planeZ = clamp(-3, 3, planeZ - Math.sign(e.deltaY || e.deltaX) * 0.15); setStatus(`Plan de dessin ${planeZ > 0 ? 'avancé' : planeZ < 0 ? 'reculé' : 'au centre'} (${planeZ.toFixed(2)}).`); return }
+      const f = clamp(0.5, 2, Math.exp(-e.deltaY * 0.0012)), s = clamp(ZOOM_MIN, ZOOM_MAX, world.scale.x * f), k = s / world.scale.x
       world.scale.setScalar(s); world.position.multiplyScalar(k); viewGoal = null
     }
     const noMenu = (e: Event) => e.preventDefault()
@@ -312,7 +363,7 @@ export function SpatialStudio() {
     // ───────── action en cours (de la pince au relâchement) ─────────
     let draft: Obj | null = null, draftNode: THREE.Group | null = null
     const showDraft = () => { if (draftNode) disposeNode(draftNode); draftNode = draft ? buildNode(draft) : null; if (draftNode) content.add(draftNode) }
-    interface Act { tool: Tool; slot: number; railB: P3[]; obj?: Obj; start?: P3; pos0?: P3; two?: { a0: THREE.Vector3; b0: THREE.Vector3; m0: THREE.Matrix4 }; handle?: number; pts0?: P3; changed?: boolean }
+    interface Act { tool: Tool; slot: number; railB: P3[]; ts: number[]; obj?: Obj; start?: P3; pos0?: P3; two?: { a0: THREE.Vector3; b0: THREE.Vector3; m0: THREE.Matrix4 }; handle?: number; pts0?: P3; changed?: boolean }
     let act: Act | null = null
     let pendingRail: P3[] | null = null, railNode: THREE.Group | null = null
     let axisO: P3 = [0, 0, 0]
@@ -325,9 +376,9 @@ export function SpatialStudio() {
       const creating = p.tool === 'stroke' || p.tool === 'revolve' || p.tool === 'surface' || p.tool === 'prim'
       const lay = layerOf(p.activeLayer)
       if (creating && (!lay || !lay.visible || lay.locked)) { setStatus('Le calque actif est masqué ou verrouillé : choisis-en un autre pour dessiner.'); return }
-      act = { tool: p.tool, slot: i, railB: [] }; if (i < 2) lastHand = i
+      act = { tool: p.tool, slot: i, railB: [], ts: [performance.now()] }; if (i < 2) lastHand = i
       if (p.tool === 'stroke') draft = newObj('stroke', { pts: [cur], nrm: [palmNormal(s)], size: r })
-      else if (p.tool === 'revolve') { const o2 = other(i); if (o2?.has && !o2.pinch && o2.fist < 2) axisO = toLocal(o2.p); draft = newObj('revolve', { pts: [cur], axisO, axisD: [0, 1, 0], sides: p.sides, sweep: p.sweepDeg }) }
+      else if (p.tool === 'revolve') { const o2 = other(i); if (o2?.has && !o2.pinch && o2.fist < FIST_MS) axisO = toLocal(o2.p); draft = newObj('revolve', { pts: [cur], axisO, axisD: [0, 1, 0], sides: p.sides, sweep: p.sweepDeg }) }
       else if (p.tool === 'surface') draft = newObj('stroke', { pts: [cur], size: 0.008 * k, section: 'round', taper: 0 })
       else if (p.tool === 'prim') draft = newObj('prim', { prim: p.prim, pts: [cur, cur] })
       else if (p.tool === 'grab') {
@@ -356,7 +407,7 @@ export function SpatialStudio() {
           if (p.snap && len > 1e-6) { const ax = v.map((x) => Math.abs(x) / len), m = ax.indexOf(Math.max(...ax)); if (ax[m] > Math.cos(12 * Math.PI / 180)) { end = [...a0] as P3; end[m] = cur[m] } }
           draft.pts = [a0, end]; draft.nrm = [draft.nrm![0], draft.nrm![0]]; showDraft()
         } else if (d3(cur, last) > step) {
-          draft.pts.push(cur); draft.nrm?.push(palmNormal(s))
+          draft.pts.push(cur); draft.nrm?.push(palmNormal(s)); a.ts.push(performance.now())
           if (a.tool === 'surface' && o2?.has && o2.pinch) { a.railB.push(toLocal(o2.p)); if (a.railB.length >= 2) { draft.kind = 'surface'; draft.pts2 = a.railB } }
           showDraft()
         }
@@ -393,6 +444,16 @@ export function SpatialStudio() {
       const a = act!; act = null
       const d = draft; draft = null; showDraft()
       if (d) {
+        // À la main, les derniers points sont ceux des doigts qui s'écartent (la pince ne se déclare ouverte
+        // qu'après 90 ms) : on les retire, sinon chaque trait finit par un crochet.
+        if (a.slot < 2 && d.kind !== 'surface' && a.ts.length === d.pts.length) {
+          const cut = performance.now() - 110
+          let n = d.pts.length
+          while (n > 2 && a.ts[n - 1] > cut) n--
+          d.pts.length = n; if (d.nrm) d.nrm.length = n
+        }
+        const soften = Math.round(paramsRef.current.smooth * 3)
+        if (soften && d.kind === 'stroke' && d.pts.length > 3 && a.ts.length >= d.pts.length) d.pts = relax(d.pts, soften)
         if (a.tool === 'stroke') {
           // à la main, un trait plus court que deux fois son épaisseur est une pince involontaire : on ne le garde pas
           const len = d.pts.reduce((e, q, i) => (i ? e + d3(q, d.pts[i - 1]) : 0), 0)
@@ -414,37 +475,68 @@ export function SpatialStudio() {
       if ((a.tool === 'grab' || a.tool === 'edit' || a.changed) && (a.obj || a.changed)) autosave()
     }
 
-    // ───────── navigation : attraper le monde avec les poings ─────────
-    let nav: { key: string; a: THREE.Vector3; b: THREE.Vector3 } | null = null
+    // ───────── navigation à la main ─────────
+    // Un poing : tourner la vue, donc changer de plan de dessin. Deux poings : zoomer en les écartant
+    // et déplacer en les bougeant ensemble, comme sur un écran tactile. Tout se lit sur la position
+    // des poings à l'écran : la profondeur estimée, trop bruitée, n'entre pas en jeu.
+    let nav: { key: string; a: { x: number; y: number }; b: { x: number; y: number } } | null = null
+    let navMode = ''
     let viewGoal: View | null = null
     const navigate = () => {
-      const f = [slots[0], slots[1]].filter((s) => s.has && s.fist >= 2)
+      navMode = ''
+      const f = [slots[0], slots[1]].filter((s) => s.has && s.fist >= FIST_MS)
       if (act || !f.length) { nav = null; return }
       viewGoal = null
-      const key = f.map((s) => slots.indexOf(s)).join()
+      const key = f.map((s) => slots.indexOf(s)).join(), A = f[0].palmS, B = (f[1] ?? f[0]).palmS
+      const W = overlay.width, H = overlay.height, u = visW() / W
       if (nav && nav.key === key) {
-        if (f.length === 1) world.position.add(tmp.subVectors(f[0].p, nav.a))
-        else { world.updateMatrix(); const m = twoHand(nav.a, nav.b, f[0].p, f[1].p).multiply(world.matrix); m.decompose(world.position, world.quaternion, world.scale); world.scale.setScalar(clamp(0.1, 20, world.scale.x)) }
+        if (f.length === 1) {
+          const q = new THREE.Quaternion().setFromEuler(new THREE.Euler((A.y - nav.a.y) / W * ORBIT, (A.x - nav.a.x) / W * ORBIT, 0))
+          world.position.applyQuaternion(q); world.quaternion.premultiply(q)
+        } else {
+          const d0 = dist2(nav.a, nav.b), d1 = dist2(A, B)
+          const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2
+          world.position.x += (mx - (nav.a.x + nav.b.x) / 2) * u; world.position.y -= (my - (nav.a.y + nav.b.y) / 2) * u
+          if (d0 > 60 && d1 > 60) {   // zoom autour du milieu des deux poings
+            const z = clamp(ZOOM_MIN, ZOOM_MAX, world.scale.x * d1 / d0), kz = z / world.scale.x, cx = (mx - W / 2) * u, cy = -(my - H / 2) * u
+            world.position.set(cx + (world.position.x - cx) * kz, cy + (world.position.y - cy) * kz, world.position.z * kz); world.scale.setScalar(z)
+          }
+        }
       }
-      nav = { key, a: f[0].p.clone(), b: (f[1] ?? f[0]).p.clone() }
+      nav = { key, a: { ...A }, b: { ...B } }
+      navMode = f.length === 1 ? 'tourner' : `zoom ×${world.scale.x.toFixed(1)}`
     }
 
-    // ───────── palette d'outils autour de la paume ouverte ─────────
-    let menu: { slot: number; hover: number } | null = null, lastHand = -1   // dernière main qui a agi
-    const menuItem = (c: { x: number; y: number }, j: number) => { const a = -Math.PI / 2 + j / TOOLS.length * Math.PI * 2; return { x: c.x + Math.cos(a) * 118, y: c.y + Math.sin(a) * 118 } }
-    const palette = () => {
-      menu = null
+    // ───────── palette autour de la paume ouverte ─────────
+    // On pointe un bouton avec l'index de l'autre main et on attend une demi-seconde : pas de pince à
+    // réussir pendant qu'on vise.
+    let menu: { slot: number; hover: number; since: number; fired: number } | null = null, lastHand = -1   // dernière main qui a agi
+    const menuItem = (c: { x: number; y: number }, j: number) => { const a = -Math.PI / 2 + j / MENU.length * Math.PI * 2; return { x: c.x + Math.cos(a) * 138, y: c.y + Math.sin(a) * 138 } }
+    /** La main `i` est-elle en train de viser la palette ? (alors elle ne dessine pas) */
+    const aiming = (i: number) => !!menu && i === 1 - menu.slot && dist2(slots[i].tip, slots[menu.slot].palmS) < 200
+    const palette = (now: number) => {
+      const prev = menu; menu = null
       if (act) return
-      const m = [0, 1].find((i) => i !== lastHand && slots[i].has && slots[i].open >= 8 && !slots[i].pinch && slots[1 - i].has)
+      const m = [0, 1].find((i) => i !== lastHand && slots[i].has && slots[i].open >= OPEN_MS && !slots[i].pinch && slots[1 - i].has)
       if (m === undefined) return
-      const h = slots[1 - m]; menu = { slot: m, hover: -1 }
-      TOOLS.forEach((_, j) => { if (dist2(menuItem(slots[m].palmScr, j), h.scr) < 38) menu!.hover = j })
-      if (menu.hover >= 0 && h.pinch && !h.was) { setTool(TOOLS[menu.hover].id); setStatus(`Outil : ${TOOLS[menu.hover].label}`); suppress[1 - m] = true }
+      const h = slots[1 - m], c = slots[m].palmS
+      let hover = -1
+      MENU.forEach((_, j) => { if (dist2(menuItem(c, j), h.tip) < 40) hover = j })
+      const same = !!prev && prev.slot === m && prev.hover === hover
+      menu = { slot: m, hover, since: same ? prev!.since : now, fired: same ? prev!.fired : 0 }
+      if (hover < 0) return
+      const it = MENU[hover]
+      // premier déclenchement après le temps de pointage ; « Annuler » se répète tant qu'on reste dessus
+      if (!(menu.fired ? it.id === 'undo' && now - menu.fired >= 900 : now - menu.since >= DWELL_MS)) return
+      menu.fired = now
+      if (it.id === 'undo') send('undo'); else if (it.id === 'plane') send('plane', 'next'); else if (it.id === 'home') send('recenter')
+      else { setTool(it.id as Tool); setStatus(`Outil : ${it.label}`) }
     }
 
     // ───────── commandes venues du panneau ─────────
     const download = (blob: Blob, name: string) => { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1500) }
     const visibleObjs = () => objs.filter((o) => layerOf(o.layer)?.visible)
+    let planeIdx = 0, lastZoom = 1
     const run = (c: Cmd, p: typeof P) => {
       const restore = (json: string) => { objs = JSON.parse(json); select(null); setRail(null); syncAll(); autosave() }
       switch (c.type) {
@@ -459,7 +551,12 @@ export function SpatialStudio() {
           if (o.kind === 'revolve') { o.sides = p.sides; o.sweep = p.sweepDeg }
           refresh(o); showHandles(); autosave(); setStatus('Réglages appliqués à la sélection.'); break }
         case 'axis': axisO = [0, 0, 0]; setStatus('Axe de révolution remis au centre.'); break
-        case 'recenter': viewGoal = { id: '', pos: [0, 0, 0], quat: [0, 0, 0, 1], scale: 1 }; break
+        case 'recenter': viewGoal = { id: '', pos: [0, 0, 0], quat: [0, 0, 0, 1], scale: 1 }; planeZ = 0; planeIdx = 0; setStatus('Vue recentrée : plan de face, zoom ×1.'); break
+        case 'plane': {   // amener un plan de dessin face à l'écran, sans toucher au zoom
+          planeIdx = c.data === 'next' ? (planeIdx + 1) % PLANES.length : Math.max(0, PLANES.findIndex((x) => x.id === c.data))
+          viewGoal = { id: '', pos: [0, 0, 0], quat: PLANES[planeIdx].quat, scale: world.scale.x }; setStatus(`Plan de dessin : ${PLANES[planeIdx].label}.`); break }
+        case 'zoom': { const z = clamp(ZOOM_MIN, ZOOM_MAX, world.scale.x * c.data), kz = z / world.scale.x
+          viewGoal = { id: '', pos: world.position.clone().multiplyScalar(kz).toArray() as P3, quat: world.quaternion.toArray() as View['quat'], scale: z }; break }
         case 'view:add': setViews((v) => [...v, { id: `v${Date.now()}`, pos: world.position.toArray() as P3, quat: world.quaternion.toArray() as View['quat'], scale: world.scale.x }]); break
         case 'view:go': viewGoal = p.views.find((v) => v.id === c.data) ?? null; break
         case 'image': { const lay = layerOf(p.activeLayer); if (!lay || lay.locked) { setStatus('Calque actif verrouillé.'); break }
@@ -493,24 +590,30 @@ export function SpatialStudio() {
 
       const res = p.handsOn ? pollHands(video, landmarker, clock) : null   // Leap Motion s'il est connecté, sinon caméra
       if (res) readHands(res, p, now)
-      for (let i = 0; i < 2; i++) if (slots[i].has && now - slots[i].seen > 350) { slots[i].has = false; slots[i].pinch = false; slots[i].raw = false; slots[i].fist = 0; slots[i].open = 0; slots[i].fresh = true; slots[i].lm = [] }
-      if (drag === 'draw') pointAt(slots[2].ndc, mouseDepth, slots[2].p)
+      for (let i = 0; i < 2; i++) if (slots[i].has && now - slots[i].seen > 350) dropSlot(slots[i])
+      if (lastHand >= 0 && !slots[lastHand].has) lastHand = -1   // la main qui dessinait est sortie du champ : la palette peut s'ouvrir sur n'importe laquelle
+      if (drag === 'draw') { pointAt(slots[2].ndc, planeZ, slots[2].p); slots[2].cur = slots[2].scr }
 
-      if (viewGoal) {   // glisser vers une vue mémorisée
-        world.position.lerp(tmp.fromArray(viewGoal.pos), 0.14); world.quaternion.slerp(new THREE.Quaternion().fromArray(viewGoal.quat), 0.14); world.scale.setScalar(world.scale.x + (viewGoal.scale - world.scale.x) * 0.14)
-        if (world.position.distanceTo(tmp) < 0.002 && Math.abs(world.scale.x - viewGoal.scale) < 0.002) viewGoal = null
+      if (viewGoal) {   // glisser vers la vue demandée (position, orientation et zoom), puis s'y poser exactement
+        const gq = new THREE.Quaternion().fromArray(viewGoal.quat)
+        world.position.lerp(tmp.fromArray(viewGoal.pos), 0.18); world.quaternion.slerp(gq, 0.18); world.scale.setScalar(world.scale.x + (viewGoal.scale - world.scale.x) * 0.18)
+        if (world.position.distanceTo(tmp) < 0.003 && Math.abs(world.scale.x - viewGoal.scale) < 0.003 && world.quaternion.angleTo(gq) < 0.004) {
+          world.position.copy(tmp); world.quaternion.copy(gq); world.scale.setScalar(viewGoal.scale); viewGoal = null
+        }
         world.updateMatrixWorld(true)
       }
       navigate()
-      palette()
+      palette(now)
+      { const z = Math.round(world.scale.x * 20) / 20; if (z !== lastZoom) { lastZoom = z; setZoom(z) } }
 
       // de la pince au relâchement
       if (act) { const s = slots[act.slot]; if (s.has && s.pinch) update(p); else end() }
-      else for (let i = 0; i < 3; i++) { const s = slots[i]; if (s.has && s.pinch && !s.was && !suppress[i] && !(menu && menu.slot === i)) { begin(i, p); if (act) break } }
+      else for (let i = 0; i < 3; i++) { const s = slots[i]; if (s.has && s.pinch && !s.was && !suppress[i] && !(menu && menu.slot === i) && !(i < 2 && aiming(i))) { begin(i, p); if (act) break } }
       for (let i = 0; i < 3; i++) { const s = slots[i]; if (!s.pinch) suppress[i] = false; s.was = s.pinch }
 
       // repères
       grid.visible = p.showGrid; mirrorPlane.visible = p.sym === 'mirror'
+      drawPlane.visible = p.showGrid; drawPlane.position.z = planeZ
       axisLine.visible = p.tool === 'revolve' || p.sym === 'radial'
       const ao: P3 = p.tool === 'revolve' ? axisO : [0, 0, 0]
       if (axisLine.visible) setLine(axisLine, tmp.set(ao[0], -1.6, ao[2]).clone(), new THREE.Vector3(ao[0], 2.6, ao[2]))
@@ -520,8 +623,8 @@ export function SpatialStudio() {
         const c = cursors[i]; c.visible = s.has && (i < 2 || drag === 'draw')
         if (!c.visible) return
         if (!lead) lead = s
-        c.position.copy(s.p); c.scale.setScalar(s.fist >= 2 ? 0.05 : r)
-        ;(c.material as THREE.MeshBasicMaterial).color.set(s.fist >= 2 ? '#ffffff' : p.tool === 'erase' ? '#ff5050' : p.color)
+        c.position.copy(s.p); c.scale.setScalar(s.fist >= FIST_MS ? 0.05 : r)
+        ;(c.material as THREE.MeshBasicMaterial).color.set(s.fist >= FIST_MS ? '#ffffff' : p.tool === 'erase' ? '#ff5050' : p.color)
         ;(c.material as THREE.MeshBasicMaterial).opacity = s.pinch ? 0.95 : 0.45
       })
       dropLine.visible = !!lead && p.showGrid
@@ -532,27 +635,36 @@ export function SpatialStudio() {
 
       // surimpression 2D : squelettes, curseurs, palette
       octx.clearRect(0, 0, overlay.width, overlay.height)
+      const toolIcon = TOOLS.find((t) => t.id === p.tool)?.icon ?? ''
       for (let i = 0; i < 2; i++) {
         const s = slots[i]; if (!s.has) continue
         if (p.showHands && s.lm.length) {
           octx.lineWidth = 2.5; octx.strokeStyle = act?.slot === i ? 'rgba(255,170,60,0.85)' : 'rgba(255,255,255,0.55)'
           for (const ch of FINGER_CHAINS) { octx.beginPath(); ch.forEach((ci, n) => { const pt = s.lm[ci]; if (n === 0) octx.moveTo(pt.x, pt.y); else octx.lineTo(pt.x, pt.y) }); octx.stroke() }
         }
-        octx.beginPath(); octx.arc(s.scr.x, s.scr.y, s.pinch ? 9 : 14, 0, Math.PI * 2); octx.lineWidth = 3
-        octx.strokeStyle = s.fist >= 2 ? '#ffffff' : p.color; octx.stroke()
+        const fisted = s.fist >= FIST_MS, at = fisted ? s.palmS : s.cur
+        octx.beginPath(); octx.arc(at.x, at.y, s.pinch ? 9 : 14, 0, Math.PI * 2); octx.lineWidth = 3
+        octx.strokeStyle = fisted ? '#ffffff' : p.color; octx.stroke()
         if (s.pinch) { octx.fillStyle = p.color; octx.fill() }
-        if (s.fist >= 2) { octx.font = '600 13px system-ui'; octx.fillStyle = '#fff'; octx.textAlign = 'center'; octx.fillText('monde', s.scr.x, s.scr.y - 22) }
+        octx.textAlign = 'center'
+        if (fisted) { octx.font = '600 14px system-ui'; octx.lineWidth = 4; octx.strokeStyle = 'rgba(0,0,0,0.7)'; octx.strokeText(navMode || 'vue', at.x, at.y - 24); octx.fillStyle = '#fff'; octx.fillText(navMode || 'vue', at.x, at.y - 24) }
+        else if (!menu) { octx.font = '17px system-ui'; octx.fillStyle = '#fff'; octx.fillText(toolIcon, at.x + 24, at.y - 16) }   // l'outil en main, toujours sous les yeux
       }
       if (menu) {
-        const c = slots[menu.slot].palmScr
-        TOOLS.forEach((t, j) => {
+        const c = slots[menu.slot].palmS, tip = slots[1 - menu.slot].tip
+        MENU.forEach((t, j) => {
           const q = menuItem(c, j), hot = j === menu!.hover, cur = t.id === p.tool
           octx.beginPath(); octx.arc(q.x, q.y, hot ? 36 : 30, 0, Math.PI * 2)
           octx.fillStyle = hot ? 'rgba(0,240,255,0.9)' : cur ? 'rgba(255,210,0,0.85)' : 'rgba(10,12,18,0.82)'; octx.fill()
           octx.lineWidth = 2; octx.strokeStyle = 'rgba(255,255,255,0.7)'; octx.stroke()
           octx.textAlign = 'center'; octx.font = '22px system-ui'; octx.fillStyle = '#fff'; octx.fillText(t.icon, q.x, q.y + 4)
           octx.font = '600 11px system-ui'; octx.fillStyle = hot || cur ? '#000' : '#fff'; octx.fillText(t.label, q.x, q.y + 21)
+          if (hot && !menu!.fired) {   // anneau qui se remplit pendant le pointage
+            octx.beginPath(); octx.arc(q.x, q.y, 42, -Math.PI / 2, -Math.PI / 2 + Math.min(1, (now - menu!.since) / DWELL_MS) * Math.PI * 2)
+            octx.lineWidth = 5; octx.strokeStyle = '#ffd200'; octx.stroke()
+          }
         })
+        octx.beginPath(); octx.arc(tip.x, tip.y, 7, 0, Math.PI * 2); octx.fillStyle = '#ffd200'; octx.fill()   // le bout de l'index, qui vise
       }
       rafId = requestAnimationFrame(loop)
     }
@@ -565,6 +677,8 @@ export function SpatialStudio() {
       else if (e.key === 'Delete' || e.key === 'Backspace') send('delete')
       else if (e.key === 'Escape') { if (act) { act = null; draft = null; showDraft() } setRail(null); select(null) }
       else if (/^[1-8]$/.test(e.key)) setTool(TOOLS[+e.key - 1].id)
+      else if (z === 'f') send('plane', 'front'); else if (z === 'd') send('plane', 'top'); else if (z === 'c') send('plane', 'side')
+      else if (e.key === '+' || e.key === '=') send('zoom', 1.25); else if (e.key === '-') send('zoom', 0.8); else if (e.key === '0') send('recenter')
       else if (e.key === ' ' && !(t && t.tagName === 'BUTTON')) { e.preventDefault(); setHandsOn((v) => !v) }
     }
     window.addEventListener('keydown', onKey)
@@ -580,7 +694,7 @@ export function SpatialStudio() {
         const files = await FilesetResolver.forVisionTasks(WASM_BASE)
         landmarker = await GestureRecognizer.createFromOptions(files, { baseOptions: { modelAssetPath: GESTURE_MODEL_URL, delegate: 'GPU' }, runningMode: 'VIDEO', numHands: 2, minHandDetectionConfidence: 0.45, minHandPresenceConfidence: 0.3, minTrackingConfidence: 0.3 })
         setStatus('Prêt : pince pour dessiner, ferme le poing pour attraper le monde ✦')
-      } catch (e: any) { setError(`Caméra ou modèle indisponible (${e?.message ?? e}). Le Leap Motion et la souris restent utilisables.`) }
+      } catch (e: any) { setError(`Caméra ou modèle indisponible (${e?.message ?? e}). Le Leap Motion et la souris restent utilisables.`); setStatus('Prêt : souris ou Leap Motion.') }
     }
     init()
 
@@ -592,6 +706,7 @@ export function SpatialStudio() {
       try { landmarker?.close() } catch { /* noop */ }
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
       nodes.forEach(disposeNode); if (draftNode) disposeNode(draftNode); if (railNode) disposeNode(railNode)
+      drawPlane.geometry.dispose(); (drawPlane.material as THREE.Material).dispose()
       cursorGeo.dispose(); handleGeo.dispose(); handleMat.dispose(); railMat.dispose(); envTex.dispose(); pmrem.dispose()
       renderer.dispose(); if (el.parentElement === mount) mount.removeChild(el)
     }
@@ -642,6 +757,19 @@ export function SpatialStudio() {
         <button onClick={() => send('redo')} title="Refaire (Ctrl+Y)" style={barBtn}>↷</button>
       </div>
 
+      {/* vue et plan de dessin : toujours à portée */}
+      <div role="group" aria-label="Vue et plan de dessin" style={{ position: 'absolute', top: 16, right: 16, zIndex: 10, display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: panelOpen ? 'min(560px, max(220px, calc(100vw - 348px)))' : 'min(560px, calc(100vw - 96px))',   // ne jamais passer sous le panneau
+          padding: 6, borderRadius: 12, background: 'rgba(10,12,18,0.82)', border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(10px)', color: '#ddd', fontSize: 12 }}>
+        <span style={{ color: '#00f0ff', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, padding: '0 2px' }}>Plan</span>
+        {PLANES.map((pl) => <button key={pl.id} onClick={() => send('plane', pl.id)} title={pl.hint} style={hudBtn}>{pl.label}</button>)}
+        <button onClick={() => setFlat((v) => !v)} aria-pressed={flat} title="À plat : le trait reste sur le plan de dessin (précis). Libre 3D : la profondeur suit la main." style={{ ...hudBtn, borderColor: flat ? '#ffd200' : 'rgba(255,255,255,0.2)', color: flat ? '#ffd200' : '#fff' }}>{flat ? 'À plat' : 'Libre 3D'}</button>
+        <span style={{ width: 1, alignSelf: 'stretch', background: 'rgba(255,255,255,0.2)' }} />
+        <button onClick={() => send('zoom', 0.8)} aria-label="Dézoomer" title="Dézoomer (−)" style={hudBtn}>−</button>
+        <span aria-live="polite" style={{ minWidth: 46, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>×{zoom.toFixed(2)}</span>
+        <button onClick={() => send('zoom', 1.25)} aria-label="Zoomer" title="Zoomer (+)" style={hudBtn}>+</button>
+        <button onClick={() => send('recenter')} title="Recentrer : plan de face, zoom ×1 (0)" style={hudBtn}>⊙</button>
+      </div>
+
       {!panelOpen && <button onClick={() => setPanelOpen(true)} aria-label="Ouvrir le panneau" style={{ position: 'absolute', top: 16, left: 16, zIndex: 11, ...sel, width: 'auto', padding: '8px 12px' }}>☰</button>}
       {panelOpen && (
         <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 10, width: 300, maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box', background: 'rgba(10,10,15,0.86)', padding: 16, borderRadius: 16, backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.15)', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', maxHeight: 'calc(100vh - 110px)', overflowY: 'auto', color: '#ccc' }}>
@@ -649,11 +777,13 @@ export function SpatialStudio() {
             <strong style={{ color: '#00f0ff', textTransform: 'uppercase', letterSpacing: 1, fontSize: 14 }}>Esquisse spatiale</strong>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Link to="/" style={{ color: '#aaa', fontSize: 12, textDecoration: 'none' }}>← Studio</Link><button onClick={() => setPanelOpen(false)} aria-label="Replier le panneau" style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 16 }}>«</button></div>
           </div>
-          <div role="status" style={{ color: error ? '#ff6b6b' : '#8d8d99', fontSize: 11, marginBottom: 8, lineHeight: 1.35 }}>{error ?? status}</div>
+          <div role="status" style={{ color: '#8d8d99', fontSize: 11, marginBottom: 8, lineHeight: 1.35 }}>{status}</div>
+          {error && <div role="alert" style={{ color: '#ff6b6b', fontSize: 11, marginBottom: 8, lineHeight: 1.35 }}>{error}</div>}
           <div style={{ fontSize: 11, color: '#ffd200', marginBottom: 10, lineHeight: 1.4, background: 'rgba(255,210,0,0.08)', padding: 8, borderRadius: 6 }}>
             <b>{TOOLS.find((t) => t.id === tool)?.label}</b> — {hint}<br />
-            ✊ <b>Poing</b> : attraper le monde (deux poings : tourner et zoomer). 🖐 <b>Paume ouverte</b> de l'autre main : palette d'outils.<br />
-            🖱️ Souris : glisser = pince · clic droit = tourner · molette = zoom · Maj + molette = profondeur.
+            ✊ <b>Un poing</b> : tourner la vue (changer de plan de dessin). ✊✊ <b>Deux poings</b> : les écarter pour zoomer, les bouger ensemble pour déplacer.<br />
+            🖐 <b>Paume ouverte</b> de l'autre main : palette. Pointe un bouton avec l'index et attends que l'anneau se remplisse.<br />
+            🖱️ Souris : glisser = pince · clic droit = tourner · molette = zoom · Maj + molette = avancer le plan.
           </div>
 
           <LeapToggle />
@@ -687,7 +817,9 @@ export function SpatialStudio() {
           {sym === 'radial' && <Field label={`Répétitions — ${symN}`}><input type="range" min={2} max={24} value={symN} onChange={(e) => setSymN(+e.target.value)} style={rng} /></Field>}
           <label style={chk}><input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> Aimanter à la grille</label>
           {snap && <Field label={`Pas de la grille — ${snapStep}`}><input type="range" min={0.05} max={0.5} step={0.05} value={snapStep} onChange={(e) => setSnapStep(+e.target.value)} style={rng} /></Field>}
-          <Field label={`Profondeur de la main — ×${depthGain.toFixed(1)}${depthGain === 0 ? ' (à plat)' : ''}`}><input type="range" min={0} max={2.5} step={0.1} value={depthGain} onChange={(e) => setDepthGain(+e.target.value)} style={rng} /></Field>
+          <Field label={`Lissage du tracé — ${Math.round(smooth * 100)} %`}><input type="range" min={0} max={1} step={0.05} value={smooth} onChange={(e) => setSmooth(+e.target.value)} style={rng} /></Field>
+          <label style={chk}><input type="checkbox" checked={flat} onChange={(e) => setFlat(e.target.checked)} /> Dessiner à plat sur le plan (plus précis)</label>
+          {!flat && <Field label={`Profondeur de la main — ×${depthGain.toFixed(1)}`}><input type="range" min={0} max={2.5} step={0.1} value={depthGain} onChange={(e) => setDepthGain(+e.target.value)} style={rng} /></Field>}
 
           <Title>Calques</Title>
           {layers.map((l) => (
@@ -735,6 +867,7 @@ export function SpatialStudio() {
 
 const sel: React.CSSProperties = { width: '100%', boxSizing: 'border-box', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: 'white', padding: 8, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 }
 const barBtn: React.CSSProperties = { minWidth: 40, flexShrink: 0, borderRadius: 10, cursor: 'pointer', border: '1px solid transparent', background: 'transparent', color: '#fff', fontSize: 20 }
+const hudBtn: React.CSSProperties = { background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', padding: '5px 9px', borderRadius: 7, cursor: 'pointer', fontWeight: 600, fontSize: 12 }
 const ico: React.CSSProperties = { background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 13, padding: 2 }
 const rng: React.CSSProperties = { width: '100%', accentColor: '#00f0ff' }
 const chk: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: '#ccc', margin: '6px 0 10px', cursor: 'pointer' }
