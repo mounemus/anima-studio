@@ -18,7 +18,7 @@ import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision'
 import { pollHands, handClock, autoConnectLeap, isPinching, type HandFrame } from '../senses/Leap'
 import { LeapToggle } from '../ui/LeapToggle'
 import { Synth, TIMBRES, type Timbre } from './synth'
-import { SCALES, NOTE_NAMES, stringMidi, frets, frettedMidi, cross, nearest, drumVoice, bellMidi, midiToHz, noteName, type P2, type Fret } from './theory'
+import { SCALES, NOTE_NAMES, stringMidi, frets, frettedMidi, cross, nearest, sweep, sweepPoint, drumVoice, bellMidi, midiToHz, noteName, type P2, type Fret } from './theory'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 const GESTURE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
@@ -58,6 +58,13 @@ function example(aspect: number): Thing[] {   // aspect = hauteur / largeur de l
   return out
 }
 
+const SET_KEY = 'digiart:music:reglages'
+function savedSettings(): any { try { return JSON.parse(localStorage.getItem(SET_KEY) || '{}') ?? {} } catch { return {} } }
+const okScale = (v: any) => typeof v === 'string' && Object.hasOwn(SCALES, v), okTimbre = (v: any) => typeof v === 'string' && Object.hasOwn(TIMBRES, v), okRoot = (v: any) => Number.isInteger(v) && v >= 0 && v < 12
+const okBpm = (v: any) => Number.isFinite(v) && v >= 40 && v <= 180, okTurn = (v: any) => Number.isFinite(v) && v >= 1 && v <= 256
+const okPoint = (q: any) => Array.isArray(q) && Number.isFinite(q[0]) && Number.isFinite(q[1])
+const TURNS: [number, string][] = [[4, 'une mesure'], [8, 'deux mesures'], [16, 'quatre mesures'], [32, 'huit mesures'], [64, 'seize mesures']]
+
 function loadSaved(): Thing[] {
   try { const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); return Array.isArray(s?.things) ? s.things : [] } catch { return [] }
 }
@@ -67,11 +74,15 @@ const mkHand = (): Hand => ({ has: false, seen: 0, since: 0, pinch: false, was: 
 
 export function MusicStudio() {
   const [tool, setTool] = useState<Tool>('string')
-  const [timbre, setTimbre] = useState<Timbre>('harp')
-  const [scale, setScale] = useState('penta')
-  const [root, setRoot] = useState(0)
-  const [bpm, setBpm] = useState(90)
-  const [turn, setTurn] = useState(8)            // temps pour un tour de manège
+  const [s0] = useState(savedSettings)
+  const [timbre, setTimbre] = useState<Timbre>(okTimbre(s0.timbre) ? s0.timbre : 'harp')
+  const [scale, setScale] = useState<string>(okScale(s0.scale) ? s0.scale : 'penta')
+  const [root, setRoot] = useState<number>(okRoot(s0.root) ? s0.root : 0)
+  const [bpm, setBpm] = useState<number>(okBpm(s0.bpm) ? s0.bpm : 90)
+  const [turn, setTurn] = useState<number>(okTurn(s0.turn) ? s0.turn : 8)   // temps pour un tour de manège
+  const [pieces, setPieces] = useState<{ id: string; title: string; style: string }[]>([])
+  useEffect(() => { try { localStorage.setItem(SET_KEY, JSON.stringify({ timbre, scale, root, bpm, turn })) } catch { /* stockage plein */ } }, [timbre, scale, root, bpm, turn])
+  useEffect(() => { fetch('/morceaux/index.json').then((r) => (r.ok ? r.json() : [])).then((l) => { if (Array.isArray(l)) setPieces(l) }).catch(() => { /* pas de liste : le bouton Ouvrir reste */ }) }, [])
   const [reverb, setReverb] = useState(0.45)
   const [echo, setEcho] = useState(0.2)
   const [volume, setVolume] = useState(0.8)
@@ -113,7 +124,7 @@ export function MusicStudio() {
     let seq = 0
     const hits = new Map<string, { t: number; amp: number; pos: number; midi?: number }>()   // dernière fois que chaque instrument a sonné
     const sparks: { x: number; y: number; vx: number; vy: number; t: number; hue: number }[] = []
-    const stats = { plucks: 0, drums: 0, bells: 0, last: 0 }   // `last` = dernière note de corde jouée (midi)
+    const stats = { plucks: 0, drums: 0, bells: 0, last: 0, log: [] as [number, number][] }   // `last` = dernière note de corde jouée (midi)
     const save = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ things })) } catch { /* stockage plein : le morceau reste à l'écran */ } setCount(things.length) }
     const push = () => { past.push(JSON.stringify(things)); if (past.length > 50) past.shift() }
     const add = (t: Omit<Thing, 'id'>) => { push(); things.push({ ...t, id: `m${(seq++).toString(36)}${Date.now().toString(36)}` }); save() }
@@ -137,7 +148,7 @@ export function MusicStudio() {
       // la partie qui vibre est celle où l'on gratte : la frette se compte depuis le bout opposé
       const midi = fretT === null ? open : frettedMidi(open, list, t > fretT ? fretT : 1 - fretT)
       synthRef.current?.pluck(midiToHz(midi), vel, s.timbre, t)
-      hits.set(s.id, { t: now, amp: vel, pos: t, midi }); stats.plucks++; stats.last = midi
+      hits.set(s.id, { t: now, amp: vel, pos: t, midi }); stats.plucks++; stats.last = midi; if (import.meta.env.DEV && stats.log.length < 2000) stats.log.push([now, midi])
       burst([s.a[0] + (s.b[0] - s.a[0]) * t, s.a[1] + (s.b[1] - s.a[1]) * t], hueOf(s), 4 + Math.round(vel * 8))
     }
     const strike = (d: Thing, vel: number, p: typeof P, now: number) => {
@@ -247,12 +258,12 @@ export function MusicStudio() {
       for (const w of things) {
         if (w.kind !== 'wheel') continue
         const r = dist(w.a, w.b), phase = Math.atan2(w.b[1] - w.a[1], w.b[0] - w.a[0])
-        const ang = phase + (now / 1000) * (p.bpm / 60) / p.turn * Math.PI * 2
-        const tip: P2 = [w.a[0] + Math.cos(ang) * r, w.a[1] + Math.sin(ang) * r]
+        const spot = (b: number): P2 => { const g = phase + b / p.turn * Math.PI * 2; return [w.a[0] + Math.cos(g) * r, w.a[1] + Math.sin(g) * r] }
+        const tip = spot(beat), from = spot(prevBeat)   // le rayon maintenant, et à l'image d'avant
         for (const t of things) {
           if (t.kind === 'wheel') continue
           const key = `${w.id}>${t.id}`, was = touching.has(key)
-          const at = t.kind === 'string' ? cross(w.a, tip, t.a, t.b) : nearest(t.a, w.a, tip).d < 0.018 ? 0.5 : null
+          const at = t.kind === 'string' ? sweep(w.a, from, tip, t.a, t.b) : sweepPoint(w.a, from, tip, t.a, 0.018) ? 0.5 : null
           if (at !== null && !was) { touching.add(key); if (t.kind === 'string') pluck(t, at, 0.6, p, null, now); else strike(t, 0.7, p, now) }
           else if (at === null && was) touching.delete(key)
         }
@@ -260,14 +271,32 @@ export function MusicStudio() {
       }
     }
     const touching = new Set<string>(), arms = new Map<string, P2>()
+    let beat = 0, prevBeat = 0   // position des manèges, en temps
+    /** Un morceau dessiné sur un autre écran peut déborder : on le recentre, sans toucher aux longueurs (donc aux notes). */
+    const fit = () => {
+      let x0 = 9, x1 = -9, y0 = 9, y1 = -9
+      for (const t of things) for (const q of [t.a, t.b]) { x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]) }
+      if (!things.length || (x0 >= 0 && x1 <= 1 && y0 >= 0 && y1 <= H / W)) return
+      const dx = 0.5 - (x0 + x1) / 2, dy = H / W / 2 - (y0 + y1) / 2
+      things = things.map((t) => ({ ...t, a: [t.a[0] + dx, t.a[1] + dy], b: [t.b[0] + dx, t.b[1] + dy] }))
+    }
 
     // ───────── commandes du panneau ─────────
     const run = (c: { type: string; data?: any }) => {
       if (c.type === 'undo') { if (past.length) { things = JSON.parse(past.pop()!); save(); setStatus('↶ Annulé.') } else setStatus('Rien à annuler.') }
       else if (c.type === 'clear') { if (things.length) { push(); things = []; touching.clear(); save(); setStatus('Tout est effacé. « Annuler » pour retrouver le morceau.') } }
-      else if (c.type === 'example') { push(); things = example(H / W); touching.clear(); save(); setStatus('Exemple chargé : écoute le manège, puis ajoute tes cordes.') }
-      else if (c.type === 'load') { push(); things = (c.data as Thing[]).filter((t) => t && Array.isArray(t.a) && Array.isArray(t.b) && ['string', 'drum', 'bell', 'wheel'].includes(t.kind)).map((t) => ({ ...t, timbre: TIMBRES[t.timbre] ? t.timbre : 'harp' })); touching.clear(); save(); setStatus(`Morceau chargé : ${things.length} instruments.`) }
-      else if (c.type === 'save') { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ app: 'digiart-lutherie', version: 1, things })], { type: 'application/json' })); a.download = `morceau-${Date.now()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1500) }
+      else if (c.type === 'example') { push(); things = example(H / W); touching.clear(); beat = prevBeat = 0; save(); setStatus('Exemple chargé : écoute le manège, puis ajoute tes cordes.') }
+      else if (c.type === 'load') {   // fichier venu d'ailleurs : on ne garde que ce qui a la bonne forme
+        const f = c.data ?? {}, st = f.settings ?? {}
+        const list = (Array.isArray(f.things) ? f.things as Thing[] : []).filter((t) => t && okPoint(t.a) && okPoint(t.b) && ['string', 'drum', 'bell', 'wheel'].includes(t.kind)).slice(0, 400)
+          .map((t, i) => ({ ...t, id: typeof t.id === 'string' ? t.id : `f${i}`, a: [t.a[0], t.a[1]] as P2, b: [t.b[0], t.b[1]] as P2, timbre: okTimbre(t.timbre) ? t.timbre : 'harp' }))
+        if (!list.length) { setStatus("Ce fichier ne contient aucun instrument lisible : rien n'a été changé."); return }
+        push(); things = list
+        if (okScale(st.scale)) setScale(st.scale); if (okRoot(st.root)) setRoot(st.root); if (okBpm(st.bpm)) setBpm(Math.round(st.bpm)); if (okTurn(st.turn)) setTurn(+st.turn)
+        fit(); touching.clear(); beat = prevBeat = -1; save()   // le manège repart un temps avant le début
+        setStatus(typeof f.title === 'string' ? `« ${f.title.slice(0, 80)} » : ${things.length} instruments. Active le son et écoute, puis joue par-dessus.` : `Morceau chargé : ${things.length} instruments.`)
+      }
+      else if (c.type === 'save') { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ app: 'digiart-lutherie', version: 1, settings: { scale: paramsRef.current.scale, root: paramsRef.current.root, bpm: paramsRef.current.bpm, turn: paramsRef.current.turn }, things })], { type: 'application/json' })); a.download = `morceau-${Date.now()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1500) }
       else if (c.type === 'record') toggleRecord()
     }
 
@@ -302,7 +331,7 @@ export function MusicStudio() {
       for (const end of [A, B]) { g.beginPath(); g.arc(end[0], end[1], 4, 0, 6.283); g.moveTo(end[0] - nx * 9, end[1] - ny * 9); g.lineTo(end[0] + nx * 9, end[1] + ny * 9); g.stroke() }
       if (tune) {
         for (const f of tune.list) { const x = A[0] + dx * f.t, y = A[1] + dy * f.t, big = (f.midi - tune.open) % 12 === 0 ? 7 : 4; g.beginPath(); g.moveTo(x, y); g.lineTo(x + nx * big, y + ny * big); g.stroke() }
-        label(noteName(hit && age < 1.2 && hit.midi !== undefined ? hit.midi : tune.open), A[0] - nx * 16, A[1] - ny * 16 + 4, hue)
+        if (things.length <= 24 || s === draft || age < 1.2) label(noteName(hit && age < 1.2 && hit.midi !== undefined ? hit.midi : tune.open), A[0] - nx * 16, A[1] - ny * 16 + 4, hue)
       }
     }
 
@@ -316,6 +345,7 @@ export function MusicStudio() {
       for (let i = 0; i < 2; i++) if (hands[i].has && now - hands[i].seen > 350) drop(hands[i])
       if (mouse.has && !mouse.pinch && now - mouse.seen > 1500) { mouse.has = false; mouse.prev = null }
       edit(p)
+      prevBeat = beat; beat += dt * p.bpm / 60
       play(p, now, dt)
       for (const h of hands) { h.was = h.pinch; if (h === mouse) h.prev = h.has ? [h.at] : null }
 
@@ -397,7 +427,7 @@ export function MusicStudio() {
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; e.target.value = ''; if (!f) return
-    f.text().then((t) => { const d = JSON.parse(t); if (!Array.isArray(d.things)) throw new Error('pas de liste d\'instruments'); send('load', d.things) }).catch((err) => setError(`Fichier illisible : ${err?.message ?? err}`))
+    f.text().then((t) => { const d = JSON.parse(t); if (!Array.isArray(d.things)) throw new Error('pas de liste d\'instruments'); send('load', d) }).catch((err) => setError(`Fichier illisible : ${err?.message ?? err}`))
   }
 
   const hint = TOOLS.find((t) => t.id === tool)?.hint ?? ''
@@ -441,13 +471,22 @@ export function MusicStudio() {
           </div>
 
           <button onClick={() => send('example')} style={{ ...sel, marginBottom: 12, borderColor: '#ffd200', color: '#ffd200' }}>🎼 Charger un morceau d'exemple</button>
+          {pieces.length > 0 && (
+            <select value="" aria-label="Morceaux connus" style={{ ...sel, marginBottom: 12 }} onChange={(e) => {
+              const id = e.target.value; if (!id) return
+              fetch(`/morceaux/${encodeURIComponent(id)}.json`).then((r) => { if (!r.ok) throw new Error(`réponse ${r.status}`); return r.json() }).then((d) => { setError(null); send('load', d) }).catch((err) => setError(`Morceau indisponible : ${err?.message ?? err}`))
+            }}>
+              <option value="">🎵 Morceaux connus…</option>
+              {pieces.map((m) => <option key={m.id} value={m.id}>{m.title} — {m.style}</option>)}
+            </select>
+          )}
           <LeapToggle accent="#ffd200" />
 
           <Field label="Son des cordes"><select value={timbre} onChange={(e) => setTimbre(e.target.value as Timbre)} style={sel}>{(Object.keys(TIMBRES) as Timbre[]).map((k) => <option key={k} value={k}>{TIMBRES[k].label}</option>)}</select></Field>
           <Field label="Gamme"><select value={scale} onChange={(e) => setScale(e.target.value)} style={sel}>{Object.entries(SCALES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></Field>
           <Field label="Tonalité"><select value={root} onChange={(e) => setRoot(+e.target.value)} style={sel}>{NOTE_NAMES.map((n, i) => <option key={n} value={i}>{n}</option>)}</select></Field>
           <Field label={`Tempo — ${bpm} à la minute`}><input type="range" min={40} max={180} value={bpm} onChange={(e) => setBpm(+e.target.value)} style={rng} /></Field>
-          <Field label="Un tour de manège"><select value={turn} onChange={(e) => setTurn(+e.target.value)} style={sel}><option value={4}>4 temps (une mesure)</option><option value={8}>8 temps (deux mesures)</option><option value={16}>16 temps (quatre mesures)</option></select></Field>
+          <Field label="Un tour de manège"><select value={turn} onChange={(e) => setTurn(+e.target.value)} style={sel}>{TURNS.map(([n, l]) => <option key={n} value={n}>{n} temps ({l})</option>)}{!TURNS.some(([n]) => n === turn) && <option value={turn}>{turn} temps</option>}</select></Field>
           <Field label={`Réverbération — ${Math.round(reverb * 100)} %`}><input type="range" min={0} max={1} step={0.05} value={reverb} onChange={(e) => setReverb(+e.target.value)} style={rng} /></Field>
           <Field label={`Écho — ${Math.round(echo * 100)} %`}><input type="range" min={0} max={1} step={0.05} value={echo} onChange={(e) => setEcho(+e.target.value)} style={rng} /></Field>
           <Field label={`Volume — ${Math.round(volume * 100)} %`}><input type="range" min={0} max={1} step={0.05} value={volume} onChange={(e) => setVolume(+e.target.value)} style={rng} /></Field>

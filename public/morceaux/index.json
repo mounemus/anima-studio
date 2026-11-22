@@ -1,0 +1,47 @@
+[
+ {
+  "id": "ode-a-la-joie",
+  "title": "Ode à la joie (Beethoven)",
+  "style": "classique"
+ },
+ {
+  "id": "lettre-a-elise",
+  "title": "Lettre à Élise (Beethoven)",
+  "style": "romantique"
+ },
+ {
+  "id": "the-entertainer",
+  "title": "The Entertainer (Scott Joplin)",
+  "style": "ragtime"
+ },
+ {
+  "id": "when-the-saints",
+  "title": "When the Saints Go Marching In (traditionnel)",
+  "style": "jazz Nouvelle-Orléans"
+ },
+ {
+  "id": "korobeiniki",
+  "title": "Korobeïniki, l'air de Tetris (traditionnel russe)",
+  "style": "folk"
+ },
+ {
+  "id": "hava-nagila",
+  "title": "Hava Nagila (traditionnel)",
+  "style": "klezmer"
+ },
+ {
+  "id": "sakura",
+  "title": "Sakura Sakura (traditionnel japonais)",
+  "style": "Japon"
+ },
+ {
+  "id": "amazing-grace",
+  "title": "Amazing Grace (traditionnel)",
+  "style": "gospel"
+ },
+ {
+  "id": "frere-jacques",
+  "title": "Frère Jacques, en canon (traditionnel)",
+  "style": "comptine"
+ }
+]

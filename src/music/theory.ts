@@ -74,6 +74,24 @@ export function nearest(p: P2, a: P2, b: P2): { d: number; t: number } {
   return { d: Math.hypot(p[0] - a[0] - vx * t, p[1] - a[1] - vy * t), t }
 }
 
+/** Le point x est-il dans le triangle c-p-q ? (triangle plat : non) */
+export function inTri(x: P2, c: P2, p: P2, q: P2): boolean {
+  if (Math.abs((p[0] - c[0]) * (q[1] - c[1]) - (p[1] - c[1]) * (q[0] - c[0])) < 1e-12) return false
+  const s = (a: P2, b: P2) => (b[0] - a[0]) * (x[1] - a[1]) - (b[1] - a[1]) * (x[0] - a[0])
+  const d1 = s(c, p), d2 = s(p, q), d3 = s(q, c)
+  return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
+}
+/** Secteur balayé par le rayon d'un manège entre deux images (triangle centre c, ancien bout p, nouveau bout q) :
+ *  position (0..1) le long de la corde a→b où il la touche, ou `null`. Tester le rayon seul laisserait un manège
+ *  rapide sauter par-dessus une corde fine sans la jouer. */
+export function sweep(c: P2, p: P2, q: P2, a: P2, b: P2): number | null {
+  return cross(c, q, a, b) ?? cross(c, p, a, b) ?? cross(p, q, a, b) ?? (inTri(a, c, p, q) ? 0.5 : null)
+}
+/** Même balayage pour un tambour ou une clochette : son centre x est-il à moins de r du rayon, ou dans le secteur ? */
+export function sweepPoint(c: P2, p: P2, q: P2, x: P2, r: number): boolean {
+  return nearest(x, c, q).d < r || nearest(x, c, p).d < r || inTri(x, c, p, q)
+}
+
 /** Tambour : son rayon (en largeurs d'écran) décide de sa voix. Grand = grosse caisse, petit = charleston. */
 export function drumVoice(radius: number): { kind: 'kick' | 'tom' | 'hat'; hz: number } {
   const hz = Math.max(45, Math.min(520, 9 / Math.max(0.01, radius)))
