@@ -45,6 +45,14 @@ export function stringMidi(len: number, root: number, steps: number[], octave = 
   return snap(REF_MIDI + 12 * Math.log2(REF_LEN / l) + octave * 12, root, steps)
 }
 
+/** Longueur de la corde qui sonne `midi` : l'inverse de stringMidi(). */
+export const lengthFor = (midi: number, octave = 0) => REF_LEN * 2 ** (-(midi - REF_MIDI - octave * 12) / 12)
+/** Note de la gamme juste au-dessus (`dir` = 1) ou juste en dessous (−1) de `midi`. */
+export function stepNote(midi: number, root: number, steps: number[], dir: number): number {
+  for (let m = Math.round(midi) + dir, i = 0; i < 12; i++, m += dir) if (snap(m, root, steps) === m) return m
+  return midi
+}
+
 export interface Fret { t: number; midi: number }
 /** Frettes d'une corde : pour chaque note de la gamme au-dessus de la note à vide, l'endroit (0 = sillet,
  *  1 = chevalet) où bloquer la corde pour l'obtenir. Une octave est au milieu, comme sur une guitare. */
@@ -97,9 +105,12 @@ export function drumVoice(radius: number): { kind: 'kick' | 'tom' | 'hat'; hz: n
   const hz = Math.max(45, Math.min(520, 9 / Math.max(0.01, radius)))
   return { kind: radius > 0.1 ? 'kick' : radius > 0.055 ? 'tom' : 'hat', hz }
 }
-/** Clochette : plus elle est posée haut, plus elle est aiguë (deux octaves du bas au haut de l'écran). */
-export function bellMidi(y01: number, root: number, steps: number[]): number {
-  return snap(60 + (1 - Math.max(0, Math.min(1, y01))) * 24, root, steps)
+/** Hauteur de référence des clochettes, en largeurs d'écran : celle d'un écran 16:9. */
+export const BELL_SPAN = 0.5625
+/** Clochette : plus elle est posée haut, plus elle est aiguë (deux octaves, de Do4 en bas à Do6 en haut). `y` est sa
+ *  hauteur en largeurs d'écran : la note ne dépend donc pas de la forme de la fenêtre, un morceau rouvert sonne pareil. */
+export function bellMidi(y: number, root: number, steps: number[]): number {
+  return snap(60 + (1 - Math.max(0, Math.min(1, y / BELL_SPAN))) * 24, root, steps)
 }
 
 export interface PluckTone { bright: number; pick: number; sustain: number }

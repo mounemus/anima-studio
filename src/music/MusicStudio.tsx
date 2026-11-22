@@ -18,7 +18,7 @@ import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision'
 import { pollHands, handClock, autoConnectLeap, isPinching, type HandFrame } from '../senses/Leap'
 import { LeapToggle } from '../ui/LeapToggle'
 import { Synth, TIMBRES, type Timbre } from './synth'
-import { SCALES, NOTE_NAMES, stringMidi, frets, frettedMidi, cross, nearest, sweep, sweepPoint, drumVoice, bellMidi, midiToHz, noteName, type P2, type Fret } from './theory'
+import { SCALES, NOTE_NAMES, stringMidi, frets, frettedMidi, cross, nearest, sweep, sweepPoint, drumVoice, bellMidi, lengthFor, stepNote, midiToHz, noteName, type P2, type Fret } from './theory'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
 const GESTURE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
@@ -29,7 +29,9 @@ const clamp = (a: number, b: number, v: number) => Math.max(a, Math.min(b, v))
 const dist = (a: P2, b: P2) => Math.hypot(a[0] - b[0], a[1] - b[1])
 
 type Kind = 'string' | 'drum' | 'bell' | 'wheel'
-type Tool = 'play' | Kind | 'erase'
+type Tool = 'play' | Kind | 'move' | 'erase'
+const KIND_NAMES: Record<Kind, string> = { string: 'corde', drum: 'tambour', bell: 'clochette', wheel: 'manège' }
+const DRUM_NAMES = { kick: 'Grosse caisse', tom: 'Tom', hat: 'Charleston' }
 /** Un instrument dessiné. Coordonnées en largeurs d'écran (x et y divisés par la largeur), donc
  *  indépendantes de la taille de la fenêtre. `b` = autre bout de la corde, ou point du bord du cercle. */
 interface Thing { id: string; kind: Kind; a: P2; b: P2; timbre: Timbre }
@@ -40,6 +42,7 @@ const TOOLS: { id: Tool; icon: string; label: string; hint: string }[] = [
   { id: 'drum', icon: '🥁', label: 'Tambour', hint: 'Pince au centre, écarte pour la taille. Grand = grosse caisse, petit = charleston.' },
   { id: 'bell', icon: '🔔', label: 'Clochette', hint: 'Une pince pose une clochette. Plus haut = plus aigu.' },
   { id: 'wheel', icon: '🎠', label: 'Manège', hint: 'Pince au centre, écarte : le rayon tourne au tempo et joue tout ce qu\'il croise.' },
+  { id: 'move', icon: '🤏', label: 'Déplacer', hint: "Pince un instrument et emmène-le. Par un bout de corde : tu l'allonges ou la raccourcis, la note change. Par le bord d'un tambour ou d'un manège : tu changes sa taille. Un manège pris par son centre emporte ce qu'il porte. L'instrument choisi se règle ici, dans le panneau." },
   { id: 'erase', icon: '🧽', label: 'Gomme', hint: 'Pince un instrument pour le retirer.' },
 ]
 
@@ -95,6 +98,7 @@ export function MusicStudio() {
   const [status, setStatus] = useState('Chargement…')
   const [error, setError] = useState<string | null>(null)
   const [count, setCount] = useState(0)
+  const [picked, setPicked] = useState<null | { id: string; kind: Kind; timbre: Timbre; note: string }>(null)   // l'instrument choisi avec l'outil Déplacer
 
   const P = { tool, timbre, scale, root, bpm, turn, bg, showHands, handsOn }
   const paramsRef = useRef(P); paramsRef.current = P
@@ -127,7 +131,8 @@ export function MusicStudio() {
     const stats = { plucks: 0, drums: 0, bells: 0, last: 0, log: [] as [number, number][] }   // `last` = dernière note de corde jouée (midi)
     const save = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ things })) } catch { /* stockage plein : le morceau reste à l'écran */ } setCount(things.length) }
     const push = () => { past.push(JSON.stringify(things)); if (past.length > 50) past.shift() }
-    const add = (t: Omit<Thing, 'id'>) => { push(); things.push({ ...t, id: `m${(seq++).toString(36)}${Date.now().toString(36)}` }); save() }
+    const newId = () => `m${(seq++).toString(36)}${Date.now().toString(36)}`
+    const add = (t: Omit<Thing, 'id'>) => { push(); things.push({ ...t, id: newId() }); save() }
     const px = (p: P2): P2 => [p[0] * W, p[1] * W]
     const fretCache = new Map<string, { open: number; list: Fret[] }>()
     /** Note à vide et frettes d'une corde, pour la gamme en cours. */
@@ -154,7 +159,7 @@ export function MusicStudio() {
     const strike = (d: Thing, vel: number, p: typeof P, now: number) => {
       const last = hits.get(d.id); if (last && now - last.t < 90) return
       if (d.kind === 'drum') { const v = drumVoice(dist(d.a, d.b)); synthRef.current?.drum(v.kind, v.hz, vel); stats.drums++ }
-      else { synthRef.current?.bell(midiToHz(bellMidi(d.a[1] * W / H, p.root, SCALES[p.scale].steps)), vel); stats.bells++ }
+      else { synthRef.current?.bell(midiToHz(bellMidi(d.a[1], p.root, SCALES[p.scale].steps)), vel); stats.bells++ }
       hits.set(d.id, { t: now, amp: vel, pos: 0.5 }); burst(d.a, hueOf(d), 6)
     }
     const BELL_R = 0.02
@@ -210,7 +215,76 @@ export function MusicStudio() {
       }
       return best
     }
+    // ───────── choisir, déplacer, modifier un instrument déjà posé ─────────
+    type Grip = 'all' | 'a' | 'b'   // tout l'instrument, ou un de ses deux points (bout de corde, bord de cercle)
+    let selected: string | null = null
+    let grab: { slot: number; id: string; mode: Grip; last: P2; moved: boolean; voice: string; carry: string[] } | null = null
+    const describe = (t: Thing, p: typeof P) => t.kind === 'string' ? noteName(tuning(t, p).open) : t.kind === 'bell' ? noteName(bellMidi(t.a[1], p.root, SCALES[p.scale].steps)) : t.kind === 'drum' ? DRUM_NAMES[drumVoice(dist(t.a, t.b)).kind] : `${Math.round(dist(t.a, t.b) * 200)} % de l'écran`
+    const tellPicked = () => { const t = things.find((x) => x.id === selected); if (!t) selected = null; setPicked(t ? { id: t.id, kind: t.kind, timbre: t.timbre, note: describe(t, paramsRef.current) } : null) }
+    const audition = (t: Thing, p: typeof P) => { if (t.kind === 'string') pluck(t, 0.5, 0.4, p, null, performance.now()); else if (t.kind !== 'wheel') strike(t, 0.5, p, performance.now()) }
+    const shift = (t: Thing, dx: number, dy: number, mode: Grip = 'all'): Thing => ({ ...t, a: mode === 'b' ? t.a : [t.a[0] + dx, t.a[1] + dy], b: mode === 'a' ? t.b : [t.b[0] + dx, t.b[1] + dy] })
+    /** Ce qu'une pince attrape à cet endroit : d'abord les poignées (bouts de corde), puis les corps, puis les grands cercles. */
+    const pickGrab = (at: P2): { t: Thing; mode: Grip } | null => {
+      const found: { t: Thing; mode: Grip; d: number }[] = []
+      for (const t of things) {
+        const da = dist(at, t.a), r = dist(t.a, t.b)
+        if (t.kind === 'string') { const db = dist(at, t.b), n = nearest(at, t.a, t.b); if (da < 0.028 && da <= db) found.push({ t, mode: 'a', d: da * 0.5 }); else if (db < 0.028) found.push({ t, mode: 'b', d: db * 0.5 }); else if (n.d < 0.03) found.push({ t, mode: 'all', d: n.d }) }
+        else if (t.kind === 'bell') { if (da < 0.035) found.push({ t, mode: 'all', d: da * 0.7 }) }
+        else if (t.kind === 'drum') { if (r > 0.03 && Math.abs(da - r) < 0.018) found.push({ t, mode: 'b', d: 0.03 + Math.abs(da - r) }); else if (da < r) found.push({ t, mode: 'all', d: 0.05 + da * 0.1 }) }
+        else if (da < 0.035) found.push({ t, mode: 'all', d: 0.03 + da * 0.5 })
+        else if (Math.abs(da - r) < 0.018) found.push({ t, mode: 'b', d: 0.07 + Math.abs(da - r) })
+      }
+      return found.sort((x, y) => x.d - y.d)[0] ?? null
+    }
+    const MIN_SIZE: Record<Kind, number> = { string: 0.03, drum: 0.012, bell: 0, wheel: 0.05 }
+    const moveGrabbed = (p: typeof P) => {
+      const gr = grab!, h = hands[gr.slot], t = things.find((x) => x.id === gr.id)
+      if (!t || !h.has || !h.pinch) { if (gr.moved) save(); grab = null; tellPicked(); return }
+      const dx = h.grip[0] - gr.last[0], dy = h.grip[1] - gr.last[1]
+      if (!dx && !dy) return
+      const next = shift(t, dx, dy, gr.mode)
+      if (gr.mode !== 'all' && dist(next.a, next.b) < MIN_SIZE[t.kind]) return          // trop petit : on attend que la main s'écarte
+      if (!gr.moved) { push(); gr.moved = true }
+      things = things.map((x) => (x.id === t.id ? next : gr.carry.includes(x.id) ? shift(x, dx, dy) : x))
+      gr.last = h.grip
+      const voice = describe(next, p)
+      if (voice !== gr.voice) { gr.voice = voice; audition(next, p) }                   // la note ou la voix vient de changer : on la fait entendre
+    }
+    const startGrab = (p: typeof P) => {
+      for (let i = 0; i < 3; i++) {
+        const h = hands[i]; if (!h.has || !h.pinch || h.was) continue
+        const hit = pickGrab(h.grip)
+        selected = hit ? hit.t.id : null
+        if (hit) {
+          const w = hit.t, r = dist(w.a, w.b)
+          // un manège pris par son centre emporte les instruments posés dans son cercle
+          const carry = w.kind === 'wheel' && hit.mode === 'all' ? things.filter((x) => x.kind !== 'wheel' && Math.min(dist(x.a, w.a), dist(x.b, w.a)) <= r * 1.05).map((x) => x.id) : []
+          grab = { slot: i, id: w.id, mode: hit.mode, last: h.grip, moved: false, voice: describe(w, p), carry }
+        }
+        tellPicked(); return
+      }
+    }
+    /** Réglages de l'instrument choisi, demandés depuis le panneau. */
+    const changePicked = (type: string, data: any) => {
+      const t = things.find((x) => x.id === selected); if (!t) return
+      const p = paramsRef.current, steps = SCALES[p.scale].steps
+      const resized = (len: number): Thing => { const k = clamp(0.03, 1.5, len) / (dist(t.a, t.b) || 1); return { ...t, b: [t.a[0] + (t.b[0] - t.a[0]) * k, t.a[1] + (t.b[1] - t.a[1]) * k] } }
+      push()
+      if (type === 'sel-delete') { things = things.filter((x) => x !== t); hits.delete(t.id); selected = null }
+      else if (type === 'sel-copy') { const copy = { ...shift(t, 0.03, 0.03), id: newId() }; things = [...things, copy]; selected = copy.id }
+      else {
+        let next: Thing = t
+        if (type === 'sel-timbre' && t.kind === 'string' && okTimbre(data)) next = { ...resized(lengthFor(tuning(t, p).open, TIMBRES[data as Timbre].octave)), timbre: data }   // même note, autre son : la longueur suit
+        else if (type === 'sel-step' && t.kind === 'string') next = resized(lengthFor(stepNote(tuning(t, p).open, p.root, steps, data < 0 ? -1 : 1), TIMBRES[t.timbre].octave))
+        else if (type === 'sel-drum' && t.kind === 'drum' && data > 0 && data < 0.5) next = { ...t, b: [t.a[0] + data, t.a[1]] }
+        things = things.map((x) => (x === t ? next : x)); audition(next, p)
+      }
+      save()
+    }
+
     const edit = (p: typeof P) => {
+      if (grab) { moveGrabbed(p); return }
+      if (selected && p.tool !== 'move') { selected = null; setPicked(null) }
       if (draft) {
         const h = hands[draft.slot]
         if (h.has && h.pinch) { draft.b = h.grip; return }
@@ -220,6 +294,7 @@ export function MusicStudio() {
         draft = null; return
       }
       if (p.tool === 'play') return
+      if (p.tool === 'move') { startGrab(p); return }
       for (let i = 0; i < 3; i++) {
         const h = hands[i]; if (!h.has || !h.pinch) continue
         if (p.tool === 'erase') { const t = pickNear(h.grip); if (t) { if (!erased.on) push(); erased.on = true; things = things.filter((x) => x !== t); hits.delete(t.id); save() } continue }
@@ -298,6 +373,7 @@ export function MusicStudio() {
       }
       else if (c.type === 'save') { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ app: 'digiart-lutherie', version: 1, settings: { scale: paramsRef.current.scale, root: paramsRef.current.root, bpm: paramsRef.current.bpm, turn: paramsRef.current.turn }, things })], { type: 'application/json' })); a.download = `morceau-${Date.now()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1500) }
       else if (c.type === 'record') toggleRecord()
+      else if (c.type.startsWith('sel-')) changePicked(c.type, c.data)
     }
 
     // ───────── enregistrement : l'image et le son ensemble ─────────
@@ -321,7 +397,7 @@ export function MusicStudio() {
     const drawString = (s: { a: P2; b: P2 }, hue: number, tune: { open: number; list: Fret[] } | null, hit: { t: number; amp: number; pos: number; midi?: number } | undefined, now: number) => {
       const A = px(s.a), B = px(s.b), dx = B[0] - A[0], dy = B[1] - A[1], len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len
       const age = hit ? (now - hit.t) / 1000 : 9, amp = hit && age < 2.5 ? hit.amp * 14 * Math.exp(-age * 2.6) : 0
-      glow(hue, amp > 0.5 ? 82 : 70, 0.95, 2.2, amp > 0.5 ? 18 : 9)
+      glow(hue, amp > 0.5 ? 82 : 70, 0.95, 2.2, amp > 0.5 ? 18 : lite ? 0 : 9)
       g.beginPath()
       if (amp > 0.3) {   // la corde vibre : un ventre dont la bosse part de l'endroit du pincement
         for (let i = 0; i <= 40; i++) { const u = i / 40, w = Math.sin(Math.PI * u) * Math.sin(age * 55 + (u - hit!.pos) * 4) * amp; const x = A[0] + dx * u + nx * w, y = A[1] + dy * u + ny * w; if (i) g.lineTo(x, y); else g.moveTo(x, y) }
@@ -331,15 +407,16 @@ export function MusicStudio() {
       for (const end of [A, B]) { g.beginPath(); g.arc(end[0], end[1], 4, 0, 6.283); g.moveTo(end[0] - nx * 9, end[1] - ny * 9); g.lineTo(end[0] + nx * 9, end[1] + ny * 9); g.stroke() }
       if (tune) {
         for (const f of tune.list) { const x = A[0] + dx * f.t, y = A[1] + dy * f.t, big = (f.midi - tune.open) % 12 === 0 ? 7 : 4; g.beginPath(); g.moveTo(x, y); g.lineTo(x + nx * big, y + ny * big); g.stroke() }
-        if (things.length <= 24 || s === draft || age < 1.2) label(noteName(hit && age < 1.2 && hit.midi !== undefined ? hit.midi : tune.open), A[0] - nx * 16, A[1] - ny * 16 + 4, hue)
+        if (things.length <= 24 || s === draft || age < 1.2 || (s as Thing).id === selected) label(noteName(hit && age < 1.2 && hit.midi !== undefined ? hit.midi : tune.open), A[0] - nx * 16, A[1] - ny * 16 + 4, hue)
       }
     }
 
-    let lastT = performance.now()
+    let lastT = performance.now(), lite = false   // lite : beaucoup d'instruments, le halo n'entoure que ceux qui sonnent
     const loop = () => {
       if (!running) return
       const p = paramsRef.current, now = performance.now(), dt = clamp(0.004, 0.1, (now - lastT) / 1000); lastT = now
-      for (const c of cmdRef.current.splice(0)) run(c)
+      for (const c of cmdRef.current.splice(0)) { run(c); tellPicked() }
+      lite = things.length > 60
       const res = p.handsOn ? pollHands(video, landmarker, clock) : null
       if (res) readHands(res, now)
       for (let i = 0; i < 2; i++) if (hands[i].has && now - hands[i].seen > 350) drop(hands[i])
@@ -367,11 +444,20 @@ export function MusicStudio() {
           g.shadowBlur = 0; g.fillStyle = `hsl(${hue},90%,80%)`; g.beginPath(); g.arc(c[0], c[1], 5, 0, 6.283); g.fill(); g.beginPath(); g.arc(tip[0], tip[1], 4, 0, 6.283); g.fill()
         } else {
           const c = px(t.a), r = (t.kind === 'drum' ? dist(t.a, t.b) : BELL_R) * W, pop = age < 0.25 ? 1 + (0.25 - age) * 0.5 : 1
-          glow(hue, age < 0.25 ? 85 : 68, 0.95, 2.2, age < 0.4 ? 22 : 8); g.beginPath(); g.arc(c[0], c[1], r * pop, 0, 6.283); g.stroke()
-          g.fillStyle = `hsla(${hue},95%,60%,${age < 0.3 ? 0.35 - age : 0.07})`; g.fill()
-          if (t.kind === 'drum') { const v = drumVoice(dist(t.a, t.b)); label(v.kind === 'kick' ? 'Grosse caisse' : v.kind === 'tom' ? 'Tom' : 'Charleston', c[0], c[1] + 4, hue) }
-          else label(noteName(bellMidi(t.a[1] * W / H, p.root, SCALES[p.scale].steps)), c[0], c[1] - r - 6, hue)
+          glow(hue, age < 0.25 ? 85 : 68, 0.95, 2.2, age < 0.4 ? 22 : lite ? 0 : 8); g.beginPath(); g.arc(c[0], c[1], r * pop, 0, 6.283); g.stroke()
+          g.fillStyle = `hsla(${hue},95%,60%,${age < 0.3 ? 0.35 - age : lite ? 0.015 : 0.07})`; g.fill()   // lite : des cercles empilés ne doivent pas masquer l'image
+          if (things.length > 24 && age > 1.2 && t.id !== selected) continue             // beaucoup d'instruments : le nom n'apparaît que quand ça sonne
+          if (t.kind === 'drum') label(DRUM_NAMES[drumVoice(dist(t.a, t.b)).kind], c[0], c[1] + 4, hue)
+          else label(noteName(bellMidi(t.a[1], p.root, SCALES[p.scale].steps)), c[0], c[1] - r - 6, hue)
         }
+      }
+      const chosen = selected ? things.find((x) => x.id === selected) : null
+      if (chosen) {   // l'instrument choisi : contour en pointillés et poignées blanches
+        const A = px(chosen.a), B = px(chosen.b)
+        g.shadowBlur = 0; g.lineWidth = 2; g.strokeStyle = '#fff'; g.fillStyle = '#fff'; g.setLineDash([5, 4]); g.beginPath()
+        if (chosen.kind === 'string') { g.moveTo(A[0], A[1]); g.lineTo(B[0], B[1]) } else g.arc(A[0], A[1], (chosen.kind === 'bell' ? BELL_R : dist(chosen.a, chosen.b)) * W + 5, 0, 6.283)
+        g.stroke(); g.setLineDash([])
+        for (const q of chosen.kind === 'bell' ? [A] : [A, B]) { g.beginPath(); g.arc(q[0], q[1], 7, 0, 6.283); g.fill() }
       }
       if (draft) {   // l'instrument en cours de dessin, avec sa note annoncée
         const hue = draft.kind === 'string' ? TIMBRES[p.timbre].hue : draft.kind === 'drum' ? 12 : 275
@@ -394,11 +480,12 @@ export function MusicStudio() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement; if (t && /INPUT|SELECT|TEXTAREA/.test(t.tagName)) return
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); send('undo') }
-      else if (/^[1-6]$/.test(e.key)) setTool(TOOLS[+e.key - 1].id)
+      else if (/^[1-7]$/.test(e.key)) setTool(TOOLS[+e.key - 1].id)
+      else if (e.key === 'Delete' || e.key === 'Backspace') send('sel-delete')
       else if (e.key === ' ' && !(t && t.tagName === 'BUTTON')) { e.preventDefault(); setHandsOn((v) => !v) }
     }
     window.addEventListener('keydown', onKey)
-    if (import.meta.env.DEV) (window as any).__music = { stats, hands, get things() { return things }, get synth() { return synthRef.current } }   // pour les essais automatisés
+    if (import.meta.env.DEV) (window as any).__music = { stats, hands, get things() { return things }, get selected() { return selected }, get synth() { return synthRef.current } }   // pour les essais automatisés
 
     const init = async () => {
       setCount(things.length); loop()
@@ -479,6 +566,17 @@ export function MusicStudio() {
               <option value="">🎵 Morceaux connus…</option>
               {pieces.map((m) => <option key={m.id} value={m.id}>{m.title} — {m.style}</option>)}
             </select>
+          )}
+          {picked && (
+            <div style={{ border: '1px solid rgba(255,255,255,0.7)', borderRadius: 10, padding: 10, marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: '#fff', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Choisi : {KIND_NAMES[picked.kind]} · {picked.note}</div>
+              {picked.kind === 'string' && (<>
+                <select aria-label="Son de la corde choisie" value={picked.timbre} onChange={(e) => send('sel-timbre', e.target.value)} style={{ ...sel, marginBottom: 6 }}>{(Object.keys(TIMBRES) as Timbre[]).map((k) => <option key={k} value={k}>{TIMBRES[k].label}</option>)}</select>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}><button onClick={() => send('sel-step', -1)} style={{ ...sel, flex: 1 }}>Plus grave</button><button onClick={() => send('sel-step', 1)} style={{ ...sel, flex: 1 }}>Plus aigu</button></div>
+              </>)}
+              {picked.kind === 'drum' && <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>{([['Grosse caisse', 0.12], ['Tom', 0.075], ['Charleston', 0.035]] as [string, number][]).map(([l, r]) => <button key={l} onClick={() => send('sel-drum', r)} style={{ ...sel, flex: 1, padding: 6, fontSize: 11 }}>{l}</button>)}</div>}
+              <div style={{ display: 'flex', gap: 6 }}><button onClick={() => send('sel-copy')} style={{ ...sel, flex: 1 }}>Dupliquer</button><button onClick={() => send('sel-delete')} title="Supprimer (touche Suppr)" style={{ ...sel, flex: 1, color: '#ff8a8a' }}>Supprimer</button></div>
+            </div>
           )}
           <LeapToggle accent="#ffd200" />
 

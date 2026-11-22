@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { SCALES, snap, stringMidi, frets, frettedMidi, cross, nearest, drumVoice, bellMidi, karplus, noteName, midiToHz, hzToMidi, REF_LEN } from './theory'
+import { SCALES, snap, stringMidi, frets, frettedMidi, cross, nearest, drumVoice, bellMidi, karplus, noteName, midiToHz, hzToMidi, REF_LEN, lengthFor, stepNote, BELL_SPAN } from './theory'
 
 const PENTA = SCALES.penta.steps, MAJOR = SCALES.major.steps
 
@@ -57,7 +57,13 @@ describe('lutherie : géométrie du jeu', () => {
   it('tambours et clochettes : la taille et la hauteur décident de la voix', () => {
     expect(drumVoice(0.15).kind).toBe('kick'); expect(drumVoice(0.07).kind).toBe('tom'); expect(drumVoice(0.03).kind).toBe('hat')
     expect(drumVoice(0.15).hz).toBeLessThan(drumVoice(0.07).hz)
-    expect(bellMidi(0.1, 0, PENTA)).toBeGreaterThan(bellMidi(0.9, 0, PENTA))
+    expect(bellMidi(0.1, 0, PENTA)).toBeGreaterThan(bellMidi(0.5, 0, PENTA))
+    expect(bellMidi(0, 0, MAJOR)).toBe(84); expect(bellMidi(BELL_SPAN, 0, MAJOR)).toBe(60); expect(bellMidi(BELL_SPAN / 2, 0, MAJOR)).toBe(72)
+  })
+  it('modifier une corde : la longueur qui donne une note, et la note voisine dans la gamme', () => {
+    for (const m of [40, 48, 55, 67, 81]) for (const o of [-1, 0, 1]) expect(stringMidi(lengthFor(m + 12 * o, o), 0, SCALES.chroma.steps, o)).toBe(m + 12 * o)
+    expect(stepNote(60, 0, MAJOR, 1)).toBe(62); expect(stepNote(60, 0, MAJOR, -1)).toBe(59)
+    expect(stepNote(60, 0, PENTA, 1)).toBe(63); expect(stepNote(63, 0, PENTA, -1)).toBe(60)
   })
 })
 

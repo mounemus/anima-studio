@@ -1,7 +1,7 @@
 // Les morceaux tout faits (public/morceaux, écrits par scripts/morceaux.mjs) : chaque corde doit sonner la note
 // prévue avec le vrai accordage, et un manège simulé doit les jouer dans l'ordre et au bon moment.
 import { describe, it, expect } from 'vitest'
-import { SCALES, stringMidi, sweep, inTri, sweepPoint, type P2 } from './theory'
+import { SCALES, stringMidi, sweep, inTri, sweepPoint, drumVoice, bellMidi, type P2 } from './theory'
 import { TIMBRES, type Timbre } from './synth'
 
 const all = import.meta.glob('../../public/morceaux/*.json', { eager: true, import: 'default' }) as Record<string, any>
@@ -39,6 +39,12 @@ describe('lutherie : morceaux tout faits', () => {
       const steps = SCALES[scale].steps
       const wheel = f.things.find((t: any) => t.kind === 'wheel'), strings = f.things.filter((t: any) => t.kind === 'string')
       expect(strings.length).toBeGreaterThan(10)
+      const others = f.things.filter((t: any) => t.kind === 'drum' || t.kind === 'bell')
+      for (const d of others) {
+        if (d.kind === 'drum') expect(drumVoice(dist(d.a, d.b)).kind, d.id).toBe(d.voice)
+        else expect(bellMidi(d.a[1], root, steps), d.id).toBe(d.midi)
+        expect(dist(d.a, wheel.a)).toBeLessThan(dist(wheel.a, wheel.b) + 0.018)   // à portée du rayon
+      }
       for (const s of strings) {
         expect(stringMidi(dist(s.a, s.b), root, steps, TIMBRES[s.timbre as Timbre].octave), `${s.id} (${s.midi})`).toBe(s.midi)
         for (const q of [s.a, s.b]) { expect(q[0]).toBeGreaterThan(0.3); expect(q[0]).toBeLessThan(0.9); expect(q[1]).toBeGreaterThan(0); expect(q[1]).toBeLessThan(0.53) }   // tient à droite du panneau, sur un écran 16:9
@@ -50,13 +56,13 @@ describe('lutherie : morceaux tout faits', () => {
       const touching = new Set<string>(), played = new Map<string, number>()
       for (let beat = step / 2; beat < 2 * turn; beat += step) {
         const from = spot(beat - step), tip = spot(beat)
-        for (const s of strings) {
-          const on = sweep(wheel.a, from, tip, s.a, s.b) !== null
+        for (const s of [...strings, ...others]) {
+          const on = s.kind === 'string' ? sweep(wheel.a, from, tip, s.a, s.b) !== null : sweepPoint(wheel.a, from, tip, s.a, 0.018)
           if (on && !touching.has(s.id)) { touching.add(s.id); if (beat >= turn) { expect(played.has(s.id), `${s.id} jouée deux fois`).toBe(false); played.set(s.id, beat - turn) } }
           else if (!on) touching.delete(s.id)
         }
       }
-      for (const s of strings) {
+      for (const s of [...strings, ...others]) {
         const at = played.get(s.id)
         expect(at, `${s.id} jamais jouée`).toBeDefined()
         expect(at! - s.beat, `${s.id} à ${at}, attendue à ${s.beat}`).toBeGreaterThan(-1e-3)
