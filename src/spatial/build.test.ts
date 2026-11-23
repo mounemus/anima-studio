@@ -108,4 +108,13 @@ describe('esquisse spatiale : adoucir un tracé', () => {
     relax(line, 3).forEach((q, i) => q.forEach((v, k) => expect(v).toBeCloseTo(line[i][k], 9)))
     expect(relax(zig, 0)).toBe(zig)
   })
+
+  it('une boucle fermée (premier point = dernier point) garde sa forme en étant simplifiée', () => {
+    const loop: P3[] = Array.from({ length: 61 }, (_, i) => { const a = i / 60 * 2 * Math.PI; return [Math.cos(a), Math.sin(a), 0] })
+    loop[60] = loop[0]
+    const keep = simplify(loop, 0.02)
+    expect(keep.length).toBeGreaterThan(8)
+    const kept = keep.map((k) => loop[k]), length = kept.reduce((e, q, j) => (j ? e + Math.hypot(q[0] - kept[j - 1][0], q[1] - kept[j - 1][1]) : 0), 0)
+    expect(length).toBeGreaterThan(6)   // le tour du cercle (6,28), pas zéro
+  })
 })

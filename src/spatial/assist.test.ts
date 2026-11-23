@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { recognize, dehook, fitPlane, resample, pathLen, snapEnds, handScale, depthFromScale, deadzone, dist3 } from './assist'
-import type { P3 } from './build'
+import { simplify, type P3 } from './build'
 
 // bruit reproductible : une main qui tremble de `amp` dans les trois directions
 const rng = (seed: number) => () => { seed = (seed * 16807) % 2147483647; return seed / 1073741823.5 - 1 }
@@ -70,6 +70,15 @@ describe('assistant : reconnaître ce que le trait veut être', () => {
     const wave = Array.from({ length: 80 }, (_, i): P3 => [i / 80, 0.2 * Math.sin(i / 80 * 4 * Math.PI), 0])
     const g = recognize(shaky(wave, 0.006, 11, 2))
     expect(g.kind).toBe('free'); expect(fitPlane(g.pts).s[2]).toBeLessThan(1e-9)
+  })
+
+  it('un long gribouillis qui revient à son départ est refermé, et reste entier une fois simplifié', () => {
+    // boucle en forme de haricot : ni cercle ni polygone
+    const bean = Array.from({ length: 140 }, (_, i): P3 => { const a = i / 139 * 2 * Math.PI, r = 0.5 + 0.22 * Math.cos(2 * a) + 0.1 * Math.sin(3 * a); return [r * Math.cos(a), 0.7 * r * Math.sin(a), 0] })
+    const g = recognize(shaky(bean, 0.004))
+    expect(g.kind).toBe('free'); expect(g.closed).toBe(true)
+    const kept = simplify(g.pts, 0.008).map((k) => g.pts[k])
+    expect(kept.length).toBeGreaterThan(10); expect(pathLen(kept)).toBeGreaterThan(pathLen(bean) * 0.9)
   })
 
   it('le niveau fort redresse ce que le niveau léger laisse', () => {

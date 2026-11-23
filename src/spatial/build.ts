@@ -58,10 +58,13 @@ export function simplify(pts: P3[], eps: number): number[] {
   while (stack.length) {
     const [i0, i1] = stack.pop()!
     a.fromArray(pts[i0]); b.fromArray(pts[i1]); line.set(a, b)
+    // boucle fermée : les deux bouts sont confondus, il n'y a pas de droite ; la distance se prend au point
+    // (sans cela elle vaut NaN, rien n'est gardé et la boucle se réduit à deux points confondus)
+    const closed = a.distanceToSquared(b) < 1e-18
     let far = -1, dMax = eps
     for (let i = i0 + 1; i < i1; i++) {
-      p.fromArray(pts[i]); line.closestPointToPoint(p, true, c)
-      const d = p.distanceTo(c)
+      p.fromArray(pts[i]); if (!closed) line.closestPointToPoint(p, true, c)
+      const d = p.distanceTo(closed ? a : c)
       if (d > dMax) { dMax = d; far = i }
     }
     if (far > 0) { keep[far] = 1; stack.push([i0, far], [far, i1]) }

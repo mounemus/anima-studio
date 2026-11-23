@@ -23,7 +23,7 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import { pollHands, handClock, autoConnectLeap, leapWidthPerMm, isPinching, type LeapHand, type HandFrame } from '../senses/Leap'
-import { recognize, dehook, snapEnds, handScale, depthFromScale, deadzone, type Guess } from './assist'
+import { recognize, dehook, snapEnds, pathLen, handScale, depthFromScale, deadzone, type Guess } from './assist'
 import { LeapToggle } from '../ui/LeapToggle'
 import { buildGeometry, makeMaterial, symMatrices, objMatrix, simplify, relax, bakeForExport, type Obj, type P3, type Kind, type Section, type Prim, type Mat, type Sym } from './build'
 
@@ -138,6 +138,7 @@ export function SpatialStudio() {
   const [activeLayer, setActiveLayer] = useState(saved?.layers?.[0]?.id ?? 'L1')
   const [bg, setBg] = useState<Bg>('webcam')
   const [showGrid, setShowGrid] = useState(true)
+  const [planeView, setPlaneView] = useState(true)   // aperçu du plan de dessin, vu de côté
   const [showHands, setShowHands] = useState(true)
   const [depthGain, setDepthGain] = useState(1)
   const [views, setViews] = useState<View[]>([])
@@ -152,7 +153,7 @@ export function SpatialStudio() {
   const [zoom, setZoom] = useState(1)
   const [handsOn, setHandsOn] = useState(true)   // suspendre le suivi : sinon des mains au clavier, vues par la caméra, dessinent
 
-  const P = { tool, section, straight, size, taper, color, mat, prim, sym, symN, sides, sweepDeg, snap, snapStep, duplicate, layers, activeLayer, bg, showGrid, showHands, depthGain, views, handsOn, flat, assist, smooth }
+  const P = { tool, section, straight, size, taper, color, mat, prim, sym, symN, sides, sweepDeg, snap, snapStep, duplicate, layers, activeLayer, bg, showGrid, showHands, depthGain, views, handsOn, flat, assist, planeView, smooth }
   const paramsRef = useRef(P); paramsRef.current = P
   const cmdRef = useRef<Cmd[]>([])
   const send = (type: string, data?: any) => { cmdRef.current.push({ type, data }) }
@@ -186,12 +187,23 @@ export function SpatialStudio() {
     mirrorPlane.rotation.y = Math.PI / 2; mirrorPlane.position.y = 0.6; world.add(mirrorPlane)
     // le plan de dessin : un cadre quadrillé discret, face à l'écran, là où le trait se pose
     const drawPlane = new THREE.GridHelper(5, 10, 0xffd200, 0xffd200); drawPlane.rotation.x = Math.PI / 2
-    ;(drawPlane.material as THREE.Material).transparent = true; (drawPlane.material as THREE.Material).opacity = 0.1; (drawPlane.material as THREE.Material).depthWrite = false
+    ;(drawPlane.material as THREE.Material).transparent = true; (drawPlane.material as THREE.Material).opacity = 0.16; (drawPlane.material as THREE.Material).depthWrite = false
     scene.add(drawPlane)
     const lineOf = (hex: number) => { const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1, 0)]), new THREE.LineBasicMaterial({ color: hex, transparent: true, opacity: 0.8, depthTest: false })); l.renderOrder = 9; l.frustumCulled = false; return l }
     const axisLine = lineOf(0xffd200), dropLine = lineOf(0xffffff); world.add(axisLine, dropLine)
     const setLine = (l: THREE.Line, a: THREE.Vector3, b: THREE.Vector3) => { const at = l.geometry.getAttribute('position') as THREE.BufferAttribute; at.setXYZ(0, a.x, a.y, a.z); at.setXYZ(1, b.x, b.y, b.z); at.needsUpdate = true }
     const cursorGeo = new THREE.SphereGeometry(1, 16, 12)
+    // L'aperçu du plan de dessin : son cadre dans la vue, et dans un coin la même scène vue de côté, où l'on voit
+    // le plan, ce que l'écran en couvre, l'œil, la main et le dessin. En Libre 3D, l'ombre de la main sur le plan
+    // et le fil qui les relie montrent de combien on s'en écarte.
+    const planeFrame = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([[-2.5, -2.5], [2.5, -2.5], [2.5, 2.5], [-2.5, 2.5]].map(([x, y]) => new THREE.Vector3(x, y, 0))), new THREE.LineBasicMaterial({ color: 0xffd200, transparent: true, opacity: 0.55, depthTest: false }))
+    planeFrame.renderOrder = 8; scene.add(planeFrame)
+    const planeFill = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0xffd200, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false })); planeFill.visible = false; scene.add(planeFill)
+    const eyeLines = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(Array.from({ length: 8 }, () => new THREE.Vector3())), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4 })); eyeLines.visible = false; eyeLines.frustumCulled = false; scene.add(eyeLines)
+    const sideCam = new THREE.PerspectiveCamera(42, 4 / 3, 0.1, 200); sideCam.position.set(8, 4.5, 7.5); sideCam.lookAt(0, 0, 2)
+    const shadowRing = new THREE.Mesh(new THREE.RingGeometry(0.55, 1, 28), new THREE.MeshBasicMaterial({ color: 0xffd200, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthTest: false })); shadowRing.renderOrder = 9; shadowRing.visible = false; scene.add(shadowRing)
+    const depthLine = lineOf(0xffd200); depthLine.visible = false; scene.add(depthLine)
+    let inset: { x: number; y: number; w: number; h: number } | null = null
     const cursors = [0, 1, 2].map(() => { const m = new THREE.Mesh(cursorGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8, depthTest: false })); m.renderOrder = 10; m.visible = false; scene.add(m); return m })
     const handles = new THREE.Group(); content.add(handles)
     const handleMat = new THREE.MeshBasicMaterial({ color: 0xffd200, depthTest: false, transparent: true, opacity: 0.95 })
@@ -337,6 +349,28 @@ export function SpatialStudio() {
       for (let i = 0; i < 2; i++) if (!used.has(i)) dropSlot(slots[i])
     }
 
+    // ───────── tourner et zoomer autour de ce qu'on regarde ─────────
+    const X_AXIS = new THREE.Vector3(1, 0, 0), Y_AXIS = new THREE.Vector3(0, 1, 0), qa = new THREE.Quaternion(), qb = new THREE.Quaternion()
+    /** Les points de tout ce qui est dessiné (calques visibles), dans le repère dessiné. */
+    const drawnPoints = (): THREE.Vector3[] => objs.filter((o) => usable(o)).flatMap((o) => { const m = objMatrix(o); return [...o.pts, ...(o.pts2 ?? [])].map((pt) => new THREE.Vector3().fromArray(pt).applyMatrix4(m)) })
+    /** Centre du dessin, dans la scène : le pivot des rotations (le centre de l'écran s'il n'y a rien). */
+    const pivotOf = (): THREE.Vector3 => { const pts = drawnPoints(); return pts.length ? content.localToWorld(new THREE.Box3().setFromPoints(pts).getCenter(new THREE.Vector3())) : new THREE.Vector3() }
+    /** Tourne la vue comme une table tournante : `yaw` autour de la verticale du dessin, `pitch` autour de l'horizontale
+     *  de l'écran, bornée entre la vue de dessous et la vue de dessus. L'horizon ne penche jamais, et `pivot` reste
+     *  à sa place à l'écran : le dessin tourne sur lui-même au lieu de partir sur le côté. */
+    const orbitBy = (yaw: number, pitch: number, pivot: THREE.Vector3) => {
+      const before = world.quaternion.clone(), up = Y_AXIS.clone().applyQuaternion(before), tilt = Math.atan2(up.z, up.y)
+      const dp = clamp(Math.min(0, -Math.PI / 2 - tilt), Math.max(0, Math.PI / 2 - tilt), pitch)
+      world.quaternion.premultiply(qa.setFromAxisAngle(X_AXIS, dp)).multiply(qb.setFromAxisAngle(Y_AXIS, yaw))
+      world.position.sub(pivot).applyQuaternion(qa.copy(world.quaternion).multiply(before.invert())).add(pivot)
+    }
+    /** Zoom autour d'un point de l'écran (en pixels) : ce qui est sous le curseur ou entre les poings y reste. */
+    const zoomAt = (factor: number, x: number, y: number) => {
+      const z = clamp(ZOOM_MIN, ZOOM_MAX, world.scale.x * factor), kz = z / world.scale.x, u = visW() / window.innerWidth, cx = (x - window.innerWidth / 2) * u, cy = -(y - window.innerHeight / 2) * u
+      world.position.set(cx + (world.position.x - cx) * kz, cy + (world.position.y - cy) * kz, world.position.z * kz); world.scale.setScalar(z)
+    }
+    let dragPivot = new THREE.Vector3()
+
     // ───────── souris / tactile (case 2) : même chemin que les mains ─────────
     let drag: null | 'draw' | 'orbit' | 'pan' = null, lastPtr = { x: 0, y: 0 }
     const ptrNdc = (e: PointerEvent | WheelEvent) => slots[2].ndc.set((e.clientX / window.innerWidth) * 2 - 1, -((e.clientY / window.innerHeight) * 2 - 1))
@@ -344,21 +378,21 @@ export function SpatialStudio() {
       try { el.setPointerCapture?.(e.pointerId) } catch { /* pointeur déjà relâché */ }
       lastPtr = { x: e.clientX, y: e.clientY }; ptrNdc(e)
       drag = e.button === 2 ? 'orbit' : (e.button === 1 || e.altKey) ? 'pan' : 'draw'
+      if (drag === 'orbit') dragPivot = pivotOf()
       const s = slots[2]; s.scr = { x: e.clientX, y: e.clientY }
       if (drag === 'draw') { pointAt(s.ndc, planeZ, s.p); s.cur = s.scr; s.has = true; s.pinch = true }
     }
     const onMove = (e: PointerEvent) => {
       const dx = e.clientX - lastPtr.x, dy = e.clientY - lastPtr.y; lastPtr = { x: e.clientX, y: e.clientY }
       ptrNdc(e); slots[2].scr = { x: e.clientX, y: e.clientY }
-      if (drag === 'orbit') { const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(dy * 0.006, dx * 0.006, 0)); world.position.applyQuaternion(q); world.quaternion.premultiply(q); viewGoal = null }
+      if (drag === 'orbit') { orbitBy(dx * 0.006, dy * 0.006, dragPivot); viewGoal = null }
       else if (drag === 'pan') { const u = visW() / window.innerWidth; world.position.x += dx * u; world.position.y -= dy * u; viewGoal = null }
     }
-    const onUp = () => { drag = null; slots[2].pinch = false; slots[2].has = false }
+    const onUp = () => { if (drag === 'orbit') settle(dragPivot); drag = null; slots[2].pinch = false; slots[2].has = false }
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       if (e.shiftKey) { planeZ = clamp(-3, 3, planeZ - Math.sign(e.deltaY || e.deltaX) * 0.15); setStatus(`Plan de dessin ${planeZ > 0 ? 'avancé' : planeZ < 0 ? 'reculé' : 'au centre'} (${planeZ.toFixed(2)}).`); return }
-      const f = clamp(0.5, 2, Math.exp(-e.deltaY * 0.0012)), s = clamp(ZOOM_MIN, ZOOM_MAX, world.scale.x * f), k = s / world.scale.x
-      world.scale.setScalar(s); world.position.multiplyScalar(k); viewGoal = null
+      zoomAt(clamp(0.5, 2, Math.exp(-e.deltaY * 0.0012)), e.clientX, e.clientY); viewGoal = null   // autour du pointeur
     }
     const noMenu = (e: Event) => e.preventDefault()
     el.addEventListener('pointerdown', onDown); el.addEventListener('pointermove', onMove); el.addEventListener('pointerup', onUp); el.addEventListener('pointercancel', onUp)
@@ -489,10 +523,12 @@ export function SpatialStudio() {
       }
     }
 
+    const devLog: any[] = []
     const end = () => {
       const a = act!; act = null
       const d = draft, hinted = ghostKind !== '' && ghostKind !== 'free'; draft = null; showDraft(); setGhost(null); ghostKind = ''
       let shaped: Guess | null = null
+      const note: any = { tool: a.tool, slot: a.slot, n0: d?.pts.length ?? 0, out: 'rien' }; if (import.meta.env.DEV) { devLog.push(note); if (devLog.length > 300) devLog.shift() }   // journal des fins de trait, pour les essais
       if (d) {
         // À la main, les derniers points sont ceux des doigts qui s'écartent (la pince ne se déclare ouverte
         // qu'après 90 ms) : on les retire, sinon chaque trait finit par un crochet.
@@ -502,28 +538,38 @@ export function SpatialStudio() {
           while (n > 2 && a.ts[n - 1] > cut) n--
           d.pts.length = n; if (d.nrm) d.nrm.length = n
         }
+        note.n1 = d.pts.length
+        const drawn = { pts: d.pts.slice(), nrm: d.nrm?.slice() }, drawnLen = pathLen(drawn.pts)   // le geste tel qu'il a été fait
+        const sound = (q: P3[]) => q.length >= 2 && q.every((v) => v.every(Number.isFinite)) && pathLen(q) >= drawnLen * 0.4
         const pa = paramsRef.current, soften = Math.round(pa.smooth * 3)
         const helped = !!pa.assist && d.kind !== 'surface' && d.kind !== 'prim' && (a.tool === 'revolve' || (a.tool === 'stroke' && !pa.straight)) && d.pts.length >= 4
         // à la main, ce qui reste du crochet de début ou de fin s'en va, assistant ou pas
         if (a.slot < 2 && (a.tool === 'stroke' || a.tool === 'revolve') && !pa.straight && d.kind !== 'surface') { const cut = dehook(d.pts, d.size), from = d.pts.indexOf(cut[0]); if (d.nrm) d.nrm = d.nrm.slice(from, from + cut.length); d.pts = cut }
+        note.n2 = d.pts.length
         if (helped) {
           // l'assistant : la forme voulue (droite, arc, cercle, polygone) ou la courbe nettoyée
           const g = recognize(d.pts, pa.assist as 1 | 2), tol = 0.02 * visW() * k
           const hooked = g.closed ? { pts: g.pts, snapped: 0 } : snapEnds(g.pts, anchors(), tol)
           const fitted: Guess = { ...g, pts: hooked.pts }
+          note.kind = g.kind; note.snapped = hooked.snapped
           if (g.kind === 'free' || a.tool === 'revolve') { const n0 = d.nrm; d.pts = fitted.pts; if (n0) d.nrm = fitted.pts.map((_, i) => n0[Math.min(i, n0.length - 1)]); if (a.tool === 'revolve' && g.kind !== 'free') setStatus(`Assistant : profil en ${g.label}.`); else if (hinted) setStatus(g.closed ? 'Assistant : courbe libre, boucle refermée.' : 'Assistant : courbe libre, gardée telle que dessinée.') }
-          else shaped = fitted
+          else shaped = sound(fitted.pts) ? fitted : null
         } else if (soften && d.kind === 'stroke' && d.pts.length > 3 && a.ts.length >= d.pts.length) d.pts = relax(d.pts, soften)
         if (a.tool === 'stroke') {
           // à la main, un trait plus court que deux fois son épaisseur est une pince involontaire : on ne le garde pas
           const len = d.pts.reduce((e, q, i) => (i ? e + d3(q, d.pts[i - 1]) : 0), 0)
-          if (a.slot < 2 && len < d.size * 4) { setStatus('Pince trop brève : rien de tracé.'); return }
-          if (d.pts.length > 2) thin(d, d.size * 0.25); commit(d)
+          note.len = len; note.size = d.size
+          if (a.slot < 2 && len < d.size * 4) { note.out = 'trop bref'; setStatus('Pince trop brève : rien de tracé.'); return }
+          if (d.pts.length > 2) thin(d, d.size * 0.25)
+          // garde-fou : si le nettoyage a abîmé le trait (points confondus, valeurs impossibles), on pose le geste d'origine
+          if (!sound(d.pts)) { d.pts = drawn.pts; d.nrm = drawn.nrm; note.sauve = true }
+          commit(d)
           if (shaped) {   // le trait d'origine est posé, puis remplacé : un « Annuler » le rend tel qu'il a été dessiné
             pushHistory(); const n0 = d.nrm?.[0]
             d.pts = shaped.pts; if (n0) d.nrm = shaped.pts.map(() => n0)
             refresh(d); autosave(); setStatus(`Assistant : ${shaped.label}. « Annuler » rend ton trait d'origine.`)
           }
+          note.out = 'posé'; note.n3 = d.pts.length; note.fini = d.pts.every((q) => q.every(Number.isFinite)); note.long = d.pts.reduce((e, q, i) => (i ? e + d3(q, d.pts[i - 1]) : 0), 0)
         }
         else if (a.tool === 'revolve') { thin(d, 0.004 * k); if (d.pts.length >= 2) commit(d); else setStatus('Profil trop court : pince et déplace la main pour tracer le profil.') }
         else if (a.tool === 'prim') { if (d3(d.pts[0], d.pts[1]) > 0.03 * k) commit(d); else setStatus('Volume trop petit : pince, écarte la main, puis relâche.') }
@@ -544,32 +590,45 @@ export function SpatialStudio() {
     // Un poing : tourner la vue, donc changer de plan de dessin. Deux poings : zoomer en les écartant
     // et déplacer en les bougeant ensemble, comme sur un écran tactile. Tout se lit sur la position
     // des poings à l'écran : la profondeur estimée, trop bruitée, n'entre pas en jeu.
-    let nav: { key: string; a: { x: number; y: number }; b: { x: number; y: number } } | null = null
+    let nav: { key: string; a: { x: number; y: number }; b: { x: number; y: number }; pivot: THREE.Vector3; tx: number; ty: number; d00: number; zooming: boolean } | null = null
     let navMode = ''
     let viewGoal: View | null = null
+    /** En lâchant, si la vue est à moins de 8° d'un plan de dessin, elle s'y pose exactement. */
+    const settle = (pivot: THREE.Vector3) => {
+      for (const pl of PLANES) {
+        const q = new THREE.Quaternion().fromArray(pl.quat), ang = world.quaternion.angleTo(q)
+        if (ang < 0.002 || ang > 0.14) continue
+        const delta = q.clone().multiply(world.quaternion.clone().invert())
+        viewGoal = { id: '', pos: world.position.clone().sub(pivot).applyQuaternion(delta).add(pivot).toArray() as P3, quat: pl.quat, scale: world.scale.x }
+        planeIdx = PLANES.indexOf(pl); setStatus(`Vue posée sur le plan : ${pl.label}.`); return
+      }
+    }
     const navigate = () => {
       navMode = ''
       const f = [slots[0], slots[1]].filter((s) => s.has && s.fist >= FIST_MS)
-      if (act || !f.length) { nav = null; return }
+      if (act || !f.length) { if (nav && !nav.key.includes(',') && !act) settle(nav.pivot); nav = null; return }
       viewGoal = null
       const key = f.map((s) => slots.indexOf(s)).join(), A = f[0].palmS, B = (f[1] ?? f[0]).palmS
-      const W = overlay.width, H = overlay.height, u = visW() / W
-      if (nav && nav.key === key) {
-        if (f.length === 1) {
-          const q = new THREE.Quaternion().setFromEuler(new THREE.Euler((A.y - nav.a.y) / W * ORBIT, (A.x - nav.a.x) / W * ORBIT, 0))
-          world.position.applyQuaternion(q); world.quaternion.premultiply(q)
-        } else {
-          const d0 = dist2(nav.a, nav.b), d1 = dist2(A, B)
-          const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2
-          world.position.x += (mx - (nav.a.x + nav.b.x) / 2) * u; world.position.y -= (my - (nav.a.y + nav.b.y) / 2) * u
-          if (d0 > 60 && d1 > 60) {   // zoom autour du milieu des deux poings
-            const z = clamp(ZOOM_MIN, ZOOM_MAX, world.scale.x * d1 / d0), kz = z / world.scale.x, cx = (mx - W / 2) * u, cy = -(my - H / 2) * u
-            world.position.set(cx + (world.position.x - cx) * kz, cy + (world.position.y - cy) * kz, world.position.z * kz); world.scale.setScalar(z)
-          }
-        }
+      const W = overlay.width, u = visW() / W
+      if (!nav || nav.key !== key) nav = { key, a: { ...A }, b: { ...B }, pivot: pivotOf(), tx: 0, ty: 0, d00: dist2(A, B), zooming: false }
+      else if (f.length === 1) {
+        // Un poing : la vue tourne autour du dessin. Un geste franchement horizontal ne fait que tourner, un geste
+        // franchement vertical ne fait que basculer : plus de vue qui penche quand on voulait seulement pivoter.
+        const dx = A.x - nav.a.x, dy = A.y - nav.a.y
+        nav.tx += dx; nav.ty += dy
+        const far = Math.hypot(nav.tx, nav.ty) > 24, onlyYaw = far && Math.abs(nav.tx) > 2 * Math.abs(nav.ty), onlyPitch = far && Math.abs(nav.ty) > 2 * Math.abs(nav.tx)
+        orbitBy(onlyPitch ? 0 : dx / W * ORBIT, onlyYaw ? 0 : dy / W * ORBIT, nav.pivot)
+        navMode = onlyYaw ? 'tourner' : onlyPitch ? 'basculer' : 'tourner la vue'
+      } else {
+        // Deux poings : on déplace en les bougeant ensemble. Le zoom ne s'engage que si leur écart a changé de 8 %
+        // depuis le début du geste : déplacer la vue ne la fait plus zoomer par accident.
+        const d0 = dist2(nav.a, nav.b), d1 = dist2(A, B), mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2
+        world.position.x += (mx - (nav.a.x + nav.b.x) / 2) * u; world.position.y -= (my - (nav.a.y + nav.b.y) / 2) * u
+        if (!nav.zooming && nav.d00 > 60 && Math.abs(d1 / nav.d00 - 1) > 0.08) nav.zooming = true
+        if (nav.zooming && d0 > 60 && d1 > 60) zoomAt(d1 / d0, mx, my)
+        navMode = nav.zooming ? `zoom ×${world.scale.x.toFixed(2)}` : 'déplacer'
       }
-      nav = { key, a: { ...A }, b: { ...B } }
-      navMode = f.length === 1 ? 'tourner' : `zoom ×${world.scale.x.toFixed(1)}`
+      nav.a = { ...A }; nav.b = { ...B }
     }
 
     // ───────── palette autour de la paume ouverte ─────────
@@ -624,6 +683,13 @@ export function SpatialStudio() {
         case 'plane': {   // amener un plan de dessin face à l'écran, sans toucher au zoom
           planeIdx = c.data === 'next' ? (planeIdx + 1) % PLANES.length : Math.max(0, PLANES.findIndex((x) => x.id === c.data))
           viewGoal = { id: '', pos: [0, 0, 0], quat: PLANES[planeIdx].quat, scale: world.scale.x }; setStatus(`Plan de dessin : ${PLANES[planeIdx].label}.`); break }
+        case 'fit': {   // tout le dessin dans le cadre, sans changer l'orientation
+          const pts = drawnPoints(); if (!pts.length) { setStatus('Rien à cadrer : la scène est vide.'); break }
+          const ctr = new THREE.Box3().setFromPoints(pts).getCenter(new THREE.Vector3()), rad = Math.max(0.05, ...pts.map((q) => q.distanceTo(ctr)))
+          const z = clamp(ZOOM_MIN, ZOOM_MAX, 0.36 * Math.min(visW(), visW() / camera.aspect) / rad)   // de la marge pour la barre d'outils
+          viewGoal = { id: '', pos: ctr.applyQuaternion(world.quaternion).multiplyScalar(-z).toArray() as P3, quat: world.quaternion.toArray() as View['quat'], scale: z }
+          setStatus('Tout le dessin est dans le cadre.'); break }
+        case 'orbit': viewGoal = null; orbitBy(c.data[0], c.data[1], pivotOf()); break
         case 'zoom': { const z = clamp(ZOOM_MIN, ZOOM_MAX, world.scale.x * c.data), kz = z / world.scale.x
           viewGoal = { id: '', pos: world.position.clone().multiplyScalar(kz).toArray() as P3, quat: world.quaternion.toArray() as View['quat'], scale: z }; break }
         case 'view:add': setViews((v) => [...v, { id: `v${Date.now()}`, pos: world.position.toArray() as P3, quat: world.quaternion.toArray() as View['quat'], scale: world.scale.x }]); break
@@ -683,6 +749,7 @@ export function SpatialStudio() {
       // repères
       grid.visible = p.showGrid; mirrorPlane.visible = p.sym === 'mirror'
       drawPlane.visible = p.showGrid; drawPlane.position.z = planeZ
+      planeFrame.visible = p.showGrid || p.planeView; planeFrame.position.z = planeZ
       axisLine.visible = p.tool === 'revolve' || p.sym === 'radial'
       const ao: P3 = p.tool === 'revolve' ? axisO : [0, 0, 0]
       if (axisLine.visible) setLine(axisLine, tmp.set(ao[0], -1.6, ao[2]).clone(), new THREE.Vector3(ao[0], 2.6, ao[2]))
@@ -699,11 +766,36 @@ export function SpatialStudio() {
       dropLine.visible = !!lead && p.showGrid
       if (lead) { const q = world.worldToLocal((lead as Slot).p.clone()); setLine(dropLine, q, new THREE.Vector3(q.x, -1.6, q.z)) }
       handles.children.forEach((h) => h.scale.setScalar(0.028 * k))
+      // en Libre 3D : l'ombre de la main sur le plan, reliée à la main
+      const off = !p.flat && lead ? (lead as Slot).p : null
+      shadowRing.visible = depthLine.visible = !!off && Math.abs(off.z - planeZ) > 0.01
+      if (off && shadowRing.visible) { shadowRing.position.set(off.x, off.y, planeZ); shadowRing.scale.setScalar(0.06); setLine(depthLine, off, tmp.set(off.x, off.y, planeZ)) }
 
       renderer.render(scene, camera)
+      // aperçu du plan de dessin : la même scène vue de côté, dans le coin en bas à droite
+      inset = null
+      { const W = window.innerWidth, H = window.innerHeight
+        if (p.planeView && W >= 700) {
+          const iw = Math.round(Math.min(280, W * 0.2)), ih = Math.round(iw * 0.75), ix = W - iw - 16, iy = 96
+          const vh = 2 * (CAM_Z - planeZ) * Math.tan(FOV * Math.PI / 360), vw = vh * camera.aspect   // ce que l'écran couvre du plan
+          planeFill.visible = eyeLines.visible = true; planeFill.position.z = planeZ; planeFill.scale.set(vw, vh, 1)
+          const at = eyeLines.geometry.getAttribute('position') as THREE.BufferAttribute
+          ;[[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([sx, sy], c) => { at.setXYZ(c * 2, 0, 0, CAM_Z); at.setXYZ(c * 2 + 1, sx * vw / 2, sy * vh / 2, planeZ) }); at.needsUpdate = true
+          const sizes = cursors.map((c) => c.scale.x); cursors.forEach((c) => c.scale.setScalar(Math.max(c.scale.x, 0.09)))   // la main se voit de loin
+          renderer.setScissorTest(true); renderer.setViewport(ix, iy, iw, ih); renderer.setScissor(ix, iy, iw, ih); renderer.setClearColor(0x06080e, 0.84)
+          renderer.render(scene, sideCam)
+          renderer.setScissorTest(false); renderer.setViewport(0, 0, W, H); renderer.setClearColor(0x000000, 0)
+          planeFill.visible = eyeLines.visible = false; cursors.forEach((c, n) => c.scale.setScalar(sizes[n]))
+          inset = { x: ix, y: H - iy - ih, w: iw, h: ih }
+        } }
 
       // surimpression 2D : squelettes, curseurs, palette
       octx.clearRect(0, 0, overlay.width, overlay.height)
+      if (inset) {
+        octx.lineWidth = 1.5; octx.strokeStyle = 'rgba(255,210,0,0.75)'; octx.strokeRect(inset.x + 0.5, inset.y + 0.5, inset.w, inset.h)
+        octx.font = '600 11px system-ui'; octx.textAlign = 'left'; octx.fillStyle = '#ffd200'
+        octx.fillText(`PLAN DE DESSIN${planeZ ? ` · ${planeZ > 0 ? 'avancé' : 'reculé'} de ${Math.abs(planeZ).toFixed(2)}` : ''}${p.flat ? '' : ' · libre 3D'}`, inset.x + 8, inset.y + 16)
+      }
       const toolIcon = TOOLS.find((t) => t.id === p.tool)?.icon ?? ''
       for (let i = 0; i < 2; i++) {
         const s = slots[i]; if (!s.has) continue
@@ -748,11 +840,13 @@ export function SpatialStudio() {
       else if (/^[1-8]$/.test(e.key)) setTool(TOOLS[+e.key - 1].id)
       else if (z === 'f') send('plane', 'front'); else if (z === 'd') send('plane', 'top'); else if (z === 'c') send('plane', 'side')
       else if (e.key === '+' || e.key === '=') send('zoom', 1.25); else if (e.key === '-') send('zoom', 0.8); else if (e.key === '0') send('recenter')
+      else if (z === 't') send('fit')
+      else if (e.key.startsWith('Arrow')) { e.preventDefault(); const st = Math.PI / 12; send('orbit', e.key === 'ArrowLeft' ? [-st, 0] : e.key === 'ArrowRight' ? [st, 0] : e.key === 'ArrowUp' ? [0, -st] : [0, st]) }
       else if (e.key === ' ' && !(t && t.tagName === 'BUTTON')) { e.preventDefault(); setHandsOn((v) => !v) }
     }
     window.addEventListener('keydown', onKey)
 
-    if (import.meta.env.DEV) (window as any).__spatial = { world, slots, get objs() { return objs } }   // pour les essais automatisés
+    if (import.meta.env.DEV) (window as any).__spatial = { world, slots, devLog, get objs() { return objs } }   // pour les essais automatisés
     const init = async () => {
       syncAll(); loop()   // la scène tourne tout de suite : souris et Leap Motion n'attendent pas la caméra
       setStatus('Prêt à la souris. Caméra en cours de démarrage…')
@@ -837,6 +931,7 @@ export function SpatialStudio() {
         <button onClick={() => send('zoom', 0.8)} aria-label="Dézoomer" title="Dézoomer (−)" style={hudBtn}>−</button>
         <span aria-live="polite" style={{ minWidth: 46, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>×{zoom.toFixed(2)}</span>
         <button onClick={() => send('zoom', 1.25)} aria-label="Zoomer" title="Zoomer (+)" style={hudBtn}>+</button>
+        <button onClick={() => send('fit')} aria-label="Tout voir" title="Tout voir : cadre le dessin entier, sans changer l'orientation (T)" style={hudBtn}>⤢</button>
         <button onClick={() => send('recenter')} title="Recentrer : plan de face, zoom ×1 (0)" style={hudBtn}>⊙</button>
       </div>
 
@@ -916,6 +1011,7 @@ export function SpatialStudio() {
           <Title>Affichage</Title>
           <Field label="Fond"><select value={bg} onChange={(e) => setBg(e.target.value as Bg)} style={sel}><option value="webcam">Caméra (réalité augmentée)</option><option value="dark">Noir</option><option value="studio">Studio clair</option></select></Field>
           <label style={chk}><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> Sol quadrillé et fil d'aplomb</label>
+          <label style={chk}><input type="checkbox" checked={planeView} onChange={(e) => setPlaneView(e.target.checked)} /> Aperçu du plan de dessin (vue de côté)</label>
           <label style={chk}><input type="checkbox" checked={showHands} onChange={(e) => setShowHands(e.target.checked)} /> Squelette des mains</label>
           <button onClick={() => imgRef.current?.click()} style={{ ...sel, margin: '6px 0 12px' }}>Poser une image de référence</button>
           <input ref={imgRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onImage} />
