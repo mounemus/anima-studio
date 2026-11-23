@@ -9,7 +9,7 @@ import { Hand } from 'lucide-react'
 import { useLeap, connectLeap, turnLeapOff, setLeapSettings, resetLeapCal, LEAP_DEFAULTS } from '../senses/Leap'
 
 export function LeapToggle({ accent = '#00f0ff', compact = false }: { accent?: string; compact?: boolean }) {
-  const { status, message, settings, fit } = useLeap()
+  const { status, message, settings, fit, note } = useLeap()
   const [open, setOpen] = useState(false)
   const on = status === 'on', busy = status === 'connecting'
   const toggle = () => { if (on || busy) turnLeapOff(); else void connectLeap() }
@@ -37,10 +37,12 @@ export function LeapToggle({ accent = '#00f0ff', compact = false }: { accent?: s
       {message && <div role="status" style={{ fontSize: 11, lineHeight: 1.35, marginTop: 6, color: status === 'error' ? '#ff6b6b' : '#9a9aa5' }}>{message}</div>}
       {on && settings.autoCal && <div style={{ fontSize: 11, lineHeight: 1.35, marginTop: 4, color: fit.n >= 6 ? '#7ddc9a' : '#ffd200' }}>
         {fit.n >= 6 ? `Calé sur l'image de la caméra : ${fit.n} zones mesurées, écart ${(fit.err * 100).toFixed(1)} % de l'image.`
+          : fit.stuck ? "Le calage n'accroche pas : la caméra et le Leap ne voient pas la même main. Montre une seule main ouverte, doigts écartés, face à la caméra et au-dessus du capteur. Si rien ne change, vérifie l'emplacement du capteur dans les réglages ⚙."
           : fit.n ? `Calage en cours : ${fit.n} zone${fit.n > 1 ? 's' : ''} sur 6. Promène lentement ta main ouverte : à gauche, à droite, en haut, en bas, plus près, plus loin.`
           : settings.cal ? "Calage précédent repris. Il s'affine dès que la caméra voit ta main ouverte."
           : "Pour caler le Leap sur l'image : tiens une main ouverte au-dessus du capteur, bien visible par la caméra, presque immobile."}
       </div>}
+      {on && note && <div role="status" style={{ fontSize: 11, lineHeight: 1.35, marginTop: 4, color: '#7ddc9a' }}>{note}</div>}
       {open && (
         <div>
           <label style={label}>Emplacement du capteur

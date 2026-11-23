@@ -73,7 +73,7 @@ function loadSettings(): LeapSettings {
 let settings = loadSettings()
 
 export type LeapStatus = 'off' | 'connecting' | 'on' | 'error'
-interface View { status: LeapStatus; message: string; settings: LeapSettings; fit: { n: number; err: number } }
+interface View { status: LeapStatus; message: string; settings: LeapSettings; fit: { n: number; err: number; stuck?: boolean }; note?: string }   // note : ce que le calage a corrigé tout seul
 let view: View = { status: 'off', message: '', settings, fit: { n: 0, err: 0 } }
 const subs = new Set<() => void>()
 const frameSubs = new Set<(f: HandFrame) => void>()
@@ -232,7 +232,7 @@ export const leapFrame = (): HandFrame => convertFrame(S.raw, settings, S.aspect
 // défaut tant que la main n'a pas visité assez de zones pour tout déterminer.
 
 interface Sample { pts: V3[]; uv: { x: number; y: number }[]; t: number }
-const CAL = { samples: new Map<string, Sample>(), fit: null as LeapCal | null, err: 0, bad: 0, lastAt: 0, savedAt: 0 }
+const CAL = { samples: new Map<string, Sample>(), fit: null as LeapCal | null, err: 0, bad: 0, lastAt: 0, savedAt: 0, turn: 0, stuck: 0 }   // turn : mesures qui disent « capteur dans l'autre sens » ; stuck : mesures d'affilée sans rien d'exploitable
 const SIGMA: LeapCal = { cx: 200, cy: 300, cz: 300, f: 0.12, pitch: 0.3, yaw: 0.15 }   // confiance dans la caméra par défaut
 const LO: LeapCal = { cx: -600, cy: -400, cz: -1500, f: 0.4, pitch: -1, yaw: -0.5 }
 const HI: LeapCal = { cx: 600, cy: 1200, cz: -60, f: 1.3, pitch: 1, yaw: 0.5 }
@@ -240,10 +240,11 @@ const STEP: LeapCal = { cx: 1, cy: 1, cz: 1, f: 1e-3, pitch: 1e-3, yaw: 1e-3 }
 const NOISE = 0.02    // écart attendu d'un jalon bien calé, en largeurs d'image
 const HUBER = 1.5     // au-delà de 3 % de l'image, une mesure compte de moins en moins
 
-export function resetFit() { CAL.samples.clear(); CAL.fit = null; CAL.err = 0; CAL.bad = 0 }
+export function resetFit() { CAL.samples.clear(); CAL.fit = null; CAL.err = 0; CAL.bad = 0; CAL.turn = 0; CAL.stuck = 0 }
 /** Oublier le calage mesuré et repartir de la caméra par défaut. */
 export function resetLeapCal() { resetFit(); setLeapSettings({ cal: null }); publish({ fit: { n: 0, err: 0 } }) }
-export const fitState = () => ({ n: CAL.samples.size, err: CAL.err })
+export const fitState = () => ({ n: CAL.samples.size, err: CAL.err, stuck: CAL.stuck >= STUCK })
+const STUCK = 30      // ~5 s de mesures inexploitables : on le dit
 
 /** Résout M·x = r (n × n) par élimination de Gauss avec pivot ; `null` si le système est dégénéré. */
 function solve(M: number[][], r: number[]): number[] | null {
@@ -291,11 +292,11 @@ export function fitCal(start: LeapCal, prior: LeapCal, samples: Sample[], aspect
   return { cal: c, err: gapMedian(c, samples, aspect) }
 }
 
-/** Les deux capteurs voient-ils bien la même main, dans la même pose ? Sans rien supposer du calage :
- *  la main du Leap, vue d'à peu près le bon côté, doit se superposer à celle de l'image par un simple
- *  déplacement + agrandissement + petite rotation. Une autre main (image miroir), une autre pose ou
- *  une fausse détection ne se superposent pas. */
-function sameHand(s: Sample, view: LeapCal, aspect: number): boolean {
+/** À quel point la main du Leap diffère de celle de l'image, dans la même pose (0 = même forme, `Infinity` =
+ *  incompatibles). Sans rien supposer du calage : la main du Leap, vue d'à peu près le bon côté, doit se superposer
+ *  à celle de l'image par un simple déplacement + agrandissement + petite rotation. Une autre main (image miroir),
+ *  une autre pose ou une fausse détection ne se superposent pas. */
+function handMismatch(s: Sample, view: LeapCal, aspect: number): number {
   const P = s.pts.map((p) => { const q = project(p, view, aspect); return [q.x, q.y / aspect] }), Q = s.uv.map((m) => [m.x, m.y / aspect])
   const mean = (a: number[][]) => [a.reduce((e, v) => e + v[0], 0) / a.length, a.reduce((e, v) => e + v[1], 0) / a.length]
   const mp = mean(P), mq = mean(Q)
@@ -304,29 +305,45 @@ function sameHand(s: Sample, view: LeapCal, aspect: number): boolean {
     const px = P[i][0] - mp[0], py = P[i][1] - mp[1], qx = Q[i][0] - mq[0], qy = Q[i][1] - mq[1]
     re += px * qx + py * qy; im += px * qy - py * qx; pp += px * px + py * py; qq += qx * qx + qy * qy
   }
-  if (pp < 1e-9 || qq < 1e-9) return false
+  if (pp < 1e-9 || qq < 1e-9) return Infinity
   const scale = Math.hypot(re, im) / pp, turn = Math.atan2(im, re)
   const left = Math.max(0, qq - (re * re + im * im) / pp) / qq          // part de la forme non expliquée
-  return scale > 0.3 && scale < 3.5 && Math.abs(turn) < 0.7 && left < 0.12
+  return scale > 0.3 && scale < 3.5 && Math.abs(turn) < 0.7 ? left : Infinity
 }
+const SAME = 0.12     // en dessous : c'est la même main, dans la même pose
 
-/** Une mesure : les mains du Leap (`leap`, 21 points en mm chacune) et les mêmes mains vues par la
- *  webcam (`cam`, jalons MediaPipe). Renvoie la caméra ajustée sur toutes les zones mesurées, ou
- *  `null` si la mesure est écartée (mains en nombre différent, ou incompatible avec le calage acquis). */
-export function calibrate(leap: { pts: V3[]; full: boolean }[], cam: { x: number; y: number }[][], cur: LeapCal, prior: LeapCal, aspect: number, now = 0, maxAge = 180000): LeapCal | null {
+/** Apparie les mains des deux capteurs et mesure leur accord. `views` : les points de vue sous lesquels comparer
+ *  (la caméra par défaut, et le calage en cours s'il y en a un : on garde le meilleur des deux). Rend les mesures
+ *  prêtes à ranger et le pire écart de forme, ou `null` si les mains ne s'apparient pas. */
+function pairHands(leap: { pts: V3[]; full: boolean }[], cam: { x: number; y: number }[][], views: LeapCal[], aspect: number, now: number): { fresh: [string, Sample][]; worst: number } | null {
   if (!leap.length || leap.length !== cam.length) return null
   // apparier par ordre horizontal : la droite de l'utilisateur (x du Leap) est à gauche de l'image non miroir
   const L = [...leap].sort((p, q) => q.pts[0].x - p.pts[0].x), C = [...cam].sort((p, q) => p[0].x - q[0].x)
-  const fresh: [string, Sample][] = []
+  const fresh: [string, Sample][] = []; let worst = 0
   for (let i = 0; i < L.length; i++) {
     // jalons que les deux capteurs placent au même endroit : poignet, bouts des doigts, et jointures si le service les donne
     const idx = L[i].full ? [0, 4, 8, 12, 16, 20, 5, 9, 13, 17] : [0, 4, 8, 12, 16, 20]
     if (idx.some((j) => !L[i].pts[j] || !C[i][j])) return null
     const smp: Sample = { pts: idx.map((j) => L[i].pts[j]), uv: idx.map((j) => ({ x: C[i][j].x, y: C[i][j].y })), t: now }
-    if (!sameHand(smp, prior, aspect)) return null
+    worst = Math.max(worst, Math.min(...views.map((v) => handMismatch(smp, v, aspect))))
     const m = L[i].pts[9] ?? L[i].pts[0]
     fresh.push([`${Math.round(m.x / 100)},${Math.round(m.y / 100)},${Math.round(m.z / 100)}`, smp])
   }
+  return { fresh, worst }
+}
+/** Écart de forme entre les mains du Leap et celles de l'image (voir `handMismatch`) ; `Infinity` si elles ne s'apparient pas. */
+export const handsMismatch = (leap: { pts: V3[]; full: boolean }[], cam: { x: number; y: number }[][], views: LeapCal[], aspect: number) => pairHands(leap, cam, views, aspect, 0)?.worst ?? Infinity
+/** Le capteur est-il lu dans le mauvais sens ? Oui si la même main, relue avec le capteur retourné d'un demi-tour,
+ *  colle nettement mieux à l'image. Une main ouverte est presque symétrique : il faut un écart franc entre les deux. */
+export const looksTurned = (asIs: number, turned: number) => turned < SAME && turned < asIs * 0.5
+
+/** Une mesure : les mains du Leap (`leap`, 21 points en mm chacune) et les mêmes mains vues par la
+ *  webcam (`cam`, jalons MediaPipe). Renvoie la caméra ajustée sur toutes les zones mesurées, ou
+ *  `null` si la mesure est écartée (mains en nombre différent, ou incompatible avec le calage acquis). */
+export function calibrate(leap: { pts: V3[]; full: boolean }[], cam: { x: number; y: number }[][], cur: LeapCal, prior: LeapCal, aspect: number, now = 0, maxAge = 180000): LeapCal | null {
+  const paired = pairHands(leap, cam, cur === prior ? [prior] : [prior, cur], aspect, now)
+  if (!paired || paired.worst >= SAME) return null
+  const fresh = paired.fresh
   // calage déjà solide et mesure très loin de lui : autre main que celle du Leap, fausse détection. Si cela
   // dure (25 mesures d'affilée, ~4 s), c'est le calage qui est périmé (capteur ou écran déplacé) : on repart de zéro.
   if (CAL.samples.size >= 5 && CAL.fit && gapMedian(CAL.fit, fresh.map((f) => f[1]), aspect) > 0.12) {
@@ -359,6 +376,26 @@ export function leapAutoCalibrate(video: HTMLVideoElement | null, model: any, cl
   const pointables = Array.isArray(S.raw?.pointables) ? S.raw.pointables : []
   const aspect = S.aspect || 16 / 9
   const leap = hands.map((h) => convertHand(h, pointables, settings, aspect)).filter(Boolean) as { pts: V3[]; full: boolean }[]
+  // Sens du capteur. Posé à l'envers, ou retourné par l'option « orientation automatique » du service Leap, il rend
+  // des mains en miroir : aucune mesure ne colle et le calage n'avance jamais. On relit la même trame avec le
+  // capteur retourné ; si elle colle nettement mieux cinq fois, on bascule le réglage tout seul.
+  const other: LeapSettings = { ...settings, flip: !settings.flip, cal: null }
+  const turned = hands.map((h) => convertHand(h, pointables, other, aspect)).filter(Boolean) as { pts: V3[]; full: boolean }[]
+  const asIs = handsMismatch(leap, cam, settings.cal ? [priorCal(settings), settings.cal] : [priorCal(settings)], aspect)
+  const asTurned = handsMismatch(turned, cam, [priorCal(other)], aspect)
+  if (looksTurned(asIs, asTurned)) {
+    if (++CAL.turn >= 5) {
+      setLeapSettings({ flip: other.flip })   // repart d'un calage neuf
+      publish({ fit: fitState(), note: "Capteur lu dans l'autre sens : corrigé tout seul. Pour un meilleur suivi des doigts, pose-le avec son voyant vers toi." })
+    }
+    return
+  }
+  CAL.turn = Math.max(0, CAL.turn - 1)
+  // pose presque symétrique (main bien à plat, doigts serrés) : elle colle dans les deux sens, donc elle ne dit rien
+  // du sens du capteur et pourrait caler sur une main en miroir. On attend une pose plus parlante.
+  if (asIs < SAME && asTurned < SAME && asTurned < asIs * 2) return
+  if (asIs < SAME) { if (CAL.stuck >= STUCK) { CAL.stuck = 0; publish({ fit: fitState() }) } else CAL.stuck = 0 }
+  else if (leap.length === cam.length && ++CAL.stuck === STUCK) publish({ fit: fitState() })   // la caméra voit bien une main, mais pas la même forme que le Leap
   // sur la tête, le capteur bouge avec elle : seules les mesures des 15 dernières secondes comptent
   const fit = calibrate(leap, cam, calOf(settings), priorCal(settings), aspect, now, settings.placement === 'head' ? 15000 : 180000)
   if (!fit) return

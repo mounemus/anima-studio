@@ -240,6 +240,46 @@ describe('Leap : calage automatique pendant le suivi', () => {
     const saved = JSON.parse(localStorage.getItem('digiart:leap')!)
     expect(Object.keys(saved.cal).sort()).toEqual(['cx', 'cy', 'cz', 'f', 'pitch', 'yaw'])
     expect(leapSettings().cal!.f).toBeGreaterThan(0.4)
+    expect(leapSettings().flip).toBe(false)                  // capteur dans le bon sens : on n'y touche pas
+    turnLeapOff(); setLeapSettings({ ...LEAP_DEFAULTS }); vi.unstubAllGlobals()
+  })
+
+  // Capteur posé à l'envers (ou retourné par l'« orientation automatique » du service) : il rend x et z opposés.
+  // Avant ce correctif, chaque mesure était rejetée (main en miroir) et le calage restait bloqué pour toujours.
+  for (const start of [false, true]) it(`capteur lu dans le mauvais sens (réglage « autre sens » ${start ? 'coché à tort' : 'non coché'}) : détecté, corrigé, puis calé`, async () => {
+    const { connectLeap, turnLeapOff, setLeapSettings, leapSettings } = await import('./Leap')
+    const A = 16 / 9, T: LeapCal = { cx: -30, cy: 400, cz: -300, f: 0.65, pitch: 0.3, yaw: 0.06 }
+    const exact = (q: number[]) => project({ x: q[0], y: q[1], z: q[2] }, T, A)
+    const handPts = (c: number[]) => [[c[0], c[1] - 80, c[2] + 10], ...[[-60, -20, 0.55], [-30, 95, 1], [-5, 110, 1], [20, 98, 1], [47, 70, 1]].flatMap(([dx, len, k]) => [0.05, 0.45, 0.75, 1].map((t) => [c[0] + dx * (0.5 + t / 2), c[1] + len * t * k - (k < 1 ? 30 : 0), c[2] - 6 * t]))]
+    // ce que le capteur envoie : la vraie main si le réglage est coché à tort, la main retournée sinon
+    const raw = (q: number[]) => (start ? q : [-q[0], q[1], -q[2]])
+    const frame = (pts: number[][], c: number[]) => ({ hands: [{ id: 1, type: 'right', palmPosition: raw(c), palmVelocity: [20, 0, 0], palmNormal: raw([0, 0, -1]), direction: raw([0, 1, 0]), wrist: raw(pts[0]), pinchStrength: 0, grabStrength: 0 }],
+      pointables: [0, 1, 2, 3, 4].map((i) => { const q = pts.slice(1 + i * 4, 5 + i * 4).map(raw); return { id: 10 + i, handId: 1, type: i, extended: true, carpPosition: raw(pts[0]), mcpPosition: q[0], pipPosition: q[1], dipPosition: q[2], btipPosition: q[3], tipPosition: q[3] } }) })
+    let now = start ? 400000 : 200000                        // après les essais précédents : le calage ne mesure pas deux fois en 150 ms
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    let sock: any = null
+    vi.stubGlobal('WebSocket', class { onopen: any; onmessage: any; onclose: any; onerror: any; constructor() { sock = this } send() {} close() {} })
+    // en vrai, le réglage est dans le bon sens quand la main envoyée et la main vue coïncident : ici il est faux dans les deux cas
+    setLeapSettings({ ...LEAP_DEFAULTS, autoCal: true, flip: start })
+    const ready = connectLeap()
+    sock.onopen?.(); sock.onmessage({ data: JSON.stringify({ version: 6 }) })
+    expect(await ready).toBe(true)
+    let cur: number[][] = []
+    const video = { readyState: 4, currentTime: 0, videoWidth: 1280, videoHeight: 720 } as HTMLVideoElement
+    const model = { recognizeForVideo: () => ({ landmarks: [cur.map(exact)], gestures: [] }) }
+    const clock = handClock()
+    let res: any = null
+    const errOf = (lm: { x: number; y: number }[]) => lm.reduce((e, m, i) => { const t = exact(cur[i]); return e + Math.hypot(m.x - t.x, m.y - t.y) }, 0) / lm.length
+    const step = (i: number) => { const c = [120 + Math.sin(i * 0.3) * 120, 300 + Math.cos(i * 0.2) * 90, 180 + Math.sin(i * 0.17) * 90]; now += 200; (video as any).currentTime += 0.2; cur = handPts(c); sock.onmessage({ data: JSON.stringify(frame(cur, c)) }); res = pollHands(video, model, clock) }
+    step(0); step(1)
+    expect(leapSettings().flip).toBe(start)                  // deux mesures ne suffisent pas à basculer
+    expect(leapSettings().cal).toBeNull()                    // et rien n'est calé sur une main en miroir
+    expect(errOf(res.landmarks[0])).toBeGreaterThan(0.1)     // la main du Leap est de l'autre côté de l'image
+    for (let i = 2; i < 8; i++) step(i)
+    expect(leapSettings().flip).toBe(!start)                 // cinq mesures concordantes : le sens est corrigé
+    for (let i = 8; i < 50; i++) step(i)
+    expect(leapSettings().flip).toBe(!start)                 // et il ne rebascule pas
+    expect(errOf(res.landmarks[0])).toBeLessThan(0.01)       // le calage s'est fait : la main est posée sur l'image
     turnLeapOff(); setLeapSettings({ ...LEAP_DEFAULTS }); vi.unstubAllGlobals()
   })
 
