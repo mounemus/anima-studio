@@ -24,6 +24,7 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import { pollHands, handClock, autoConnectLeap, leapWidthPerMm, isPinching, type LeapHand, type HandFrame } from '../senses/Leap'
 import { recognize, dehook, snapEnds, pathLen, handScale, depthFromScale, deadzone, type Guess } from './assist'
+import { devicePose, angleDiff, twoFinger, pressureScale } from './tablet'
 import { LeapToggle } from '../ui/LeapToggle'
 import { buildGeometry, makeMaterial, symMatrices, objMatrix, simplify, relax, bakeForExport, type Obj, type P3, type Kind, type Section, type Prim, type Mat, type Sym } from './build'
 
@@ -139,6 +140,18 @@ export function SpatialStudio() {
   const [bg, setBg] = useState<Bg>('webcam')
   const [showGrid, setShowGrid] = useState(true)
   const [planeView, setPlaneView] = useState(true)   // aperçu du plan de dessin, vu de côté
+  const [touchUi] = useState(() => navigator.maxTouchPoints > 0)   // tablette ou téléphone : stylet, doigts, gyroscope
+  const [gyro, setGyro] = useState(false)             // le plan de dessin suit l'inclinaison de l'appareil
+  const [fingerDraws, setFingerDraws] = useState(true)   // un doigt dessine ; dès qu'un stylet est vu, un doigt tourne la vue
+  /** Le gyroscope ne se lit qu'après un geste de l'utilisateur, et sur iPhone et iPad après son accord. */
+  const toggleGyro = async () => {
+    if (gyro) { setGyro(false); setStatus('Gyroscope arrêté : la vue ne suit plus la tablette.'); return }
+    const D = (window as any).DeviceOrientationEvent
+    if (!D) { setStatus("Cet appareil n'a pas de gyroscope lisible par le navigateur."); return }
+    try { if (typeof D.requestPermission === 'function' && (await D.requestPermission()) !== 'granted') { setStatus('Accès au gyroscope refusé : autorise « Mouvement et orientation » pour ce site.'); return } }
+    catch { setStatus("Le navigateur n'a pas voulu ouvrir l'accès au gyroscope."); return }
+    setGyro(true); setStatus('Gyroscope : la tablette est le plan de dessin. À plat = vue de dessus, debout = vue de face ; tourne-toi avec elle pour tourner autour du dessin.')
+  }
   const [showHands, setShowHands] = useState(true)
   const [depthGain, setDepthGain] = useState(1)
   const [views, setViews] = useState<View[]>([])
@@ -153,7 +166,7 @@ export function SpatialStudio() {
   const [zoom, setZoom] = useState(1)
   const [handsOn, setHandsOn] = useState(true)   // suspendre le suivi : sinon des mains au clavier, vues par la caméra, dessinent
 
-  const P = { tool, section, straight, size, taper, color, mat, prim, sym, symN, sides, sweepDeg, snap, snapStep, duplicate, layers, activeLayer, bg, showGrid, showHands, depthGain, views, handsOn, flat, assist, planeView, smooth }
+  const P = { tool, section, straight, size, taper, color, mat, prim, sym, symN, sides, sweepDeg, snap, snapStep, duplicate, layers, activeLayer, bg, showGrid, showHands, depthGain, views, handsOn, flat, assist, planeView, gyro, fingerDraws, smooth }
   const paramsRef = useRef(P); paramsRef.current = P
   const cmdRef = useRef<Cmd[]>([])
   const send = (type: string, data?: any) => { cmdRef.current.push({ type, data }) }
@@ -371,24 +384,114 @@ export function SpatialStudio() {
     }
     let dragPivot = new THREE.Vector3()
 
-    // ───────── souris / tactile (case 2) : même chemin que les mains ─────────
+    // ───────── souris, stylet et doigts (case 2) : même chemin que les mains ─────────
+    // Souris et stylet dessinent. Les doigts gèrent l'espace : un doigt tourne la vue (ou dessine, tant qu'aucun
+    // stylet n'a été vu), deux doigts zooment, déplacent et pivotent, un toucher bref choisit un objet.
     let drag: null | 'draw' | 'orbit' | 'pan' = null, lastPtr = { x: 0, y: 0 }
+    const touches = new Map<number, { x: number; y: number; x0: number; y0: number; t0: number }>()
+    const pen = { down: false, pressure: 0, n: 0 }   // pression cumulée du trait en cours
+    let two: { a: { x: number; y: number }; b: { x: number; y: number }; spread: number; twist: number; zooming: boolean; turning: boolean; pivot: THREE.Vector3 } | null = null
+    let multi = false, dropStroke = false             // geste à plusieurs doigts en cours ; trait à jeter (c'était un toucher ou un début de pincement)
     const ptrNdc = (e: PointerEvent | WheelEvent) => slots[2].ndc.set((e.clientX / window.innerWidth) * 2 - 1, -((e.clientY / window.innerHeight) * 2 - 1))
+    const startDraw = (e: PointerEvent) => {
+      lastPtr = { x: e.clientX, y: e.clientY }; ptrNdc(e); drag = 'draw'
+      const s = slots[2]; s.scr = { x: e.clientX, y: e.clientY }
+      pointAt(s.ndc, planeZ, s.p); s.cur = s.scr; s.has = true; s.pinch = true
+    }
+    const stopDraw = (drop: boolean) => { if (drop && act && act.slot === 2) dropStroke = true; drag = null; slots[2].pinch = false; slots[2].has = false }
     const onDown = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') {
+        if (pen.down) return                                   // la paume posée pendant qu'on dessine au stylet ne compte pas
+        try { el.setPointerCapture?.(e.pointerId) } catch { /* pointeur déjà relâché */ }
+        touches.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: performance.now() })
+        if (touches.size === 1) {
+          multi = false
+          if (paramsRef.current.fingerDraws) startDraw(e)
+          else { drag = 'orbit'; dragPivot = pivotOf(); lastPtr = { x: e.clientX, y: e.clientY } }
+        } else if (touches.size === 2) {
+          // un deuxième doigt : ce n'était pas un trait, c'est un geste sur l'espace
+          if (drag === 'draw') stopDraw(true)
+          drag = null; multi = true
+          const [a, b] = [...touches.values()]
+          two = { a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y }, spread: 1, twist: 0, zooming: false, turning: false, pivot: pivotOf() }
+        }
+        return
+      }
       try { el.setPointerCapture?.(e.pointerId) } catch { /* pointeur déjà relâché */ }
+      if (e.pointerType === 'pen') {
+        // un stylet est là : il dessine, les doigts ne servent plus qu'à manier l'espace
+        pen.down = true; pen.pressure = e.pressure || 0.5; pen.n = 1
+        touches.clear(); two = null
+        if (paramsRef.current.fingerDraws) setFingerDraws(false)
+      }
       lastPtr = { x: e.clientX, y: e.clientY }; ptrNdc(e)
       drag = e.button === 2 ? 'orbit' : (e.button === 1 || e.altKey) ? 'pan' : 'draw'
       if (drag === 'orbit') dragPivot = pivotOf()
-      const s = slots[2]; s.scr = { x: e.clientX, y: e.clientY }
-      if (drag === 'draw') { pointAt(s.ndc, planeZ, s.p); s.cur = s.scr; s.has = true; s.pinch = true }
+      if (drag === 'draw') startDraw(e)
     }
     const onMove = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') {
+        const t = touches.get(e.pointerId); if (!t) return
+        const dx = e.clientX - t.x, dy = e.clientY - t.y; t.x = e.clientX; t.y = e.clientY
+        if (touches.size === 1 && !multi) {
+          if (drag === 'draw') { ptrNdc(e); slots[2].scr = { x: e.clientX, y: e.clientY } }
+          else if (drag === 'orbit') { orbitBy(dx * 0.006, dy * 0.006, dragPivot); viewGoal = null }
+        } else if (touches.size === 2 && two) {
+          const [a, b] = [...touches.values()], g = twoFinger(two.a, two.b, a, b), u = visW() / window.innerWidth
+          world.position.x += g.dx * u; world.position.y -= g.dy * u
+          // zoom et rotation ne s'engagent qu'après un vrai écart : déplacer la vue ne la fait ni zoomer ni pivoter
+          two.spread *= g.scale; two.twist += g.twist
+          if (!two.zooming && Math.abs(two.spread - 1) > 0.06) two.zooming = true
+          if (!two.turning && Math.abs(two.twist) > 0.14) two.turning = true
+          if (two.zooming) zoomAt(g.scale, g.cx, g.cy)
+          if (two.turning) orbitBy(-g.twist, 0, two.pivot)       // doigts dans le sens des aiguilles : le dessin aussi (vu de dessus)
+          two.a = { x: a.x, y: a.y }; two.b = { x: b.x, y: b.y }; viewGoal = null
+        }
+        return
+      }
+      if (e.pointerType === 'pen' && pen.down) { pen.pressure += e.pressure || 0.5; pen.n++ }
       const dx = e.clientX - lastPtr.x, dy = e.clientY - lastPtr.y; lastPtr = { x: e.clientX, y: e.clientY }
       ptrNdc(e); slots[2].scr = { x: e.clientX, y: e.clientY }
       if (drag === 'orbit') { orbitBy(dx * 0.006, dy * 0.006, dragPivot); viewGoal = null }
       else if (drag === 'pan') { const u = visW() / window.innerWidth; world.position.x += dx * u; world.position.y -= dy * u; viewGoal = null }
     }
-    const onUp = () => { if (drag === 'orbit') settle(dragPivot); drag = null; slots[2].pinch = false; slots[2].has = false }
+    const onUp = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') {
+        const t = touches.get(e.pointerId); if (!t) return
+        touches.delete(e.pointerId)
+        // toucher bref et immobile d'un seul doigt : on choisit l'objet dessous (ou on lâche la sélection)
+        const tap = e.type === 'pointerup' && !multi && performance.now() - t.t0 < 280 && Math.hypot(t.x - t.x0, t.y - t.y0) < 12
+        if (drag === 'draw') stopDraw(tap)
+        else if (drag === 'orbit') { if (!tap) settle(dragPivot); drag = null }
+        if (two && touches.size < 2) { if (two.turning) settle(two.pivot); two = null }
+        if (tap) { ptrNdc(e); slots[2].scr = { x: e.clientX, y: e.clientY }; const o = pick(slots[2]); select(o ? o.id : null); setStatus(o ? 'Objet choisi : ses points sont affichés, le panneau peut lui appliquer les réglages ou le supprimer.' : 'Rien sous le doigt.') }
+        return
+      }
+      if (e.pointerType === 'pen') pen.down = false
+      if (drag === 'orbit') settle(dragPivot)
+      stopDraw(false)
+    }
+    // ───────── gyroscope : le plan de dessin suit l'inclinaison de la tablette ─────────
+    const gy = { has: false, on: false, heading: 0, tilt: 0, last: 0, since: 0, count: -1, pivot: new THREE.Vector3() }
+    const onOrient = (e: DeviceOrientationEvent) => {
+      if (e.alpha == null || e.beta == null || e.gamma == null) return
+      const pose = devicePose(e.alpha, e.beta, e.gamma, screen.orientation?.angle ?? 0)
+      gy.heading = pose.heading; gy.tilt = pose.tilt; gy.has = true
+    }
+    window.addEventListener('deviceorientation', onOrient)
+    /** À chaque image : la vue glisse vers la pose de la tablette. À plat = vue de dessus, debout = vue de face ;
+     *  se tourner avec elle fait tourner autour du dessin. Rien ne bouge pendant qu'on trace ou qu'on manie la vue. */
+    const followDevice = (p: typeof P, now: number) => {
+      if (!p.gyro) { gy.on = false; gy.since = 0; return }
+      if (!gy.since) gy.since = now
+      if (!gy.has) { if (now - gy.since > 2500) { setGyro(false); setStatus("Aucune mesure du gyroscope : cet appareil n'en a pas, ou le navigateur ne le laisse pas lire.") } return }
+      if (!gy.on) { gy.on = true; gy.last = gy.heading; gy.count = -1 }                 // le cap de départ sert de repère
+      if (act || drag || two || viewGoal) return
+      if (gy.count !== objs.length) { gy.count = objs.length; gy.pivot = pivotOf() }
+      const up = Y_AXIS.clone().applyQuaternion(world.quaternion), dTilt = gy.tilt - Math.atan2(up.z, up.y), dYaw = -angleDiff(gy.heading, gy.last)
+      if (Math.abs(dYaw) < 0.002 && Math.abs(dTilt) < 0.002) return                    // la main qui tient la tablette tremble : on ne fait pas vibrer la vue
+      orbitBy(dYaw * 0.22, dTilt * 0.22, gy.pivot); gy.last += angleDiff(gy.heading, gy.last) * 0.22   // un cinquième du chemin par image : pas de saut
+    }
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       if (e.shiftKey) { planeZ = clamp(-3, 3, planeZ - Math.sign(e.deltaY || e.deltaX) * 0.15); setStatus(`Plan de dessin ${planeZ > 0 ? 'avancé' : planeZ < 0 ? 'reculé' : 'au centre'} (${planeZ.toFixed(2)}).`); return }
@@ -430,7 +533,7 @@ export function SpatialStudio() {
     // ───────── action en cours (de la pince au relâchement) ─────────
     let draft: Obj | null = null, draftNode: THREE.Group | null = null
     const showDraft = () => { if (draftNode) disposeNode(draftNode); draftNode = draft ? buildNode(draft) : null; if (draftNode) content.add(draftNode) }
-    interface Act { tool: Tool; slot: number; railB: P3[]; ts: number[]; obj?: Obj; start?: P3; pos0?: P3; two?: { a0: THREE.Vector3; b0: THREE.Vector3; m0: THREE.Matrix4 }; handle?: number; pts0?: P3; changed?: boolean }
+    interface Act { tool: Tool; slot: number; railB: P3[]; ts: number[]; obj?: Obj; start?: P3; pos0?: P3; two?: { a0: THREE.Vector3; b0: THREE.Vector3; m0: THREE.Matrix4 }; handle?: number; pts0?: P3; changed?: boolean; pen?: boolean }
     let act: Act | null = null
     let pendingRail: P3[] | null = null, railNode: THREE.Group | null = null
     let axisO: P3 = [0, 0, 0]
@@ -453,7 +556,7 @@ export function SpatialStudio() {
       const creating = p.tool === 'stroke' || p.tool === 'revolve' || p.tool === 'surface' || p.tool === 'prim'
       const lay = layerOf(p.activeLayer)
       if (creating && (!lay || !lay.visible || lay.locked)) { setStatus('Le calque actif est masqué ou verrouillé : choisis-en un autre pour dessiner.'); return }
-      act = { tool: p.tool, slot: i, railB: [], ts: [performance.now()] }; if (i < 2) lastHand = i
+      act = { tool: p.tool, slot: i, railB: [], ts: [performance.now()], pen: i === 2 && pen.down }; if (i < 2) lastHand = i
       if (p.tool === 'stroke') draft = newObj('stroke', { pts: [cur], nrm: [palmNormal(s)], size: r })
       else if (p.tool === 'revolve') { const o2 = other(i); if (o2?.has && !o2.pinch && o2.fist < FIST_MS) axisO = toLocal(o2.p); draft = newObj('revolve', { pts: [cur], axisO, axisD: [0, 1, 0], sides: p.sides, sweep: p.sweepDeg }) }
       else if (p.tool === 'surface') draft = newObj('stroke', { pts: [cur], size: 0.008 * k, section: 'round', taper: 0 })
@@ -526,6 +629,7 @@ export function SpatialStudio() {
     const devLog: any[] = []
     const end = () => {
       const a = act!; act = null
+      if (dropStroke) { dropStroke = false; draft = null; showDraft(); setGhost(null); ghostKind = ''; return }   // c'était un toucher ou le début d'un geste à deux doigts
       const d = draft, hinted = ghostKind !== '' && ghostKind !== 'free'; draft = null; showDraft(); setGhost(null); ghostKind = ''
       let shaped: Guess | null = null
       const note: any = { tool: a.tool, slot: a.slot, n0: d?.pts.length ?? 0, out: 'rien' }; if (import.meta.env.DEV) { devLog.push(note); if (devLog.length > 300) devLog.shift() }   // journal des fins de trait, pour les essais
@@ -560,6 +664,7 @@ export function SpatialStudio() {
           const len = d.pts.reduce((e, q, i) => (i ? e + d3(q, d.pts[i - 1]) : 0), 0)
           note.len = len; note.size = d.size
           if (a.slot < 2 && len < d.size * 4) { note.out = 'trop bref'; setStatus('Pince trop brève : rien de tracé.'); return }
+          if (a.pen && pen.n > 3) d.size *= pressureScale(pen.pressure / pen.n)   // stylet : appuyer épaissit le trait
           if (d.pts.length > 2) thin(d, d.size * 0.25)
           // garde-fou : si le nettoyage a abîmé le trait (points confondus, valeurs impossibles), on pose le geste d'origine
           if (!sound(d.pts)) { d.pts = drawn.pts; d.nrm = drawn.nrm; note.sauve = true }
@@ -737,6 +842,7 @@ export function SpatialStudio() {
         }
         world.updateMatrixWorld(true)
       }
+      followDevice(p, now)
       navigate()
       palette(now)
       { const z = Math.round(world.scale.x * 20) / 20; if (z !== lastZoom) { lastZoom = z; setZoom(z) } }
@@ -865,6 +971,7 @@ export function SpatialStudio() {
       running = false; if (rafId) cancelAnimationFrame(rafId)
       window.removeEventListener('resize', resize); window.removeEventListener('keydown', onKey)
       el.removeEventListener('pointerdown', onDown); el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp); el.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('deviceorientation', onOrient)
       el.removeEventListener('wheel', onWheel); el.removeEventListener('contextmenu', noMenu)
       try { landmarker?.close() } catch { /* noop */ }
       if (stream) stream.getTracks().forEach((t) => t.stop()); video.srcObject = null
@@ -933,6 +1040,11 @@ export function SpatialStudio() {
         <button onClick={() => send('zoom', 1.25)} aria-label="Zoomer" title="Zoomer (+)" style={hudBtn}>+</button>
         <button onClick={() => send('fit')} aria-label="Tout voir" title="Tout voir : cadre le dessin entier, sans changer l'orientation (T)" style={hudBtn}>⤢</button>
         <button onClick={() => send('recenter')} title="Recentrer : plan de face, zoom ×1 (0)" style={hudBtn}>⊙</button>
+        {touchUi && <>
+          <span style={{ width: 1, alignSelf: 'stretch', background: 'rgba(255,255,255,0.2)', margin: '0 2px' }} />
+          <button onClick={() => void toggleGyro()} aria-pressed={gyro} title="Gyroscope : le plan de dessin suit l'inclinaison de la tablette (à plat = dessus, debout = face)" style={{ ...hudBtn, borderColor: gyro ? '#ffd200' : 'rgba(255,255,255,0.2)', color: gyro ? '#ffd200' : '#fff' }}>📱 Gyro</button>
+          <button onClick={() => setFingerDraws((v) => !v)} aria-pressed={!fingerDraws} title="Ce que fait un doigt seul : dessiner, ou tourner la vue (le stylet dessine toujours)" style={hudBtn}>{fingerDraws ? '☝️ dessine' : '☝️ tourne'}</button>
+        </>}
       </div>
 
       {!panelOpen && <button onClick={() => setPanelOpen(true)} aria-label="Ouvrir le panneau" style={{ position: 'absolute', top: 16, left: 16, zIndex: 11, ...sel, width: 'auto', padding: '8px 12px' }}>☰</button>}
@@ -949,6 +1061,7 @@ export function SpatialStudio() {
             ✊ <b>Un poing</b> : tourner la vue (changer de plan de dessin). ✊✊ <b>Deux poings</b> : les écarter pour zoomer, les bouger ensemble pour déplacer.<br />
             🖐 <b>Paume ouverte</b> de l'autre main : palette. Pointe un bouton avec l'index et attends que l'anneau se remplisse.<br />
             🖱️ Souris : glisser = pince · clic droit = tourner · molette = zoom · Maj + molette = avancer le plan.
+            {touchUi && <><br />✍️ <b>Tablette</b> : le stylet dessine (appuyer épaissit le trait). Un doigt tourne la vue, deux doigts zooment, déplacent et pivotent, un toucher bref choisit un objet. <b>📱 Gyro</b> : la tablette devient le plan de dessin.</>}
           </div>
 
           <LeapToggle />
