@@ -23,6 +23,7 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import { pollHands, handClock, autoConnectLeap, leapWidthPerMm, isPinching, type LeapHand, type HandFrame } from '../senses/Leap'
+import { recognize, dehook, snapEnds, handScale, depthFromScale, deadzone, type Guess } from './assist'
 import { LeapToggle } from '../ui/LeapToggle'
 import { buildGeometry, makeMaterial, symMatrices, objMatrix, simplify, relax, bakeForExport, type Obj, type P3, type Kind, type Section, type Prim, type Mat, type Sym } from './build'
 
@@ -108,10 +109,13 @@ interface Slot {
   cur: { x: number; y: number }; tip: { x: number; y: number }; palmS: { x: number; y: number }   // point d'action lissé, bout de l'index, paume lissée
   ndc: THREE.Vector2; p: THREE.Vector3; fresh: boolean; euro: Euro
   lm: { x: number; y: number }[]; leap?: LeapHand
+  peak: number; hold: boolean   // serrage maximal de la pince en cours ; pince qui se desserre : le point d'action ne bouge plus
+  glitch: number                // images d'affilée où le capteur a sauté
+  zf: number | null; scaleRef: number   // profondeur lissée ; taille apparente de la main à son entrée (caméra)
 }
-const mkSlot = (): Slot => ({ has: false, seen: 0, pinch: false, was: false, fist: 0, open: 0, fistAt: 0, openAt: 0, raw: false, rawAt: 0, since: 0, scr: { x: 0, y: 0 }, palmScr: { x: 0, y: 0 }, cur: { x: 0, y: 0 }, tip: { x: 0, y: 0 }, palmS: { x: 0, y: 0 }, ndc: new THREE.Vector2(), p: new THREE.Vector3(), fresh: true, euro: new Euro(), lm: [] })
+const mkSlot = (): Slot => ({ has: false, seen: 0, pinch: false, was: false, fist: 0, open: 0, fistAt: 0, openAt: 0, raw: false, rawAt: 0, since: 0, scr: { x: 0, y: 0 }, palmScr: { x: 0, y: 0 }, cur: { x: 0, y: 0 }, tip: { x: 0, y: 0 }, palmS: { x: 0, y: 0 }, ndc: new THREE.Vector2(), p: new THREE.Vector3(), fresh: true, euro: new Euro(), lm: [], peak: 0, hold: false, glitch: 0, zf: null, scaleRef: 0 })
 /** La main a quitté le champ : tout remettre à zéro. */
-const dropSlot = (s: Slot) => { s.has = false; s.pinch = false; s.raw = false; s.fist = 0; s.open = 0; s.fistAt = 0; s.openAt = 0; s.fresh = true; s.lm = []; s.euro.reset() }
+const dropSlot = (s: Slot) => { s.has = false; s.pinch = false; s.raw = false; s.fist = 0; s.open = 0; s.fistAt = 0; s.openAt = 0; s.fresh = true; s.lm = []; s.euro.reset(); s.peak = 0; s.hold = false; s.glitch = 0; s.zf = null; s.scaleRef = 0 }
 
 export function SpatialStudio() {
   const [saved] = useState(loadSaved)
@@ -144,10 +148,11 @@ export function SpatialStudio() {
   const [selected, setSelected] = useState(false)
   const [flat, setFlat] = useState(true)        // dessiner à plat sur le plan face à l'écran (précis), ou libre en profondeur
   const [smooth, setSmooth] = useState(0.6)     // lissage du tracé
+  const [assist, setAssist] = useState<0 | 1 | 2>(1)   // assistant de tracé : éteint, léger, fort
   const [zoom, setZoom] = useState(1)
   const [handsOn, setHandsOn] = useState(true)   // suspendre le suivi : sinon des mains au clavier, vues par la caméra, dessinent
 
-  const P = { tool, section, straight, size, taper, color, mat, prim, sym, symN, sides, sweepDeg, snap, snapStep, duplicate, layers, activeLayer, bg, showGrid, showHands, depthGain, views, handsOn, flat, smooth }
+  const P = { tool, section, straight, size, taper, color, mat, prim, sym, symN, sides, sweepDeg, snap, snapStep, duplicate, layers, activeLayer, bg, showGrid, showHands, depthGain, views, handsOn, flat, assist, smooth }
   const paramsRef = useRef(P); paramsRef.current = P
   const cmdRef = useRef<Cmd[]>([])
   const send = (type: string, data?: any) => { cmdRef.current.push({ type, data }) }
@@ -286,17 +291,45 @@ export function SpatialStudio() {
         else if (!raw && s.pinch && now - s.rawAt >= 90) s.pinch = false
         // point d'action : milieu pouce-index (la paume quand le poing est fermé, plus stable)
         const ax = s.fist >= FIST_MS ? lm[9].x : (lm[4].x + lm[8].x) / 2, ay = s.fist >= FIST_MS ? lm[9].y : (lm[4].y + lm[8].y) / 2
-        s.scr = toScreen(ax, ay); s.palmScr = palms[i]; s.tip = toScreen(lm[8].x, lm[8].y)
+        const scr = toScreen(ax, ay), dt = clamp(0.004, 0.1, (now - s.seen) / 1000)
+        // Saut du capteur : un point d'action qui traverse 16 % de l'écran en une image, ou une main que le Leap dit
+        // ne presque plus voir, n'est pas un geste. On garde l'ancien point. Si le saut dure, la main a vraiment
+        // changé de place : le trait en cours s'arrête là plutôt que de filer d'un bout à l'autre de l'écran.
+        const far = s.has && !s.fresh && (dist2(scr, s.scr) > 0.16 * W || (!!leap && (res.gestures?.[i]?.[0]?.score ?? 1) < 0.15))
+        const wild = far && s.glitch < 3
+        if (far && !wild) { s.pinch = false; s.raw = false; s.since = now; s.euro.reset() }
+        s.glitch = wild ? s.glitch + 1 : 0
+        if (!wild) s.scr = scr
+        s.palmScr = palms[i]; s.tip = toScreen(lm[8].x, lm[8].y)
+        // Serrage de la pince, de 0 (ouverte) à 1 (doigts qui se touchent). Dès qu'elle se desserre nettement, les
+        // doigts sont en train de s'écarter : leur milieu se déplace sans que la main ait bougé. On fige le point.
+        const w3 = res.worldLandmarks?.[i]
+        const tight = leap ? leap.pinch : w3 && w3.length >= 21 ? clamp(0, 1, 1 - (Math.hypot(w3[4].x - w3[8].x, w3[4].y - w3[8].y, w3[4].z - w3[8].z) * 1000 - 20) / 30) : clamp(0, 1, 1 - (Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) / hs - 0.2) / 0.3)
+        s.peak = s.pinch ? Math.max(tight, s.peak - 0.4 * dt) : tight
+        s.hold = s.pinch && tight < s.peak - 0.25
         if (!s.has) s.palmS = { ...palms[i] }; else { s.palmS.x += (palms[i].x - s.palmS.x) * 0.45; s.palmS.y += (palms[i].y - s.palmS.y) * 0.45 }
         s.ndc.set(s.scr.x / W * 2 - 1, -(s.scr.y / H * 2 - 1))
         // Profondeur. À plat : tout se dessine sur le plan de dessin, face à l'écran (le plus précis). Libre :
         // millimètres réels du Leap, ou taille apparente de la main à la caméra (main poussée vers l'écran =
         // plus loin dans la scène), autour du plan de dessin.
         if (leap && zRef === null) zRef = leap.pinchMm.z   // la profondeur zéro = là où la main se tient d'abord
-        const dz = p.flat ? 0 : leap ? (leap.pinchMm.z - (zRef ?? 0)) * visW() * leapWidthPerMm() * p.depthGain : -clamp(-1, 1, (hs - 0.16) / 0.12) * 1.2 * p.depthGain
+        // À la caméra, la profondeur vient de la taille apparente de la main, mesurée sur ses 21 jalons (une main
+        // qui s'incline ne passe plus pour une main qui recule), rapportée à sa taille à l'entrée dans le champ.
+        const va = video.videoWidth > 0 ? video.videoWidth / video.videoHeight : W / H
+        const sc = !leap && w3 && w3.length >= 21 ? handScale(lm, w3, va) : 0
+        if (sc && (!s.scaleRef || now - s.since < 250)) s.scaleRef = sc
+        let dz = 0
+        if (p.flat) s.zf = null
+        else {
+          // zone morte : près du plan de dessin la profondeur reste à zéro, le trait ne quitte le plan que si on le veut
+          if (leap) dz = deadzone(leap.pinchMm.z - (zRef ?? 0), 12) * visW() * leapWidthPerMm() * p.depthGain
+          else dz = -deadzone(sc ? depthFromScale(sc, s.scaleRef) : clamp(-1, 1, (hs - 0.16) / 0.12), 0.08) * 1.2 * p.depthGain
+          s.zf = s.zf === null ? dz : s.zf + (dz - s.zf) * (1 - Math.exp(-dt * 2 * Math.PI * (leap ? 6 : 1.8)))   // la profondeur tremble plus que le reste : filtre à part
+          dz = s.zf
+        }
         pointAt(s.ndc, clamp(-3.5, 3.5, planeZ + dz), tmp)
         if (s.fresh || !s.has) s.euro.reset()
-        s.p.copy(s.euro.next(tmp, now, p.smooth))
+        if (!wild && !s.hold) s.p.copy(s.euro.next(tmp, now, p.smooth))
         _e.copy(s.p).project(camera); s.cur = { x: (_e.x * 0.5 + 0.5) * W, y: (-_e.y * 0.5 + 0.5) * H }
         s.fresh = false; s.has = true; s.seen = now; s.leap = leap
         s.lm = lm.map((k: { x: number; y: number }) => toScreen(k.x, k.y))
@@ -369,6 +402,16 @@ export function SpatialStudio() {
     let axisO: P3 = [0, 0, 0]
     const setRail = (pts: P3[] | null) => { pendingRail = pts; if (railNode) { disposeNode(railNode); railNode = null } if (pts) { const g = buildGeometry(newObj('stroke', { pts, size: 0.008 * k, section: 'round', taper: 0, sym: 'none' })); if (g) { railNode = new THREE.Group(); railNode.add(new THREE.Mesh(g, railMat)); content.add(railNode) } } }
     const other = (i: number) => (i === 2 ? null : slots[1 - i])
+    // l'assistant de tracé : pendant qu'on dessine, un fil blanc montre la forme reconnue
+    const ghostMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8, depthTest: false })
+    let ghostNode: THREE.Mesh | null = null, ghostAt = 0, ghostKind = ''
+    const setGhost = (pts: P3[] | null) => {
+      if (ghostNode) { ghostNode.geometry.dispose(); ghostNode.removeFromParent(); ghostNode = null }
+      const g = pts ? buildGeometry(newObj('stroke', { pts, size: 0.0035 * k, section: 'round', taper: 0, sym: 'none' })) : null
+      if (g) { ghostNode = new THREE.Mesh(g, ghostMat); ghostNode.renderOrder = 12; content.add(ghostNode) }
+    }
+    /** Bouts des traits déjà posés, dans le repère dessiné : là où un nouveau trait peut venir s'accrocher. */
+    const anchors = (): P3[] => objs.filter((o) => o.kind === 'stroke' && o.pts.length >= 2 && usable(o)).flatMap((o) => { const m = objMatrix(o); return [o.pts[0], o.pts[o.pts.length - 1]].map((q) => tmp.fromArray(q).applyMatrix4(m).toArray() as P3) })
     const thin = (o: Obj, eps: number) => { const keep = simplify(o.pts, eps); if (o.nrm) o.nrm = keep.map((i) => o.nrm![i]); o.pts = keep.map((i) => o.pts[i]) }
 
     const begin = (i: number, p: typeof P) => {
@@ -406,10 +449,16 @@ export function SpatialStudio() {
           let end = cur
           if (p.snap && len > 1e-6) { const ax = v.map((x) => Math.abs(x) / len), m = ax.indexOf(Math.max(...ax)); if (ax[m] > Math.cos(12 * Math.PI / 180)) { end = [...a0] as P3; end[m] = cur[m] } }
           draft.pts = [a0, end]; draft.nrm = [draft.nrm![0], draft.nrm![0]]; showDraft()
-        } else if (d3(cur, last) > step) {
+        } else if (d3(cur, last) > step && !s.hold) {
           draft.pts.push(cur); draft.nrm?.push(palmNormal(s)); a.ts.push(performance.now())
           if (a.tool === 'surface' && o2?.has && o2.pinch) { a.railB.push(toLocal(o2.p)); if (a.railB.length >= 2) { draft.kind = 'surface'; draft.pts2 = a.railB } }
           showDraft()
+          if (p.assist && a.tool !== 'surface' && draft.pts.length >= 6 && performance.now() - ghostAt > 120) {
+            ghostAt = performance.now()
+            const g = recognize(a.slot < 2 ? dehook(draft.pts, draft.size) : draft.pts, p.assist)
+            setGhost(g.kind === 'free' ? null : g.pts)
+            if (g.kind !== ghostKind) { const before = ghostKind; ghostKind = g.kind; if (g.kind !== 'free') setStatus(`Assistant : ${g.label}. Relâche pour l'obtenir.`); else if (before) setStatus('Assistant : courbe libre.') }
+          }
         }
       } else if (draft && a.tool === 'prim') { draft.pts[1] = cur; showDraft() }
       else if (a.tool === 'grab' && a.obj) {
@@ -442,7 +491,8 @@ export function SpatialStudio() {
 
     const end = () => {
       const a = act!; act = null
-      const d = draft; draft = null; showDraft()
+      const d = draft, hinted = ghostKind !== '' && ghostKind !== 'free'; draft = null; showDraft(); setGhost(null); ghostKind = ''
+      let shaped: Guess | null = null
       if (d) {
         // À la main, les derniers points sont ceux des doigts qui s'écartent (la pince ne se déclare ouverte
         // qu'après 90 ms) : on les retire, sinon chaque trait finit par un crochet.
@@ -452,13 +502,28 @@ export function SpatialStudio() {
           while (n > 2 && a.ts[n - 1] > cut) n--
           d.pts.length = n; if (d.nrm) d.nrm.length = n
         }
-        const soften = Math.round(paramsRef.current.smooth * 3)
-        if (soften && d.kind === 'stroke' && d.pts.length > 3 && a.ts.length >= d.pts.length) d.pts = relax(d.pts, soften)
+        const pa = paramsRef.current, soften = Math.round(pa.smooth * 3)
+        const helped = !!pa.assist && d.kind !== 'surface' && d.kind !== 'prim' && (a.tool === 'revolve' || (a.tool === 'stroke' && !pa.straight)) && d.pts.length >= 4
+        // à la main, ce qui reste du crochet de début ou de fin s'en va, assistant ou pas
+        if (a.slot < 2 && (a.tool === 'stroke' || a.tool === 'revolve') && !pa.straight && d.kind !== 'surface') { const cut = dehook(d.pts, d.size), from = d.pts.indexOf(cut[0]); if (d.nrm) d.nrm = d.nrm.slice(from, from + cut.length); d.pts = cut }
+        if (helped) {
+          // l'assistant : la forme voulue (droite, arc, cercle, polygone) ou la courbe nettoyée
+          const g = recognize(d.pts, pa.assist as 1 | 2), tol = 0.02 * visW() * k
+          const hooked = g.closed ? { pts: g.pts, snapped: 0 } : snapEnds(g.pts, anchors(), tol)
+          const fitted: Guess = { ...g, pts: hooked.pts }
+          if (g.kind === 'free' || a.tool === 'revolve') { const n0 = d.nrm; d.pts = fitted.pts; if (n0) d.nrm = fitted.pts.map((_, i) => n0[Math.min(i, n0.length - 1)]); if (a.tool === 'revolve' && g.kind !== 'free') setStatus(`Assistant : profil en ${g.label}.`); else if (hinted) setStatus(g.closed ? 'Assistant : courbe libre, boucle refermée.' : 'Assistant : courbe libre, gardée telle que dessinée.') }
+          else shaped = fitted
+        } else if (soften && d.kind === 'stroke' && d.pts.length > 3 && a.ts.length >= d.pts.length) d.pts = relax(d.pts, soften)
         if (a.tool === 'stroke') {
           // à la main, un trait plus court que deux fois son épaisseur est une pince involontaire : on ne le garde pas
           const len = d.pts.reduce((e, q, i) => (i ? e + d3(q, d.pts[i - 1]) : 0), 0)
           if (a.slot < 2 && len < d.size * 4) { setStatus('Pince trop brève : rien de tracé.'); return }
           if (d.pts.length > 2) thin(d, d.size * 0.25); commit(d)
+          if (shaped) {   // le trait d'origine est posé, puis remplacé : un « Annuler » le rend tel qu'il a été dessiné
+            pushHistory(); const n0 = d.nrm?.[0]
+            d.pts = shaped.pts; if (n0) d.nrm = shaped.pts.map(() => n0)
+            refresh(d); autosave(); setStatus(`Assistant : ${shaped.label}. « Annuler » rend ton trait d'origine.`)
+          }
         }
         else if (a.tool === 'revolve') { thin(d, 0.004 * k); if (d.pts.length >= 2) commit(d); else setStatus('Profil trop court : pince et déplace la main pour tracer le profil.') }
         else if (a.tool === 'prim') { if (d3(d.pts[0], d.pts[1]) > 0.03 * k) commit(d); else setStatus('Volume trop petit : pince, écarte la main, puis relâche.') }
@@ -679,7 +744,7 @@ export function SpatialStudio() {
       if ((e.ctrlKey || e.metaKey) && z === 'z') { e.preventDefault(); send(e.shiftKey ? 'redo' : 'undo') }
       else if ((e.ctrlKey || e.metaKey) && z === 'y') { e.preventDefault(); send('redo') }
       else if (e.key === 'Delete' || e.key === 'Backspace') send('delete')
-      else if (e.key === 'Escape') { if (act) { act = null; draft = null; showDraft() } setRail(null); select(null) }
+      else if (e.key === 'Escape') { if (act) { act = null; draft = null; showDraft(); setGhost(null); ghostKind = '' } setRail(null); select(null) }
       else if (/^[1-8]$/.test(e.key)) setTool(TOOLS[+e.key - 1].id)
       else if (z === 'f') send('plane', 'front'); else if (z === 'd') send('plane', 'top'); else if (z === 'c') send('plane', 'side')
       else if (e.key === '+' || e.key === '=') send('zoom', 1.25); else if (e.key === '-') send('zoom', 0.8); else if (e.key === '0') send('recenter')
@@ -687,7 +752,7 @@ export function SpatialStudio() {
     }
     window.addEventListener('keydown', onKey)
 
-    if (import.meta.env.DEV) (window as any).__spatial = { world, slots }   // pour les essais automatisés
+    if (import.meta.env.DEV) (window as any).__spatial = { world, slots, get objs() { return objs } }   // pour les essais automatisés
     const init = async () => {
       syncAll(); loop()   // la scène tourne tout de suite : souris et Leap Motion n'attendent pas la caméra
       setStatus('Prêt à la souris. Caméra en cours de démarrage…')
@@ -823,6 +888,7 @@ export function SpatialStudio() {
           <label style={chk}><input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> Aimanter à la grille</label>
           {snap && <Field label={`Pas de la grille — ${snapStep}`}><input type="range" min={0.05} max={0.5} step={0.05} value={snapStep} onChange={(e) => setSnapStep(+e.target.value)} style={rng} /></Field>}
           <Field label={`Lissage du tracé — ${Math.round(smooth * 100)} %`}><input type="range" min={0} max={1} step={0.05} value={smooth} onChange={(e) => setSmooth(+e.target.value)} style={rng} /></Field>
+          <Field label="Assistant de tracé"><select aria-label="Assistant de tracé" value={assist} onChange={(e) => setAssist(+e.target.value as 0 | 1 | 2)} style={sel}><option value={0}>Éteint (trait brut)</option><option value={1}>Léger : droites, arcs, cercles, polygones nets</option><option value={2}>Fort : redresse davantage</option></select></Field>
           <label style={chk}><input type="checkbox" checked={flat} onChange={(e) => setFlat(e.target.checked)} /> Dessiner à plat sur le plan (plus précis)</label>
           {!flat && <Field label={`Profondeur de la main — ×${depthGain.toFixed(1)}`}><input type="range" min={0} max={2.5} step={0.1} value={depthGain} onChange={(e) => setDepthGain(+e.target.value)} style={rng} /></Field>}
 
