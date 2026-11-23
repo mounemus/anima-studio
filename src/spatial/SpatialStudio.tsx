@@ -25,6 +25,8 @@ import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import { pollHands, handClock, autoConnectLeap, leapWidthPerMm, isPinching, type LeapHand, type HandFrame } from '../senses/Leap'
 import { recognize, dehook, snapEnds, pathLen, handScale, depthFromScale, deadzone, type Guess } from './assist'
 import { devicePose, angleDiff, twoFinger, pressureScale } from './tablet'
+import { hostLink, type Link as RemoteLink, type LinkState } from '../remote/link'
+import { parse as parseRemote, type Msg as RemoteMsg } from '../remote/protocol'
 import { LeapToggle } from '../ui/LeapToggle'
 import { buildGeometry, makeMaterial, symMatrices, objMatrix, simplify, relax, bakeForExport, type Obj, type P3, type Kind, type Section, type Prim, type Mat, type Sym } from './build'
 
@@ -171,6 +173,28 @@ export function SpatialStudio() {
   const cmdRef = useRef<Cmd[]>([])
   const send = (type: string, data?: any) => { cmdRef.current.push({ type, data }) }
   useEffect(() => { send('autosave') }, [layers])   // noms, visibilité et verrous des calques font partie du projet
+
+  // ───────── télécommande : une tablette ou un téléphone pilote cette page (tablette de dessin, souris, commande) ─────────
+  const [remote, setRemote] = useState<{ state: LinkState; code?: string; note?: string }>({ state: 'off' })
+  const remoteLink = useRef<RemoteLink | null>(null), remoteIn = useRef<(m: RemoteMsg | 'off') => void>(() => {})
+  const remoteHello = () => remoteLink.current?.send({ t: 'hello', aspect: window.innerWidth / window.innerHeight, tool: paramsRef.current.tool, tools: TOOLS.map(({ id, icon, label }) => ({ id, icon, label })) })
+  const toggleRemote = () => {
+    if (remote.state !== 'off') { remoteLink.current?.close(); return }
+    setRemote({ state: 'waiting' })
+    void hostLink({
+      onCode: (code) => setRemote((r) => ({ ...r, code })),
+      onState: (state, note) => {
+        if (state === 'off') { remoteIn.current('off'); setRemote({ state, note }) } else setRemote((r) => ({ ...r, state }))
+        if (state === 'on') { remoteHello(); setStatus('Tablette reliée : elle pilote le pointeur et la vue de cette page.') }
+      },
+      onMsg: (raw) => { const m = parseRemote(raw); if (m) remoteIn.current(m) },
+    }).then((l) => { remoteLink.current = l })
+  }
+  useEffect(() => {   // la télécommande connaît l'outil en cours et les proportions de cette fenêtre
+    remoteHello(); window.addEventListener('resize', remoteHello)
+    return () => window.removeEventListener('resize', remoteHello)
+  }, [tool])
+  useEffect(() => () => remoteLink.current?.close(), [])
 
   const videoRef = useRef<HTMLVideoElement>(null), mountRef = useRef<HTMLDivElement>(null), overlayRef = useRef<HTMLCanvasElement>(null)
   const fileRef = useRef<HTMLInputElement>(null), imgRef = useRef<HTMLInputElement>(null)
@@ -392,8 +416,8 @@ export function SpatialStudio() {
     const pen = { down: false, pressure: 0, n: 0 }   // pression cumulée du trait en cours
     let two: { a: { x: number; y: number }; b: { x: number; y: number }; spread: number; twist: number; zooming: boolean; turning: boolean; pivot: THREE.Vector3 } | null = null
     let multi = false, dropStroke = false             // geste à plusieurs doigts en cours ; trait à jeter (c'était un toucher ou un début de pincement)
-    const ptrNdc = (e: PointerEvent | WheelEvent) => slots[2].ndc.set((e.clientX / window.innerWidth) * 2 - 1, -((e.clientY / window.innerHeight) * 2 - 1))
-    const startDraw = (e: PointerEvent) => {
+    const ptrNdc = (e: { clientX: number; clientY: number }) => slots[2].ndc.set((e.clientX / window.innerWidth) * 2 - 1, -((e.clientY / window.innerHeight) * 2 - 1))
+    const startDraw = (e: { clientX: number; clientY: number }) => {
       lastPtr = { x: e.clientX, y: e.clientY }; ptrNdc(e); drag = 'draw'
       const s = slots[2]; s.scr = { x: e.clientX, y: e.clientY }
       pointAt(s.ndc, planeZ, s.p); s.cur = s.scr; s.has = true; s.pinch = true
@@ -472,9 +496,9 @@ export function SpatialStudio() {
       stopDraw(false)
     }
     // ───────── gyroscope : le plan de dessin suit l'inclinaison de la tablette ─────────
-    const gy = { has: false, on: false, heading: 0, tilt: 0, last: 0, since: 0, count: -1, pivot: new THREE.Vector3() }
+    const gy = { has: false, on: false, remote: false, heading: 0, tilt: 0, last: 0, since: 0, count: -1, pivot: new THREE.Vector3() }
     const onOrient = (e: DeviceOrientationEvent) => {
-      if (e.alpha == null || e.beta == null || e.gamma == null) return
+      if (gy.remote || e.alpha == null || e.beta == null || e.gamma == null) return   // la télécommande, si elle envoie sa pose, a la main
       const pose = devicePose(e.alpha, e.beta, e.gamma, screen.orientation?.angle ?? 0)
       gy.heading = pose.heading; gy.tilt = pose.tilt; gy.has = true
     }
@@ -482,7 +506,7 @@ export function SpatialStudio() {
     /** À chaque image : la vue glisse vers la pose de la tablette. À plat = vue de dessus, debout = vue de face ;
      *  se tourner avec elle fait tourner autour du dessin. Rien ne bouge pendant qu'on trace ou qu'on manie la vue. */
     const followDevice = (p: typeof P, now: number) => {
-      if (!p.gyro) { gy.on = false; gy.since = 0; return }
+      if (!p.gyro && !gy.remote) { gy.on = false; gy.since = 0; return }
       if (!gy.since) gy.since = now
       if (!gy.has) { if (now - gy.since > 2500) { setGyro(false); setStatus("Aucune mesure du gyroscope : cet appareil n'en a pas, ou le navigateur ne le laisse pas lire.") } return }
       if (!gy.on) { gy.on = true; gy.last = gy.heading; gy.count = -1 }                 // le cap de départ sert de repère
@@ -491,6 +515,32 @@ export function SpatialStudio() {
       const up = Y_AXIS.clone().applyQuaternion(world.quaternion), dTilt = gy.tilt - Math.atan2(up.z, up.y), dYaw = -angleDiff(gy.heading, gy.last)
       if (Math.abs(dYaw) < 0.002 && Math.abs(dTilt) < 0.002) return                    // la main qui tient la tablette tremble : on ne fait pas vibrer la vue
       orbitBy(dYaw * 0.22, dTilt * 0.22, gy.pivot); gy.last += angleDiff(gy.heading, gy.last) * 0.22   // un cinquième du chemin par image : pas de saut
+    }
+    // ───────── télécommande : la tablette ou le téléphone pilote la case 2, comme la souris et le stylet ─────────
+    const rem = { down: false, hover: false, navAt: 0, pivot: new THREE.Vector3() }
+    const remAt = (m: { x: number; y: number }) => ({ clientX: m.x * window.innerWidth, clientY: m.y * window.innerHeight })
+    const remPoint = (m: { x: number; y: number }) => { const e = remAt(m); ptrNdc(e); slots[2].scr = { x: e.clientX, y: e.clientY } }
+    const remUp = (drop: boolean) => { if (!rem.down) return; rem.down = false; pen.down = false; stopDraw(drop) }
+    remoteIn.current = (m) => {
+      if (m === 'off') { remUp(false); if (rem.hover) { rem.hover = false; slots[2].has = false } gy.remote = false; gy.has = false; return }
+      if (m.t === 'ptr') {
+        if (m.d && !rem.down) { rem.down = true; pen.down = m.p >= 0; pen.pressure = Math.max(0, m.p); pen.n = 1; startDraw(remAt(m)) }
+        else if (m.d) { remPoint(m); if (m.p >= 0) { pen.pressure += m.p; pen.n++ } }
+        else { remUp(m.c); remPoint(m); rem.hover = true }             // levé : le curseur reste visible là où pointe la télécommande
+      } else if (m.t === 'tap') {
+        remPoint(m); const o = pick(slots[2]); select(o ? o.id : null)
+        setStatus(o ? 'Objet choisi : ses points sont affichés, le panneau peut lui appliquer les réglages ou le supprimer.' : 'Rien sous le pointeur.')
+      } else if (m.t === 'nav') {
+        const now = performance.now(); if (now - rem.navAt > 300) rem.pivot = pivotOf(); rem.navAt = now   // un pivot par geste
+        const w = visW(); world.position.x += m.dx * w; world.position.y -= m.dy * w
+        if (m.s !== 1) zoomAt(m.s, m.cx * window.innerWidth, m.cy * window.innerHeight)
+        if (m.r || m.yaw || m.pitch) orbitBy(m.yaw - m.r, m.pitch, rem.pivot)
+        viewGoal = null; if (m.end) settle(rem.pivot)
+      } else if (m.t === 'gyro') {
+        gy.remote = m.on; gy.has = m.on; if (m.on) { gy.heading = m.h; gy.tilt = m.tilt }
+      } else if (m.name === 'tool') { if (TOOLS.some((t) => t.id === m.data)) setTool(m.data as Tool) }
+      else if (m.name === 'plane') { if (PLANES.some((pl) => pl.id === m.data)) send('plane', m.data) }
+      else send(m.name, 'data' in m ? m.data : undefined)
     }
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
@@ -832,7 +882,8 @@ export function SpatialStudio() {
       if (res) readHands(res, p, now)
       for (let i = 0; i < 2; i++) if (slots[i].has && now - slots[i].seen > 350) dropSlot(slots[i])
       if (lastHand >= 0 && !slots[lastHand].has) lastHand = -1   // la main qui dessinait est sortie du champ : la palette peut s'ouvrir sur n'importe laquelle
-      if (drag === 'draw') { pointAt(slots[2].ndc, planeZ, slots[2].p); slots[2].cur = slots[2].scr }
+      if (rem.hover && !drag) slots[2].has = true                    // télécommande en survol : son curseur se montre
+      if (drag === 'draw' || rem.hover) { pointAt(slots[2].ndc, planeZ, slots[2].p); slots[2].cur = slots[2].scr }
 
       if (viewGoal) {   // glisser vers la vue demandée (position, orientation et zoom), puis s'y poser exactement
         const gq = new THREE.Quaternion().fromArray(viewGoal.quat)
@@ -862,7 +913,7 @@ export function SpatialStudio() {
       const r = Math.max(0.012, p.size * 0.004)
       let lead: Slot | null = null
       slots.forEach((s, i) => {
-        const c = cursors[i]; c.visible = s.has && (i < 2 || drag === 'draw')
+        const c = cursors[i]; c.visible = s.has && (i < 2 || drag === 'draw' || rem.hover)
         if (!c.visible) return
         if (!lead) lead = s
         c.position.copy(s.p); c.scale.setScalar(s.fist >= FIST_MS ? 0.05 : r)
@@ -1044,7 +1095,12 @@ export function SpatialStudio() {
           <span style={{ width: 1, alignSelf: 'stretch', background: 'rgba(255,255,255,0.2)', margin: '0 2px' }} />
           <button onClick={() => void toggleGyro()} aria-pressed={gyro} title="Gyroscope : le plan de dessin suit l'inclinaison de la tablette (à plat = dessus, debout = face)" style={{ ...hudBtn, borderColor: gyro ? '#ffd200' : 'rgba(255,255,255,0.2)', color: gyro ? '#ffd200' : '#fff' }}>📱 Gyro</button>
           <button onClick={() => setFingerDraws((v) => !v)} aria-pressed={!fingerDraws} title="Ce que fait un doigt seul : dessiner, ou tourner la vue (le stylet dessine toujours)" style={hudBtn}>{fingerDraws ? '☝️ dessine' : '☝️ tourne'}</button>
+          <Link to="/remote" title="Faire de cet appareil la tablette de dessin, la souris ou la commande de DigiArt ouvert sur un PC" style={{ ...hudBtn, textDecoration: 'none' }}>🎮 Piloter le PC</Link>
         </>}
+        <button onClick={toggleRemote} aria-pressed={remote.state !== 'off'} title="Télécommande : une tablette ou un téléphone sert de tablette de dessin, de souris ou de commande pour cette page" style={{ ...hudBtn, borderColor: remote.state === 'on' ? '#00f0ff' : 'rgba(255,255,255,0.2)', color: remote.state === 'on' ? '#00f0ff' : '#fff' }}>📲 {remote.state === 'on' ? 'Tablette reliée' : remote.state === 'waiting' ? 'Annuler le code' : 'Télécommande'}</button>
+        {(remote.state === 'waiting' || remote.note) && <div role="status" style={{ flexBasis: '100%', textAlign: 'right', fontSize: 12, lineHeight: 1.45, color: remote.state === 'waiting' ? '#ddd' : '#ffd200' }}>
+          {remote.state !== 'waiting' ? remote.note : !remote.code ? 'Demande du code…' : <>Code <b style={{ color: '#00f0ff', fontSize: 20, letterSpacing: 3, fontVariantNumeric: 'tabular-nums' }}>{remote.code.slice(0, 3)} {remote.code.slice(3)}</b><br />Sur la tablette ou le téléphone : ouvre DigiArt, puis l'adresse <b>/remote</b> (ou « 🎮 Piloter le PC » dans l'Esquisse spatiale), et tape ce code. Valable 5 minutes, même Wi-Fi conseillé.</>}
+        </div>}
       </div>
 
       {!panelOpen && <button onClick={() => setPanelOpen(true)} aria-label="Ouvrir le panneau" style={{ position: 'absolute', top: 16, left: 16, zIndex: 11, ...sel, width: 'auto', padding: '8px 12px' }}>☰</button>}

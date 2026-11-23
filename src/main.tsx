@@ -10,6 +10,7 @@ import { PotteryStudio } from './pottery/PotteryStudio'
 import { SculptStudio } from './sculpt/SculptStudio'
 import { SpatialStudio } from './spatial/SpatialStudio'
 import { MusicStudio } from './music/MusicStudio'
+import { RemotePage } from './remote/RemotePage'
 import { registerServiceWorker } from './ui/install'
 import { MorphogenesisStudio } from './morpho/MorphogenesisStudio'
 import { ErrorBoundary } from './ui/ErrorBoundary'
@@ -29,6 +30,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/sculpt" element={<FrontGate><SculptStudio /></FrontGate>} />
           <Route path="/spatial" element={<FrontGate><SpatialStudio /></FrontGate>} />
           <Route path="/music" element={<FrontGate><MusicStudio /></FrontGate>} />
+          <Route path="/remote" element={<FrontGate><RemotePage /></FrontGate>} />
           <Route path="/morpho"element={<FrontGate><MorphogenesisStudio /></FrontGate>} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
