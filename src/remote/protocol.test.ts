@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { parse, parseHello, padRect, padToView, moveCursor } from './protocol'
+import { addressKinds } from './link'
+
+describe('liaison : adresses annoncées par un appareil', () => {
+  const line = (addr: string, typ: string) => `a=candidate:1 1 udp 2113937151 ${addr} 54321 typ ${typ} generation 0`
+  it('distingue l\'adresse locale en clair, l\'adresse cachée derrière un nom, et l\'adresse publique', () => {
+    const sdp = ['v=0', line('192.168.2.44', 'host'), line('3f1c9a52-7b1e-4c0d-9d8e-2f0a6b7c8d9e.local', 'host'), line('203.0.113.7', 'srflx raddr 0.0.0.0 rport 0'), 'a=ice-ufrag:abcd'].join('\r\n')
+    expect(addressKinds(sdp)).toEqual({ ip: 1, name: 1, pub: 1 })
+    expect(addressKinds('v=0\r\n')).toEqual({ ip: 0, name: 0, pub: 0 })
+  })
+})
 
 describe('télécommande : messages reçus par le PC', () => {
   it('pointeur : remis dans le cadre, pression bornée, sans stylet = −1', () => {

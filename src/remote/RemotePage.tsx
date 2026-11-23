@@ -179,6 +179,9 @@ export function RemotePage() {
           Cet appareil devient la <b>tablette de dessin</b>, la <b>souris</b> ou la <b>commande</b> de l'Esquisse spatiale ouverte sur ton PC.<br />
           Sur le PC : ouvre l'Esquisse spatiale, clique <b>📲 Télécommande</b>, puis tape ici le code à six chiffres qui s'affiche.
         </p>
+        <p style={{ margin: 0, fontSize: 12, lineHeight: 1.45, color: '#8d8d99' }}>
+          Si le navigateur demande l'accès au <b>micro</b>, accepte : rien n'est écouté ni enregistré. Sans cet accord, il cache l'adresse de cet appareil sur le Wi-Fi et le PC ne peut pas le trouver.
+        </p>
         <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" aria-label="Code à six chiffres affiché sur le PC" placeholder="000000"
           style={{ fontSize: 34, letterSpacing: 8, textAlign: 'center', padding: 12, borderRadius: 12, border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.08)', color: '#fff', fontVariantNumeric: 'tabular-nums' }} />
         <button type="submit" disabled={code.length !== 6 || state === 'waiting'} style={{ ...btn, padding: 14, fontSize: 16, background: '#00f0ff', color: '#04121a', opacity: code.length === 6 && state !== 'waiting' ? 1 : 0.45 }}>
