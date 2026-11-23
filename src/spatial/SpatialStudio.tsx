@@ -27,6 +27,7 @@ import { recognize, dehook, snapEnds, pathLen, handScale, depthFromScale, deadzo
 import { devicePose, angleDiff, twoFinger, pressureScale } from './tablet'
 import { hostLink, type Link as RemoteLink, type LinkState } from '../remote/link'
 import { parse as parseRemote, type Msg as RemoteMsg } from '../remote/protocol'
+import { Qr, pairUrl } from '../remote/Qr'
 import { LeapToggle } from '../ui/LeapToggle'
 import { buildGeometry, makeMaterial, symMatrices, objMatrix, simplify, relax, bakeForExport, type Obj, type P3, type Kind, type Section, type Prim, type Mat, type Sym } from './build'
 
@@ -1099,7 +1100,10 @@ export function SpatialStudio() {
         </>}
         <button onClick={toggleRemote} aria-pressed={remote.state !== 'off'} title="Télécommande : une tablette ou un téléphone sert de tablette de dessin, de souris ou de commande pour cette page" style={{ ...hudBtn, borderColor: remote.state === 'on' ? '#00f0ff' : 'rgba(255,255,255,0.2)', color: remote.state === 'on' ? '#00f0ff' : '#fff' }}>📲 {remote.state === 'on' ? 'Tablette reliée' : remote.state === 'waiting' ? 'Annuler le code' : 'Télécommande'}</button>
         {(remote.state === 'waiting' || remote.note) && <div role="status" style={{ flexBasis: '100%', textAlign: 'right', fontSize: 12, lineHeight: 1.45, color: remote.state === 'waiting' ? '#ddd' : '#ffd200' }}>
-          {remote.state !== 'waiting' ? remote.note : !remote.code ? 'Demande du code…' : <>Code <b style={{ color: '#00f0ff', fontSize: 20, letterSpacing: 3, fontVariantNumeric: 'tabular-nums' }}>{remote.code.slice(0, 3)} {remote.code.slice(3)}</b><br />Sur la tablette ou le téléphone : ouvre DigiArt, puis l'adresse <b>/remote</b> (ou « 🎮 Piloter le PC » dans l'Esquisse spatiale), et tape ce code. Valable 5 minutes, même Wi-Fi conseillé.</>}
+          {remote.state !== 'waiting' ? remote.note : !remote.code ? 'Demande du code…' : <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'flex-end', textAlign: 'left' }}>
+            <div><b>Scanne ce QR code</b> avec la tablette ou le téléphone : la liaison se fait toute seule.<br />Sinon, ouvre l'adresse <b>/remote</b> et tape le code <b style={{ color: '#00f0ff', fontSize: 20, letterSpacing: 3, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{remote.code.slice(0, 3)} {remote.code.slice(3)}</b><br />Valable 5 minutes.</div>
+            <Qr text={pairUrl(location.origin, remote.code)} />
+          </div>}
         </div>}
       </div>
 

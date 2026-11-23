@@ -8,6 +8,7 @@ import { Link } from 'react-router-dom'
 import { joinLink, type Link as Wire, type LinkState } from './link'
 import { parseHello, padRect, padToView, moveCursor, type Hello, type Msg } from './protocol'
 import { devicePose, twoFinger } from '../spatial/tablet'
+import { codeFromSearch } from './Qr'
 
 type Mode = 'tablet' | 'mouse' | 'pad'
 type Hold = '' | 'draw' | 'orbit'
@@ -23,7 +24,7 @@ const STEP = Math.PI / 12
 export function RemotePage() {
   const [state, setState] = useState<LinkState>('off')
   const [note, setNote] = useState('')
-  const [code, setCode] = useState('')
+  const [code, setCode] = useState(() => codeFromSearch(location.search))   // rempli par le QR code du PC
   const [mode, setMode] = useState<Mode>('tablet')
   const [hello, setHello] = useState<Hello | null>(null)
   const [gyro, setGyro] = useState(false)
@@ -52,6 +53,12 @@ export function RemotePage() {
     })
   }
   useEffect(() => () => wire.current?.close(), [])
+  // arrivé par le QR code : la liaison part toute seule, et le code quitte l'adresse (il ne sert qu'une fois)
+  const scanned = useRef(false)
+  useEffect(() => {
+    if (scanned.current || code.length !== 6) return
+    scanned.current = true; history.replaceState(null, '', location.pathname); void join()
+  }, [])
   // l'écran ne se met pas en veille pendant qu'on pilote le PC
   useEffect(() => {
     if (state !== 'on') return
@@ -177,7 +184,7 @@ export function RemotePage() {
         <strong style={{ color: '#00f0ff', textTransform: 'uppercase', letterSpacing: 1, fontSize: 16 }}>📲 Télécommande</strong>
         <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: '#bbb' }}>
           Cet appareil devient la <b>tablette de dessin</b>, la <b>souris</b> ou la <b>commande</b> de l'Esquisse spatiale ouverte sur ton PC.<br />
-          Sur le PC : ouvre l'Esquisse spatiale, clique <b>📲 Télécommande</b>, puis tape ici le code à six chiffres qui s'affiche.
+          Sur le PC : ouvre l'Esquisse spatiale, clique <b>📲 Télécommande</b>, puis scanne le QR code qui s'affiche, ou tape ici son code à six chiffres.
         </p>
         <p style={{ margin: 0, fontSize: 12, lineHeight: 1.45, color: '#8d8d99' }}>
           Si le navigateur demande l'accès au <b>micro</b>, accepte : rien n'est écouté ni enregistré. Sans cet accord, il cache l'adresse de cet appareil sur le Wi-Fi et le PC ne peut pas le trouver.

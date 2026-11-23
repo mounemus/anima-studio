@@ -1,13 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { parse, parseHello, padRect, padToView, moveCursor } from './protocol'
 import { addressKinds } from './link'
+import { pairUrl, codeFromSearch } from './Qr'
 
 describe('liaison : adresses annoncées par un appareil', () => {
   const line = (addr: string, typ: string) => `a=candidate:1 1 udp 2113937151 ${addr} 54321 typ ${typ} generation 0`
   it('distingue l\'adresse locale en clair, l\'adresse cachée derrière un nom, et l\'adresse publique', () => {
-    const sdp = ['v=0', line('192.168.2.44', 'host'), line('3f1c9a52-7b1e-4c0d-9d8e-2f0a6b7c8d9e.local', 'host'), line('203.0.113.7', 'srflx raddr 0.0.0.0 rport 0'), 'a=ice-ufrag:abcd'].join('\r\n')
-    expect(addressKinds(sdp)).toEqual({ ip: 1, name: 1, pub: 1 })
-    expect(addressKinds('v=0\r\n')).toEqual({ ip: 0, name: 0, pub: 0 })
+    const sdp = ['v=0', line('192.168.2.44', 'host'), line('192.168.2.44', 'host tcptype passive'), line('3f1c9a52-7b1e-4c0d-9d8e-2f0a6b7c8d9e.local', 'host'), line('203.0.113.7', 'srflx raddr 0.0.0.0 rport 0'), line('198.51.100.9', 'relay raddr 0.0.0.0 rport 0'), 'a=ice-ufrag:abcd'].join('\r\n')
+    expect(addressKinds(sdp)).toEqual({ ip: 2, name: 1, pub: 1, relay: 1, local: ['192.168.2.44'] })
+    expect(addressKinds('v=0\r\n')).toEqual({ ip: 0, name: 0, pub: 0, relay: 0, local: [] })
+  })
+  it('QR code : l\'adresse porte le code, et la page ne le relit que s\'il a six chiffres', () => {
+    const url = pairUrl('https://exemple.test', '048213')
+    expect(url).toBe('https://exemple.test/remote?code=048213')
+    expect(codeFromSearch(new URL(url).search)).toBe('048213')
+    for (const bad of ['', '?code=12345', '?code=1234567', '?code=12ab56', '?autre=123456']) expect(codeFromSearch(bad)).toBe('')
   })
 })
 
@@ -104,9 +111,41 @@ describe('appairage : échange de départ par le serveur', () => {
     expect((await call({ op: 'take', code: '12ab56' })).status).toBe(400)
     expect((await call({ op: 'take', code: '000000' })).status).toBe(404)
     expect((await call({ op: 'offer', sdp: '<script>' })).status).toBe(400)
-    expect((await call({ op: 'offer', sdp: 'v=0' + 'a'.repeat(9000) })).status).toBe(400)
+    expect((await call({ op: 'offer', sdp: 'v=0' + 'a'.repeat(21_000) })).status).toBe(400)
+    expect((await call({ op: 'offer', sdp: 'v=0' + 'a'.repeat(30_000) })).status).toBe(413)
     expect((await call({ op: 'answer', code: '123456', sdp: 42 })).status).toBe(400)
     expect((await call({ op: 'danse', code: '123456' })).status).toBe(400)
     expect((await call(null, 'GET')).status).toBe(405)
+  })
+
+  describe('serveurs de liaison', () => {
+    const P = (globalThis as any).process
+    const cloudflare = { iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }, { urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turn:turn.cloudflare.com:53?transport=udp', 'turns:turn.cloudflare.com:443?transport=tcp'], username: 'u', credential: 'c' }] }
+    const withKeys = async (fetchImpl: any, run: () => Promise<void>) => {
+      P.env.TURN_KEY_ID = 'id'; P.env.TURN_KEY_API_TOKEN = 'jeton'
+      const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(fetchImpl)
+      try { await run() } finally { delete P.env.TURN_KEY_ID; delete P.env.TURN_KEY_API_TOKEN; spy.mockRestore() }
+      return spy
+    }
+    it('sans relais configuré : le serveur public de découverte, et `relay` faux', async () => {
+      const { json } = await call({ op: 'ice' })
+      expect(json.relay).toBe(false); expect(json.iceServers).toEqual([{ urls: ['stun:stun.l.google.com:19302'] }])
+    })
+    it('relais configuré : identifiants à durée limitée demandés avec la clé, port 53 retiré, la clé ne sort pas', async () => {
+      let asked: any = null
+      await withKeys(async (url: string, init: any) => { asked = { url, auth: init.headers.authorization, body: JSON.parse(init.body) }; return new Response(JSON.stringify(cloudflare), { status: 201 }) }, async () => {
+        const { json } = await call({ op: 'ice' })
+        expect(json.relay).toBe(true)
+        expect(json.iceServers[1]).toEqual({ urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turns:turn.cloudflare.com:443?transport=tcp'], username: 'u', credential: 'c' })
+        expect(JSON.stringify(json)).not.toContain('jeton')
+      })
+      expect(asked.url).toBe('https://rtc.live.cloudflare.com/v1/turn/keys/id/credentials/generate-ice-servers')
+      expect(asked.auth).toBe('Bearer jeton'); expect(asked.body.ttl).toBeGreaterThan(3600)
+    })
+    it('relais en panne ou clé refusée : on retombe sur la liaison directe, sans erreur pour l\'utilisateur', async () => {
+      for (const impl of [async () => new Response('non', { status: 401 }), async () => { throw new Error('réseau') }, async () => new Response(JSON.stringify({ iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }] }), { status: 201 })]) {
+        await withKeys(impl, async () => { const { status, json } = await call({ op: 'ice' }); expect(status).toBe(200); expect(json.relay).toBe(false); expect(json.iceServers[0].urls[0]).toContain('stun:') })
+      }
+    })
   })
 })

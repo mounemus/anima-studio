@@ -1,16 +1,14 @@
 /**
- * Liaison directe entre la tablette (ou le téléphone) et le PC : un canal WebRTC, ouvert après un échange de
- * départ par `/api/pair` sous un code à six chiffres. Une fois le canal ouvert, plus rien ne passe par le serveur.
+ * Liaison entre la tablette (ou le téléphone) et le PC : un canal WebRTC, ouvert après un échange de départ par
+ * `/api/pair` sous un code à six chiffres. Les deux appareils se parlent en direct quand le réseau le permet, sinon
+ * à travers un relais si le serveur en distribue un (voir `api/pair.ts`). Le contenu est chiffré de bout en bout.
  */
 
 export type LinkState = 'waiting' | 'on' | 'off'
 export interface Link { send(m: object): void; close(): void }
 interface Handlers { onState(s: LinkState, note?: string): void; onMsg(raw: string): void }
 
-// ponytail: un seul serveur STUN public, pas de relais TURN. Deux appareils sur le même Wi-Fi se trouvent par
-// leurs adresses locales ; entre deux réseaux différents (4G, pare-feu d'entreprise) non. Ajouter un TURN si le
-// besoin se présente.
-const ICE: RTCConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+const STUN: RTCConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 async function signal(body: object): Promise<any> {
@@ -20,28 +18,36 @@ async function signal(body: object): Promise<any> {
   return j
 }
 
-/** L'offre part d'un bloc, une fois les adresses réseau trouvées (au plus 3 s : un STUN injoignable ne bloque pas). */
+/** Les serveurs de liaison distribués par le serveur, et s'il y a un relais parmi eux. */
+async function network(): Promise<{ config: RTCConfiguration; relay: boolean }> {
+  const j = await signal({ op: 'ice' })
+  return Array.isArray(j.iceServers) && j.iceServers.length ? { config: { iceServers: j.iceServers }, relay: j.relay === true } : { config: STUN, relay: false }
+}
+
+/** L'offre part d'un bloc, une fois les adresses réseau trouvées (au plus 4 s : un serveur injoignable ne bloque pas). */
 const gathered = (pc: RTCPeerConnection) => new Promise<void>((res) => {
   if (pc.iceGatheringState === 'complete') return res()
-  const t = setTimeout(res, 3000)
+  const t = setTimeout(res, 4000)
   pc.addEventListener('icegatheringstatechange', () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); res() } })
 })
 
-/** Les adresses qu'une description annonce : locales en clair, locales cachées derrière un nom « .local », publiques. */
+/** Les adresses qu'une description annonce : locales en clair (avec leur liste, sans doublon), locales cachées
+ *  derrière un nom « .local », publiques, et relais. */
 export function addressKinds(sdp: string) {
-  const k = { ip: 0, name: 0, pub: 0 }
+  const k = { ip: 0, name: 0, pub: 0, relay: 0, local: [] as string[] }
   for (const l of sdp.split(/\r?\n/)) {
     if (!l.startsWith('a=candidate')) continue
     const p = l.split(' ')
-    if (p[7] !== 'host') k.pub++; else if (p[4].endsWith('.local')) k.name++; else k.ip++
+    if (p[7] === 'relay') k.relay++
+    else if (p[7] !== 'host') k.pub++
+    else if (p[4].endsWith('.local')) k.name++
+    else { k.ip++; if (!k.local.includes(p[4])) k.local.push(p[4]) }
   }
   return k
 }
 
 /** Sans accès à la caméra ou au micro, Chrome cache l'adresse locale de l'appareil derrière un nom « .local » que
- *  l'autre appareil ne sait pas toujours retrouver. Or bien des routeurs ne laissent pas deux appareils du même Wi-Fi
- *  se joindre par leur adresse publique, et le pare-feu d'un PC ne laisse entrer que les réponses à ce qu'il a
- *  envoyé : il faut qu'un des deux connaisse l'adresse locale de l'autre. L'accès accordé, elle est donnée en clair.
+ *  l'autre appareil ne sait pas toujours retrouver. L'accès accordé, elle est donnée en clair.
  *  Le micro n'est pas écouté : il est relâché aussitôt. */
 async function revealLocalAddress(): Promise<boolean> {
   try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); s.getTracks().forEach((t) => t.stop()); return true }
@@ -56,16 +62,18 @@ async function tally(pc: RTCPeerConnection, t: Tally) {
   t.sent = Math.max(t.sent, sent); t.got = Math.max(t.got, got); t.heard = Math.max(t.heard, heard)
 }
 
-/** Pourquoi la liaison a échoué, en une ligne à recopier : adresses annoncées de chaque côté, essais partis et revenus. */
-function diagnose(pc: RTCPeerConnection, { sent, got, heard }: Tally): string {
-  const f = (sdp?: string) => { const k = addressKinds(sdp ?? ''); return `ip${k.ip} nom${k.name} pub${k.pub}` }
-  return `[ici ${f(pc.localDescription?.sdp)} · en face ${f(pc.remoteDescription?.sdp)} · ${sent} envois, ${got} réponses, ${heard} reçus]`
+/** Pourquoi la liaison a échoué, en une ligne à recopier : adresses annoncées de chaque côté, essais partis et revenus,
+ *  état de l'autorisation « appareils du réseau local » du navigateur. */
+function diagnose(pc: RTCPeerConnection, { sent, got, heard }: Tally, lan: string): string {
+  const f = (sdp?: string) => { const k = addressKinds(sdp ?? ''); return `ip${k.ip}${k.local.length ? ` (${k.local.slice(0, 4).join(', ')})` : ''} nom${k.name} pub${k.pub} relais${k.relay}` }
+  return `[ici ${f(pc.localDescription?.sdp)} · en face ${f(pc.remoteDescription?.sdp)} · ${sent} envois, ${got} réponses, ${heard} reçus · réseau local : ${lan}]`
 }
 
-function wire(pc: RTCPeerConnection, h: Handlers) {
-  let ch: RTCDataChannel | null = null, dead = false
+function wire(pc: RTCPeerConnection, h: Handlers, relay: boolean) {
+  let ch: RTCDataChannel | null = null, dead = false, lan = '?'
   const seen: Tally = { sent: 0, got: 0, heard: 0 }
   const watch = setInterval(() => { if (pc.connectionState === 'connected') clearInterval(watch); else void tally(pc, seen) }, 1500)
+  navigator.permissions?.query({ name: 'local-network' as PermissionName }).then((s) => { lan = s.state }, () => { /* navigateur sans cette autorisation */ })
   const close = (note?: string) => { if (dead) return; dead = true; clearInterval(watch); try { ch?.close() } catch { /* déjà fermé */ } try { pc.close() } catch { /* déjà fermé */ } h.onState('off', note) }
   const attach = (c: RTCDataChannel) => {
     ch = c
@@ -74,32 +82,43 @@ function wire(pc: RTCPeerConnection, h: Handlers) {
     c.onmessage = (e) => { if (typeof e.data === 'string') h.onMsg(e.data) }
   }
   pc.addEventListener('connectionstatechange', () => {
-    if (pc.connectionState === 'failed') close(`Les deux appareils ne se trouvent pas sur le réseau (même Wi-Fi ?). ${diagnose(pc, seen)}`)
+    if (pc.connectionState !== 'failed') return
+    const why = relay ? 'La liaison ne passe ni en direct ni par le relais.' : "Les deux appareils ne se joignent pas en direct sur ce réseau, et aucun relais n'est configuré."
+    close(`${why} ${diagnose(pc, seen, lan)}`)
   })
   const link: Link = { send: (m) => { if (ch?.readyState === 'open') ch.send(JSON.stringify(m)) }, close: () => close() }
   return { link, attach, close, isDead: () => dead }
 }
 
+const NONE: Link = { send() { /* pas de liaison */ }, close() { /* pas de liaison */ } }
+
 /** Côté PC : obtient un code, puis attend la tablette (5 min au plus). */
 export async function hostLink(h: Handlers & { onCode(code: string): void }): Promise<Link> {
-  const pc = new RTCPeerConnection(ICE), w = wire(pc, h)
+  let w: ReturnType<typeof wire> | null = null
   try {
+    const net = await network(), pc = new RTCPeerConnection(net.config)
+    w = wire(pc, h, net.relay)
     w.attach(pc.createDataChannel('digiart'))
     await pc.setLocalDescription(await pc.createOffer()); await gathered(pc)
     const { code } = await signal({ op: 'offer', sdp: pc.localDescription!.sdp })
     if (w.isDead()) return w.link
     h.onCode(code); h.onState('waiting')
+    const live = w
     void (async () => {
       const t0 = Date.now()
-      while (!w.isDead() && Date.now() - t0 < 290_000) {
-        await sleep(1500); if (w.isDead()) return
+      while (!live.isDead() && Date.now() - t0 < 290_000) {
+        await sleep(1500); if (live.isDead()) return
         try { const { answer } = await signal({ op: 'wait', code }); if (answer) { await pc.setRemoteDescription({ type: 'answer', sdp: answer }); return } }
         catch { /* coupure passagère : on réessaie au tour suivant */ }
       }
-      w.close('Code expiré : redemande-en un.')
+      live.close('Code expiré : redemande-en un.')
     })()
-  } catch (e: any) { w.close(e?.message ?? String(e)) }
-  return w.link
+    return w.link
+  } catch (e: any) {
+    const note = e?.message ?? String(e)
+    if (w) w.close(note); else h.onState('off', note)
+    return w?.link ?? NONE
+  }
 }
 
 /** Côté tablette : rejoint le PC avec le code affiché sur son écran. */
@@ -107,23 +126,24 @@ export async function joinLink(code: string, h: Handlers): Promise<Link> {
   h.onState('waiting')
   let w: ReturnType<typeof wire> | null = null
   try {
+    const net = await network()
     const { offer } = await signal({ op: 'take', code })
     const answerTo = async () => {
-      const pc = new RTCPeerConnection(ICE)
+      const pc = new RTCPeerConnection(net.config)
       await pc.setRemoteDescription({ type: 'offer', sdp: offer }); await pc.setLocalDescription(await pc.createAnswer()); await gathered(pc)
       return pc
     }
     let pc = await answerTo()
-    // adresse locale cachée : on demande au navigateur de la donner, puis on refait la réponse avec elle
+    // sans relais, adresse locale cachée : on demande au navigateur de la donner, puis on refait la réponse avec elle
     const k = addressKinds(pc.localDescription!.sdp)
-    if (k.ip === 0 && k.name > 0 && await revealLocalAddress()) { pc.close(); pc = await answerTo() }
-    const live = pc; w = wire(live, h); live.ondatachannel = (e) => w!.attach(e.channel)
+    if (!net.relay && k.ip === 0 && k.name > 0 && await revealLocalAddress()) { pc.close(); pc = await answerTo() }
+    const live = pc, lw = w = wire(live, h, net.relay); live.ondatachannel = (e) => lw.attach(e.channel)
     await signal({ op: 'answer', code, sdp: live.localDescription!.sdp })
-    setTimeout(() => { if (live.connectionState !== 'connected' && live.connectionState !== 'failed') w!.close("Le PC ne répond pas : les deux appareils sont-ils sur le même Wi-Fi ?") }, 25_000)
+    setTimeout(() => { if (live.connectionState !== 'connected' && live.connectionState !== 'failed') lw.close('Le PC ne répond pas : son code est-il toujours affiché ?') }, 30_000)
     return w.link
   } catch (e: any) {
     const note = e?.message ?? String(e)
     if (w) w.close(note); else h.onState('off', note)
-    return w?.link ?? { send() { /* pas de liaison */ }, close() { /* pas de liaison */ } }
+    return w?.link ?? NONE
   }
 }
