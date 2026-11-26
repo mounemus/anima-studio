@@ -37,8 +37,14 @@ const CORNER: [number, number, number][] = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0,
 /** Polygonise a field within [-b,b]³ at `res` cells/axis, iso level `iso`.
  *  Returns a welded, normal-computed BufferGeometry (empty if no surface).
  *  `onProgress(t)` (0→1), when given, is called a few dozen times so a caller in a worker
- *  can report real progress — sampling is ~70 % of the cost, polygonisation the rest. */
-export function marchingCubes(field: Field, res: number, bound: number, iso = 0, onProgress?: (t: number) => void): THREE.BufferGeometry {
+ *  can report real progress — sampling is ~70 % of the cost, polygonisation the rest.
+ *
+ *  `indexed` : share each vertex by the GRID EDGE it sits on, and return an indexed
+ *  geometry. This is exact topology. Welding by distance afterwards (mergeVertices, 1e-4)
+ *  is not : where the surface passes within a tenth of a millimetre of a grid corner it
+ *  fuses the three vertices around that corner, leaving degenerate triangles whose edges
+ *  then count as non-manifold. */
+export function marchingCubes(field: Field, res: number, bound: number, iso = 0, onProgress?: (t: number) => void, indexed = false): THREE.BufferGeometry {
   const N = Math.max(8, Math.min(160, Math.round(res)))
   const step = (bound * 2) / N
   const dim = N + 1
@@ -50,6 +56,7 @@ export function marchingCubes(field: Field, res: number, bound: number, iso = 0,
   const pos: number[] = []
   const vp = new Float32Array(3), corner = new Float32Array(8), cpos: number[][] = []
   const edgeV: (number[] | null)[] = new Array(12)
+  const index: number[] = [], edgeId = new Int32Array(12), seen = new Map<number, number>()
   for (let k = 0; k < N; k++) { if (onProgress && k % tick === 0) onProgress(0.7 + (k / N) * 0.3)
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     let cubeIndex = 0
@@ -57,16 +64,25 @@ export function marchingCubes(field: Field, res: number, bound: number, iso = 0,
     const edges = EDGE_TABLE[cubeIndex]
     if (edges === 0) continue
     for (let e = 0; e < 12; e++) {
-      if (edges & (1 << e)) { const [a, b] = EDGE_CORNER[e]; const va = corner[a], vb = corner[b]; const t = Math.abs(vb - va) < 1e-9 ? 0.5 : (iso - va) / (vb - va); const pa = cpos[a], pb = cpos[b]; edgeV[e] = [pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t] }
+      if (edges & (1 << e)) { const [a, b] = EDGE_CORNER[e]; const va = corner[a], vb = corner[b]; const t = Math.abs(vb - va) < 1e-9 ? 0.5 : (iso - va) / (vb - va); const pa = cpos[a], pb = cpos[b]; edgeV[e] = [pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t]
+        if (indexed) {
+          // arête de grille = (son coin le plus bas, son axe) : un identifiant unique
+          const ca = CORNER[a], cb = CORNER[b]
+          const key = at(i + Math.min(ca[0], cb[0]), j + Math.min(ca[1], cb[1]), k + Math.min(ca[2], cb[2])) * 3 + (ca[0] !== cb[0] ? 0 : ca[1] !== cb[1] ? 1 : 2)
+          let id = seen.get(key)
+          if (id === undefined) { id = pos.length / 3; seen.set(key, id); const v = edgeV[e]!; pos.push(v[0], v[1], v[2]) }
+          edgeId[e] = id
+        } }
       else edgeV[e] = null
     }
     const tri = TRI_TABLE[cubeIndex]
-    for (let t = 0; t < tri.length; t += 3) { const e0 = edgeV[tri[t]]!, e1 = edgeV[tri[t + 1]]!, e2 = edgeV[tri[t + 2]]!; if (e0 && e1 && e2) pos.push(e0[0], e0[1], e0[2], e1[0], e1[1], e1[2], e2[0], e2[1], e2[2]) }
+    for (let t = 0; t < tri.length; t += 3) { const e0 = edgeV[tri[t]]!, e1 = edgeV[tri[t + 1]]!, e2 = edgeV[tri[t + 2]]!; if (!(e0 && e1 && e2)) continue; if (indexed) index.push(edgeId[tri[t]], edgeId[tri[t + 1]], edgeId[tri[t + 2]]); else pos.push(e0[0], e0[1], e0[2], e1[0], e1[1], e1[2], e2[0], e2[1], e2[2]) }
   } }
   onProgress?.(1)
   void vp
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  if (indexed) g.setIndex(index)
   g.computeVertexNormals()
   return g
 }

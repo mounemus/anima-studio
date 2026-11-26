@@ -11,7 +11,9 @@
  */
 /// <reference lib="webworker" />
 import * as THREE from 'three'
-import { buildOrganic, type OrganicParams } from './organic'
+import { organicParts, ORG_BOUND, type OrganicParams } from './organic'
+import { marchingCubes } from '../morpho/marching'
+import { shadeMesh } from './shade'
 import { meshToField } from './meshField'
 import { finishMesh } from './finish'
 import type { Field } from '../morpho/marching'
@@ -36,7 +38,8 @@ self.onmessage = (e: MessageEvent<Req>) => {
       post({ id, error: 'Aucune forme source — sculpte ou importe un objet d\'abord.' }); return
     }
     const base = usesMesh ? 0.45 : 0
-    const raw = buildOrganic(params, (t) => report(base + t * (1 - base)), body)
+    const parts = organicParts(params, body)
+    const raw = marchingCubes(parts.field, Math.max(24, Math.min(160, Math.round(params.res))), ORG_BOUND, 0, (t) => report(base + t * (1 - base)), true)
     if (raw.getAttribute('position').count < 3) { post({ id, empty: true }); return }
     post({ id, progress: 94 })
     // Finition : soudure, retrait des débris flottants, fermeture, puis lissage.
@@ -47,10 +50,12 @@ self.onmessage = (e: MessageEvent<Req>) => {
     const nrm = nAttr ? (nAttr.array as Float32Array).slice() : null
     const iAttr = geo.getIndex()
     const idx = iAttr ? new Uint32Array(iAttr.array as ArrayLike<number>) : null
-    const transfer: Transferable[] = [pos.buffer]
+    // Hauteur de relief + occlusion par sommet : la matière de l'émail (voir shade.ts).
+    const shade = shadeMesh(geo, parts.field, parts.height, params.shell)
+    const transfer: Transferable[] = [pos.buffer, shade.buffer]
     if (nrm) transfer.push(nrm.buffer)
     if (idx) transfer.push(idx.buffer)
-    post({ id, position: pos, normal: nrm, index: idx, tris: (idx ? idx.length : pos.length / 3) / 3, stats }, transfer)
+    post({ id, position: pos, normal: nrm, index: idx, shade, tris: (idx ? idx.length : pos.length / 3) / 3, stats }, transfer)
   } catch (err) {
     post({ id, error: String((err as Error)?.message ?? err) })
   }

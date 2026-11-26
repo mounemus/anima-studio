@@ -70,7 +70,7 @@ export const voronoiWalls = (scale: number, thick: number, bound: number): Field
 export const metaballs = (pts: [number, number, number][], radius: number): Field => (x, y, z) => { let d = 1e9; for (const p of pts) { const dd = Math.hypot(x - p[0], y - p[1], z - p[2]) - radius; d = smin(d, dd, radius * 0.9) } return d }
 
 // ── Combinators ──
-function smin(a: number, b: number, k: number): number { if (k <= 1e-5) return Math.min(a, b); const h = clamp(0, 1, 0.5 + 0.5 * (b - a) / k); return b + (a - b) * h - k * h * (1 - h) }
+export function smin(a: number, b: number, k: number): number { if (k <= 1e-5) return Math.min(a, b); const h = clamp(0, 1, 0.5 + 0.5 * (b - a) / k); return b + (a - b) * h - k * h * (1 - h) }
 export const fUnion = (a: Field, b: Field, k = 0): Field => (x, y, z) => smin(a(x, y, z), b(x, y, z), k)
 export const fSubtract = (a: Field, b: Field, k = 0): Field => (x, y, z) => { const A = a(x, y, z), B = -b(x, y, z); return k <= 1e-5 ? Math.max(A, B) : -smin(-A, -B, k) }
 export const fIntersect = (a: Field, b: Field, k = 0): Field => (x, y, z) => { const A = a(x, y, z), B = b(x, y, z); return k <= 1e-5 ? Math.max(A, B) : -smin(-A, -B, k) }

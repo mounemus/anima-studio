@@ -11,7 +11,7 @@
  * everything through the same sanitiser used for AI output — a hand-edited or stale file
  * can never push the generator into an invalid state.
  */
-import { ORG_DEFAULTS, type OrganicParams } from './organic'
+import { ORG_DEFAULTS, ORG_FORMS, ORG_PORES, type OrganicParams } from './organic'
 import { sanitiseOrganic } from './organicAI'
 import type { MeshData } from '../morpho/imports'
 
@@ -27,6 +27,9 @@ export interface SculptProject {
   mainOnly: boolean
   material: string
   colorA: string
+  colorB?: string       // émail : le relief
+  colorC?: string       // émail : les creux
+  lamp?: boolean        // lumière intérieure
   sourceName?: string
   source?: MeshData | null
 }
@@ -45,8 +48,10 @@ export function parseProject(raw: unknown): SculptProject | null {
   if (typeof o.org !== 'object' || !o.org) return null
   // Même assainissement que la sortie du modèle : un fichier bricolé ne casse rien.
   const org: OrganicParams = { ...ORG_DEFAULTS, ...sanitiseOrganic(o.org as Partial<OrganicParams>) }
-  if (typeof o.org.form === 'string') org.form = o.org.form as OrganicParams['form']
-  if (typeof o.org.pore === 'string') org.pore = o.org.pore as OrganicParams['pore']
+  // « mesh » (ma forme) est écarté par l'assainisseur de l'IA, mais c'est un corps valide ici.
+  if (ORG_FORMS.some((f) => f.kind === o.org!.form)) org.form = o.org.form as OrganicParams['form']
+  if (ORG_PORES.some((f) => f.kind === o.org!.pore)) org.pore = o.org.pore as OrganicParams['pore']
+  const hex = (v: unknown) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : undefined)
   const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
   return {
     version: num(o.version, PROJECT_VERSION),
@@ -57,6 +62,7 @@ export function parseProject(raw: unknown): SculptProject | null {
     mainOnly: o.mainOnly === true,
     material: typeof o.material === 'string' ? o.material : 'clay',
     colorA: typeof o.colorA === 'string' ? o.colorA : '#c8794a',
+    colorB: hex(o.colorB), colorC: hex(o.colorC), lamp: o.lamp === true,
     sourceName: typeof o.sourceName === 'string' ? o.sourceName : undefined,
     source: o.source && Array.isArray((o.source as MeshData).pos) ? (o.source as MeshData) : null,
   }

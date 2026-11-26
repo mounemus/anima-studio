@@ -59,7 +59,7 @@ describe('parseProject : hostile / stale input', () => {
   it('clamps out-of-range values from a hand-edited file', () => {
     const p = parseProject({ org: { ...ORG_DEFAULTS, poreCount: 9999, res: 99999, twist: 50 }, orgSmooth: 99 })!
     expect(p.org.poreCount).toBeLessThanOrEqual(12)
-    expect(p.org.res).toBeLessThanOrEqual(140)
+    expect(p.org.res).toBeLessThanOrEqual(160)
     expect(Math.abs(p.org.twist)).toBeLessThanOrEqual(3.5)
     expect(p.orgSmooth).toBeLessThanOrEqual(6)
   })
@@ -84,5 +84,20 @@ describe('file export', () => {
     const back = parseProject(JSON.parse(text))!
     expect(back.name).toBe('fichier')
     expect(back.org.form).toBe('ruban')
+  })
+})
+
+describe('glaze and new bodies travel with the project', () => {
+  it('colours, lamp, relief and the flower survive a round trip', () => {
+    const p = makeProject('email', { ...state({ form: 'fleur', relief: 'perles', petals: 7, curl: 1.1, open: 0.2 }), colorB: '#aabbcc', colorC: '#001122', lamp: true })
+    expect(saveProject(p)).toBeNull()
+    const back = loadProject('email')!
+    expect(back.org.form).toBe('fleur'); expect(back.org.relief).toBe('perles'); expect(back.org.petals).toBe(7); expect(back.org.curl).toBeCloseTo(1.1, 6); expect(back.org.open).toBeCloseTo(0.2, 6)
+    expect(back.colorB).toBe('#aabbcc'); expect(back.colorC).toBe('#001122'); expect(back.lamp).toBe(true)
+  })
+  it('an unknown body or a non-colour in a file is dropped, « ma forme » is kept', () => {
+    const p = parseProject({ org: { ...ORG_DEFAULTS, form: 'banane', pore: 'grille' }, colorB: 'javascript:alert(1)' })!
+    expect(p.org.form).toBe(ORG_DEFAULTS.form); expect(p.org.pore).toBe('grille'); expect(p.colorB).toBeUndefined()
+    expect(parseProject({ org: { ...ORG_DEFAULTS, form: 'mesh' } })!.org.form).toBe('mesh')
   })
 })
