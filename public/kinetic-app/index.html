@@ -7,10 +7,10 @@
   <title>Kinetic Studio : sculptures cinétiques</title>
   <link rel="manifest" href="/kinetic-app/manifest.webmanifest">
   <link rel="icon" href="/kinetic-app/icon-192.png">
-  <script type="module" crossorigin src="/kinetic-app/assets/index-BaULqur8.js"></script>
+  <script type="module" crossorigin src="/kinetic-app/assets/index-DzJt0hyH.js"></script>
   <link rel="modulepreload" crossorigin href="/kinetic-app/assets/rolldown-runtime-Dl_DZoUm.js">
   <link rel="modulepreload" crossorigin href="/kinetic-app/assets/preload-helper-MuVtt2Gv.js">
-  <link rel="stylesheet" crossorigin href="/kinetic-app/assets/index-_NKTb89y.css">
+  <link rel="stylesheet" crossorigin href="/kinetic-app/assets/index-CDMCzodc.css">
 </head>
 <body>
   <header>
@@ -37,10 +37,12 @@
     </section>
     <section id="stage" aria-label="Aperçu 3D">
       <canvas id="view"></canvas>
+      <div id="tags" aria-hidden="true" hidden></div>
       <div id="transport">
         <button id="play" aria-pressed="true">Pause</button>
         <label><span id="scrub-label">Ouverture</span> <input id="scrub" type="range" min="0" max="1" step="0.005" value="0"></label>
-        <label class="check" id="xray-wrap"><input id="xray" type="checkbox"> Voir dans le pot</label>
+        <label class="check"><input id="xray" type="checkbox"> Voir le moteur</label>
+        <label>Vue éclatée <input id="explode" type="range" min="0" max="1" step="0.01" value="0"></label>
       </div>
       <p id="status" role="status">Chargement du moteur de géométrie…</p>
     </section>
