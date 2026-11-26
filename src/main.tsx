@@ -13,6 +13,7 @@ import { MusicStudio } from './music/MusicStudio'
 import { RemotePage } from './remote/RemotePage'
 import { registerServiceWorker } from './ui/install'
 import { MorphogenesisStudio } from './morpho/MorphogenesisStudio'
+import { KineticStudio } from './kinetic/KineticStudio'
 import { ErrorBoundary } from './ui/ErrorBoundary'
 import { FrontGate } from './FrontGate'
 
@@ -32,6 +33,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/music" element={<FrontGate><MusicStudio /></FrontGate>} />
           <Route path="/remote" element={<FrontGate><RemotePage /></FrontGate>} />
           <Route path="/morpho"element={<FrontGate><MorphogenesisStudio /></FrontGate>} />
+          <Route path="/kinetic" element={<FrontGate><KineticStudio /></FrontGate>} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#2b2925">
+  <title>Kinetic Studio : sculptures cinétiques</title>
+  <link rel="manifest" href="/kinetic-app/manifest.webmanifest">
+  <link rel="icon" href="/kinetic-app/icon-192.png">
+  <script type="module" crossorigin src="/kinetic-app/assets/index-C4QrEIg8.js"></script>
+  <link rel="modulepreload" crossorigin href="/kinetic-app/assets/rolldown-runtime-Dl_DZoUm.js">
+  <link rel="modulepreload" crossorigin href="/kinetic-app/assets/preload-helper-MuVtt2Gv.js">
+  <link rel="stylesheet" crossorigin href="/kinetic-app/assets/index-_NKTb89y.css">
+</head>
+<body>
+  <header>
+    <h1>Kinetic Studio <select id="template" aria-label="Gabarit de sculpture"></select></h1>
+    <div class="actions">
+      <button id="install" hidden>Installer l’application</button>
+      <label class="btn">Ouvrir un projet<input id="load" type="file" accept="application/json,.json" hidden></label>
+      <button id="reset">Réinitialiser</button>
+    </div>
+  </header>
+  <main>
+    <section id="left" aria-label="Paramètres">
+      <form id="brief">
+        <h2><label for="brief-text">Décrire la pièce</label></h2>
+        <textarea id="brief-text" rows="3" placeholder="Ex. : un lys squelettique à cinq pétales, qui s’ouvre très lentement"></textarea>
+        <div class="brief-actions">
+          <button type="submit" id="generate" class="primary">Régler par l’IA</button>
+          <button type="button" id="undo" hidden>Annuler</button>
+          <button type="button" id="key-open">Clé API</button>
+        </div>
+        <p id="ai-note" class="hint" role="status"></p>
+      </form>
+      <div id="params"></div>
+    </section>
+    <section id="stage" aria-label="Aperçu 3D">
+      <canvas id="view"></canvas>
+      <div id="transport">
+        <button id="play" aria-pressed="true">Pause</button>
+        <label><span id="scrub-label">Ouverture</span> <input id="scrub" type="range" min="0" max="1" step="0.005" value="0"></label>
+        <label class="check" id="xray-wrap"><input id="xray" type="checkbox"> Voir dans le pot</label>
+      </div>
+      <p id="status" role="status">Chargement du moteur de géométrie…</p>
+    </section>
+    <section id="side" aria-label="Vérifications et export">
+      <h2>Vérifications</h2>
+      <ul id="checks"></ul>
+      <h2>Dossier de fabrication</h2>
+      <p id="summary"></p>
+      <button id="export" class="primary" disabled>Exporter le dossier (ZIP)</button>
+      <p class="hint">STL et 3MF prêts à trancher, nomenclature, schéma de câblage, programme ESP32 et notice de montage.</p>
+    </section>
+  </main>
+  <dialog id="key-dialog" aria-labelledby="key-title">
+    <form method="dialog">
+      <h2 id="key-title">Clé API Claude</h2>
+      <p class="hint">Le réglage par l’IA appelle l’API Claude depuis cet appareil, avec votre clé. Elle reste dans ce navigateur et n’est envoyée qu’à Anthropic. Laissez le champ vide pour l’effacer.</p>
+      <label for="key-input">Clé</label>
+      <input id="key-input" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+      <div class="brief-actions">
+        <button value="save" class="primary">Enregistrer</button>
+        <button value="cancel">Annuler</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
